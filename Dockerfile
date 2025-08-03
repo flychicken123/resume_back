@@ -2,9 +2,13 @@ FROM python:3.9-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies including wkhtmltopdf for PDF generation
 RUN apt-get update && apt-get install -y \
     build-essential \
+    wkhtmltopdf \
+    xvfb \
+    fonts-liberation \
+    fontconfig \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
