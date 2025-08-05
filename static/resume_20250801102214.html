@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Resume - Han Yu</title>
+    <style>
+        @page {
+            margin: 0.75in;
+            size: letter;
+        }
+        
+        body {
+            font-family: Calibri, Arial, sans-serif;
+            font-size: 11pt;
+            line-height: 1.15;
+            margin: 0;
+            padding: 0;
+            color: #000;
+            background: white;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20pt;
+        }
+        
+        .name {
+            font-size: 16pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-bottom: 5pt;
+        }
+        
+        .contact-info {
+            font-size: 11pt;
+            margin-bottom: 10pt;
+        }
+        
+        .section-header {
+            font-size: 11pt;
+            font-weight: bold;
+            text-transform: uppercase;
+            margin-top: 15pt;
+            margin-bottom: 8pt;
+            border-bottom: 1px solid #000;
+            padding-bottom: 2pt;
+        }
+        
+        .education-item, .experience-item, .project-item, .activity-item {
+            margin-bottom: 12pt;
+        }
+        
+        .institution-header {
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+            margin-bottom: 2pt;
+        }
+        
+        .degree-info {
+            margin-bottom: 1pt;
+        }
+        
+        .job-title {
+            font-style: italic;
+            margin-bottom: 1pt;
+        }
+        
+        .company-info {
+            margin-bottom: 3pt;
+        }
+        
+        .bullet-points {
+            margin-left: 0;
+            padding-left: 15pt;
+        }
+        
+        .bullet-points li {
+            margin-bottom: 3pt;
+            text-align: justify;
+        }
+        
+        .additional-section {
+            margin-top: 10pt;
+        }
+        
+        .additional-item {
+            margin-bottom: 5pt;
+        }
+        
+        .bold {
+            font-weight: bold;
+        }
+        
+        .italic {
+            font-style: italic;
+        }
+        
+        /* Print styles */
+        @media print {
+            body {
+                font-size: 11pt;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
+            }
+            .section-header {
+                page-break-after: avoid;
+            }
+            .experience-item, .education-item, .project-item {
+                page-break-inside: avoid;
+            }
+        }
+        
+        
+        body {
+            font-family: Georgia, serif;
+            font-size: 11pt;
+            line-height: 1.3;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 25pt;
+        }
+        
+        .name {
+            font-size: 18pt;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8pt;
+        }
+        
+        .contact-info {
+            font-size: 10pt;
+            color: #7f8c8d;
+            margin-bottom: 15pt;
+        }
+        
+        .section-header {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #2c3e50;
+            border-bottom: 2px solid #34495e;
+            padding-bottom: 4pt;
+            margin-bottom: 10pt;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .institution-header {
+            font-weight: bold;
+            color: #2c3e50;
+            font-size: 11pt;
+        }
+        
+        .bullet-points li {
+            font-size: 10pt;
+            line-height: 1.4;
+        }
+        
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="name">Han Yu</div>
+        <div class="contact-info">8065599052 | yuhanshishuai@hotmail.com</div>
+    </div>
+
+    
+
+    <div class="section-header">WORK EXPERIENCE</div>
+    <div class="experience-item">
+        <div class="institution-header">
+            <span class="bold">Tech Lead | Tiktok | Seattle, WA | Nov 2022 - Present</span>
+        </div>
+        <ul class="bullet-points">
+            <li>Delivered and scaled a new e-commerce logistics monitoring system, significantly improving operational excellence by enhancing the tracking of Estimated Delivery Time (EDT), cancellations, Order SLA exemptions, and Delivery Not Received (DNR) cases.</li>
+            <li>Owned the backend development and integration of predictive AI models into the logistics monitoring system, increasing platform reliability and scalability.  By forecasting delivery risks and optimizing fulfillment operations.</li>
+            <li>Mentored and guided junior engineers, fostering a collaborative team environment and promoting a metrics-first culture through comprehensive documentation and knowledge sharing.</li>
+        </ul>
+    </div>
+
+    <div class="experience-item">
+        <div class="institution-header">
+            <span class="bold">Senior  | Twilio</span>
+        </div>
+        <ul class="bullet-points">
+            <li>Lead to developing a Customers Data Protection by using Golong and Kafka. The service is achieving establishing a centralized data protection managem ent system.</li>
+            <li>Design the De-identification Policy managem ent framew ork for aggregating differ ent European countries’ security policies.</li>
+        </ul>
+    </div>
+
+
+    
+
+    
+</body>
+</html>
