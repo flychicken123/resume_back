@@ -22,9 +22,6 @@ FROM alpine:latest
 # Install ca-certificates for HTTPS requests
 RUN apk --no-cache add ca-certificates
 
-# Install wkhtmltopdf for PDF generation
-RUN apk --no-cache add wkhtmltopdf
-
 # Create app directory
 WORKDIR /root/
 
