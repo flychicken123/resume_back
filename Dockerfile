@@ -41,4 +41,4 @@ COPY --from=builder /app/config.cfg ./config.cfg
 EXPOSE 8081
 
 # Run the application
-CMD ["./main"] 
+CMD ["./main"]

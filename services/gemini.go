@@ -2,12 +2,15 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"os"
 	"strings"
+
+	"golang.org/x/oauth2/google"
 )
 
 type GeminiRequest struct {
@@ -200,8 +203,15 @@ Return only the optimized experience description in a clear, professional format
 }
 
 func getAccessToken() (string, error) {
-	// This function is not currently used since we're using API key authentication
-	// for Gemini API. The GCP credentials are available via environment variables
-	// if needed for other Google Cloud services.
-	return "", nil
+	ctx := context.Background()
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	if err != nil {
+		return "", err
+	}
+	tokenSource := creds.TokenSource
+	token, err := tokenSource.Token()
+	if err != nil {
+		return "", err
+	}
+	return token.AccessToken, nil
 }
