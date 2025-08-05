@@ -11,7 +11,7 @@ if ($Environment -eq "local") {
     Write-Host "✅ Switched to LOCAL environment (localhost PostgreSQL)"
     Write-Host "Database: localhost:5432"
     Write-Host "User: postgres"
-    Write-Host "Database: resumeai"
+    Write-Host "Database: airesume"
     Write-Host "Password: admin"
 } elseif ($Environment -eq "prod") {
     Write-Host "⚠️  PROD environment uses GitHub Secrets directly"

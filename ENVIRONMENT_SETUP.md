@@ -9,7 +9,7 @@ This project supports two environments:
 
 ### 1. Database Setup
 - Install PostgreSQL locally
-- Create database: `resumeai`
+- Create database: `airesume`
 - Set password: `admin`
 - Update `.env.local` if needed
 
@@ -28,7 +28,7 @@ The `.env.local` file contains:
 - `DB_PORT=5432`
 - `DB_USER=postgres`
 - `DB_PASSWORD=admin`
-- `DB_NAME=resumeai`
+- `DB_NAME=airesume`
 
 ## Production Deployment
 
@@ -40,7 +40,7 @@ The following secrets must be configured in your GitHub repository under the `pr
 - `DB_PORT` - Database port (usually 5432)
 - `DB_USER` - Database username
 - `DB_PASSWORD` - Database password
-- `DB_NAME` - Database name
+- `DB_NAME` - Database name (airesume)
 
 **AWS Configuration:**
 - `AWS_ACCESS_KEY_ID` - AWS access key

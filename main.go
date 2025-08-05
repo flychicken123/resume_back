@@ -33,30 +33,7 @@ func main() {
 	}
 	defer db.Close()
 
-	// Check database permissions
-	err = database.CheckDatabasePermissions(db)
-	if err != nil {
-		log.Printf("Warning: Database permission check failed: %v", err)
-		log.Println("This might cause issues with table creation.")
-		log.Println("Please ensure your database user has CREATE TABLE permissions.")
-		log.Println("You can either:")
-		log.Println("1. Grant CREATE TABLE permission to your database user")
-		log.Println("2. Create tables manually using the schema in database/schema.sql")
-		log.Println("3. Use a database user with full permissions")
-	}
-
-	// Initialize database tables
-	err = database.InitializeDatabase(db)
-	if err != nil {
-		log.Printf("Error initializing database: %v", err)
-		log.Println("Please check the following:")
-		log.Println("1. Database user has CREATE TABLE permissions")
-		log.Println("2. Database exists and is accessible")
-		log.Println("3. Connection parameters are correct")
-		log.Println("")
-		log.Println("You can create tables manually using the schema in database/schema.sql")
-		log.Fatal("Application cannot start without proper database setup")
-	}
+	log.Println("✅ Database connection successful!")
 
 	r := gin.Default()
 
@@ -101,12 +78,11 @@ func main() {
 		protected.POST("/resume/parse", handlers.ParseResume)
 		protected.POST("/experience/optimize", handlers.OptimizeExperience)
 
-		// User data management endpoints
+		// User data management
 		protected.POST("/user/save", handlers.SaveUserData(db))
 		protected.GET("/user/load", handlers.LoadUserData(db))
 	}
 
-	appConfig := config.GetAppConfig()
-	log.Printf("Server starting on port %s", appConfig.Port)
-	r.Run(":" + appConfig.Port)
+	log.Println("Server starting on port 8081")
+	r.Run(":8081")
 }
