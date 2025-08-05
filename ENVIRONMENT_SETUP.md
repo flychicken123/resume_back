@@ -3,7 +3,7 @@
 ## Overview
 This project supports two environments:
 - **Local Development**: Uses local PostgreSQL and environment files
-- **Production**: Uses AWS PostgreSQL and GitHub Secrets
+- **Production**: Uses AWS PostgreSQL and GitHub Secrets (prod environment)
 
 ## Local Development Setup
 
@@ -33,7 +33,7 @@ The `.env.local` file contains:
 ## Production Deployment
 
 ### 1. GitHub Secrets Required
-The following secrets must be configured in your GitHub repository:
+The following secrets must be configured in your GitHub repository under the `prod` environment:
 
 **Database Configuration:**
 - `DB_HOST` - AWS RDS endpoint
@@ -62,12 +62,13 @@ The following secrets must be configured in your GitHub repository:
 
 ### 2. Deployment Process
 1. Push changes to `main` branch
-2. GitHub Actions automatically deploys to EC2
+2. GitHub Actions automatically deploys to EC2 using `prod` environment
 3. Environment variables are created from GitHub Secrets
 4. Docker containers are built and started
 
 ### 3. Pipeline Workflow
 The `.github/workflows/deploy-backend.yml` file:
+- Uses `environment: prod` for GitHub Secrets
 - Configures AWS credentials
 - Sets up environment variables from secrets
 - Deploys to EC2 via SSH
@@ -88,6 +89,6 @@ The `.github/workflows/deploy-backend.yml` file:
 - Verify port 8081 is available
 
 ### Production Issues
-- Check GitHub Secrets are configured
+- Check GitHub Secrets are configured in `prod` environment
 - Verify EC2 instance is accessible
 - Check Docker logs on EC2 instance 

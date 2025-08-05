@@ -1,6 +1,6 @@
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet("local", "production")]
+    [ValidateSet("local", "prod")]
     [string]$Environment
 )
 
@@ -13,15 +13,15 @@ if ($Environment -eq "local") {
     Write-Host "User: postgres"
     Write-Host "Database: resumeai"
     Write-Host "Password: admin"
-} elseif ($Environment -eq "production") {
-    Write-Host "⚠️  PRODUCTION environment uses GitHub Secrets directly"
+} elseif ($Environment -eq "prod") {
+    Write-Host "⚠️  PROD environment uses GitHub Secrets directly"
     Write-Host "The pipeline automatically creates .env from GitHub Secrets"
     Write-Host "This script is only for local development testing"
     Write-Host ""
     Write-Host "For production deployment:"
     Write-Host "- Push to main branch"
     Write-Host "- GitHub Actions will deploy to EC2"
-    Write-Host "- Environment variables come from GitHub Secrets"
+    Write-Host "- Environment variables come from GitHub Secrets (prod environment)"
     return
 }
 
