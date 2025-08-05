@@ -76,7 +76,7 @@ jobs:
           docker-compose -f docker-compose.backend.yml down || true
           
           # Create .env file with environment variables from GitHub Secrets
-          cat > .env << 'EOF'
+          cat > .env << EOF
           DB_HOST=${{ secrets.DB_HOST }}
           DB_PORT=${{ secrets.DB_PORT }}
           DB_USER=${{ secrets.DB_USER }}
