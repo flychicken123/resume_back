@@ -1,149 +1,223 @@
-# Database Troubleshooting Guide
+# Database Connection Troubleshooting Guide
 
-## Error: "必须是表 users 的属主" (Must be the owner of table users)
+## Current Issue: PostgreSQL Connection Error
 
-This error occurs when your database user doesn't have sufficient permissions to create tables.
+**Error Message:**
+```
+pq: no pg_hba.conf entry for host "172.31.32.78", user "postgres", database "resumeai", no encryption
+```
 
-## Solutions
+## Root Cause Analysis
 
-### Option 1: Grant Permissions to Your Database User
+The error indicates that your PostgreSQL RDS instance is rejecting connections from your EC2 instance because:
 
-1. **Connect to PostgreSQL as superuser** (usually `postgres`):
-   ```bash
-   psql -U postgres -d resumeai
-   ```
+1. **Database Name Mismatch**: Error shows `resumeai` but config shows `airesume`
+2. **Security Group Issues**: RDS security group doesn't allow connections from EC2
+3. **User Authentication**: Connection using `postgres` user but might need different credentials
+4. **Network Configuration**: EC2 and RDS might be in different subnets/VPCs
 
-2. **Grant necessary permissions**:
-   ```sql
-   -- Replace 'your_db_user' with your actual database user
-   GRANT CREATE ON SCHEMA public TO your_db_user;
-   GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO your_db_user;
-   GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO your_db_user;
-   ```
+## Step-by-Step Fix
 
-3. **Grant future permissions**:
-   ```sql
-   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO your_db_user;
-   ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO your_db_user;
-   ```
+### 1. Verify RDS Configuration
 
-### Option 2: Create Tables Manually
-
-1. **Connect to your database**:
-   ```bash
-   psql -U your_db_user -d resumeai
-   ```
-
-2. **Run the setup script**:
-   ```bash
-   psql -U your_db_user -d resumeai -f setup_database.sql
-   ```
-
-### Option 3: Use a Different Database User
-
-1. **Create a new database user with full permissions**:
-   ```sql
-   -- Connect as postgres superuser
-   CREATE USER resumeai_user WITH PASSWORD 'your_password';
-   GRANT ALL PRIVILEGES ON DATABASE resumeai TO resumeai_user;
-   ```
-
-2. **Update your .env file**:
-   ```bash
-   DB_USER=resumeai_user
-   DB_PASSWORD=your_password
-   ```
-
-### Option 4: Use PostgreSQL Superuser (Development Only)
-
-For development, you can temporarily use the postgres superuser:
+First, check your RDS instance details in AWS Console:
 
 ```bash
-# In your .env file
-DB_USER=postgres
-DB_PASSWORD=your_postgres_password
+# Get your RDS endpoint
+aws rds describe-db-instances --query 'DBInstances[*].[DBInstanceIdentifier,Endpoint.Address,Endpoint.Port,DBName]' --output table
 ```
 
-**Warning**: Never use superuser in production!
+### 2. Update Environment Variables
 
-## Common PostgreSQL Permission Commands
-
-### Check Current User
-```sql
-SELECT current_user;
-```
-
-### Check User Permissions
-```sql
-SELECT grantee, privilege_type 
-FROM information_schema.role_table_grants 
-WHERE table_name = 'users';
-```
-
-### List All Users
-```sql
-SELECT usename FROM pg_user;
-```
-
-### Grant All Permissions to User
-```sql
--- Replace 'username' with your actual username
-GRANT ALL PRIVILEGES ON DATABASE resumeai TO username;
-GRANT ALL PRIVILEGES ON SCHEMA public TO username;
-GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO username;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO username;
-```
-
-## Environment Configuration
-
-Make sure your `.env` file has the correct database settings:
+Create a proper `.env` file on your EC2 instance:
 
 ```bash
+# SSH into your EC2 instance
+ssh -i your-key.pem ubuntu@your-ec2-public-ip
+
+# Create .env file
+cat > .env << EOF
 # Database Configuration
-DB_HOST=localhost
+DB_HOST=airesume.czy822q0a52j.us-east-2.rds.amazonaws.com
 DB_PORT=5432
-DB_USER=your_database_user
-DB_PASSWORD=your_database_password
-DB_NAME=resumeai
+DB_USER=postgres
+DB_PASSWORD=lichking1991
+DB_NAME=airesume
 DB_SSLMODE=disable
+
+# Application Configuration
+PORT=8081
+ENVIRONMENT=production
+JWT_SECRET=your-super-secure-jwt-secret-key-here
+EOF
 ```
 
-## Testing Database Connection
+### 3. Check RDS Security Group
 
-You can test your database connection manually:
+In AWS Console → RDS → Your Database → Security:
+
+1. **Security Group Rules**:
+   - Type: PostgreSQL
+   - Port: 5432
+   - Source: Your EC2 security group ID or EC2 private IP
+
+2. **Add Security Group Rule**:
+   ```
+   Type: PostgreSQL
+   Protocol: TCP
+   Port: 5432
+   Source: sg-xxxxxxxxx (your EC2 security group)
+   ```
+
+### 4. Test Database Connection
 
 ```bash
-psql -h localhost -p 5432 -U your_db_user -d resumeai
+# Test from EC2 instance
+psql "postgresql://postgres:lichking1991@airesume.czy822q0a52j.us-east-2.rds.amazonaws.com:5432/airesume"
+
+# Or test with Docker
+docker run --rm -it postgres:13 psql "postgresql://postgres:lichking1991@airesume.czy822q0a52j.us-east-2.rds.amazonaws.com:5432/airesume"
 ```
 
-If this works, your connection parameters are correct.
+### 5. Update Docker Compose Configuration
 
-## Application Startup
+Update your `docker-compose.prod.yml`:
 
-After fixing permissions, restart your application:
+```yaml
+version: '3.8'
+
+services:
+  backend:
+    build: ./back
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./back/static:/app/static
+    environment:
+      - DB_HOST=airesume.czy822q0a52j.us-east-2.rds.amazonaws.com
+      - DB_PORT=5432
+      - DB_NAME=airesume
+      - DB_USER=postgres
+      - DB_PASSWORD=lichking1991
+      - DB_SSLMODE=disable
+      - PORT=8081
+      - JWT_SECRET=${JWT_SECRET:-your-super-secure-jwt-secret-key-here}
+    restart: unless-stopped
+    networks:
+      - ai-resume-network
+
+networks:
+  ai-resume-network:
+    driver: bridge
+```
+
+### 6. Verify VPC and Subnet Configuration
+
+Ensure EC2 and RDS are in the same VPC:
 
 ```bash
-go run main.go
+# Check EC2 VPC
+aws ec2 describe-instances --instance-ids i-xxxxxxxxx --query 'Reservations[*].Instances[*].[VpcId,SubnetId]'
+
+# Check RDS VPC
+aws rds describe-db-instances --db-instance-identifier airesume --query 'DBInstances[*].[DBSubnetGroup.VpcId]'
 ```
 
-The application should now start without permission errors.
+### 7. Database Schema Setup
 
-## Production Considerations
+If the database exists but tables don't:
 
-For production environments:
+```bash
+# Connect and create tables
+docker exec -it ai-resume-backend-1 psql "postgresql://postgres:lichking1991@airesume.czy822q0a52j.us-east-2.rds.amazonaws.com:5432/airesume" -f /app/database/schema.sql
+```
 
-1. **Use dedicated database users** with minimal required permissions
-2. **Never use superuser accounts** for application connections
-3. **Set up proper database backups**
-4. **Use connection pooling** for better performance
-5. **Monitor database performance** and logs
+## Quick Fix Commands
 
-## Still Having Issues?
+### Option 1: Update Environment and Restart
 
-If you're still experiencing problems:
+```bash
+# On your EC2 instance
+cd AIResume
 
-1. **Check PostgreSQL logs** for detailed error messages
-2. **Verify PostgreSQL is running** and accessible
-3. **Test connection** with `psql` command line tool
-4. **Check firewall settings** if connecting to remote database
-5. **Verify database exists** and is accessible to your user 
+# Create correct .env file
+cat > .env << EOF
+DB_HOST=airesume.czy822q0a52j.us-east-2.rds.amazonaws.com
+DB_PORT=5432
+DB_USER=postgres
+DB_PASSWORD=lichking1991
+DB_NAME=airesume
+DB_SSLMODE=disable
+PORT=8081
+JWT_SECRET=your-super-secure-jwt-secret-key-here
+EOF
+
+# Restart services
+docker-compose -f docker-compose.prod.yml down
+docker-compose -f docker-compose.prod.yml up -d
+
+# Check logs
+docker-compose -f docker-compose.prod.yml logs -f backend
+```
+
+### Option 2: Test Connection First
+
+```bash
+# Test database connection
+docker run --rm -it postgres:13 psql "postgresql://postgres:lichking1991@airesume.czy822q0a52j.us-east-2.rds.amazonaws.com:5432/airesume" -c "\l"
+
+# If successful, restart your application
+docker-compose -f docker-compose.prod.yml restart backend
+```
+
+## Common Issues and Solutions
+
+### Issue 1: Database Name Mismatch
+- **Problem**: Error shows `resumeai` but config shows `airesume`
+- **Solution**: Ensure all configs use the same database name
+
+### Issue 2: Security Group
+- **Problem**: RDS not accepting connections from EC2
+- **Solution**: Add EC2 security group to RDS security group rules
+
+### Issue 3: User Authentication
+- **Problem**: Wrong username/password
+- **Solution**: Verify RDS master username and password
+
+### Issue 4: SSL Mode
+- **Problem**: SSL configuration mismatch
+- **Solution**: Use `DB_SSLMODE=disable` for testing
+
+## Monitoring and Debugging
+
+### Check Application Logs
+```bash
+docker-compose -f docker-compose.prod.yml logs -f backend
+```
+
+### Check Database Connectivity
+```bash
+# From EC2 instance
+telnet airesume.czy822q0a52j.us-east-2.rds.amazonaws.com 5432
+```
+
+### Check Security Groups
+```bash
+# List security groups
+aws ec2 describe-security-groups --query 'SecurityGroups[*].[GroupId,GroupName]' --output table
+```
+
+## Success Indicators
+
+When fixed, you should see:
+```
+✅ Database connection successful!
+Server starting on port 8081
+```
+
+## Next Steps
+
+1. ✅ Fix database connection
+2. ✅ Verify application starts
+3. ✅ Test API endpoints
+4. ✅ Monitor logs for any remaining issues 
