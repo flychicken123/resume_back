@@ -30,7 +30,7 @@ func GetDatabaseConfig() DatabaseConfig {
 		User:     getEnv("DB_USER", "postgres"),
 		Password: getEnv("DB_PASSWORD", ""),
 		DBName:   getEnv("DB_NAME", "resumeai"),
-		SSLMode:  getEnv("DB_SSLMODE", "disable"),
+		SSLMode:  getEnv("DB_SSLMODE", "require"),
 	}
 }
 
