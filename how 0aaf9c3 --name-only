@@ -1,0 +1,10 @@
+[33mbb721bf[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m remove old flow
+[33m258db7d[m fix backend
+[33mf57bc3b[m try to fix backend server
+[33m0aaf9c3[m fix the deployment
+[33m8535497[m Fix environment variables - create .env file for docker-compose to properly pass variables to container
+[33m4ffd0f8[m Remove .env file dependency - pass environment variables directly to docker-compose
+[33m400a0c4[m Fix .env file creation in GitHub Actions - remove single quotes to enable variable substitution
+[33mf8941b1[m Trigger deployment to restart containers
+[33m3a6b9e8[m Trigger deployment with correct database configuration
+[33mb89d0c3[m Fix Docker build: Compile only main.go to avoid multiple main functions conflict
