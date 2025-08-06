@@ -82,6 +82,7 @@ jobs:
           DB_USER=${{ secrets.DB_USER }}
           DB_PASSWORD=${{ secrets.DB_PASSWORD }}
           DB_NAME=${{ secrets.DB_NAME }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
           JWT_SECRET=${{ secrets.JWT_SECRET }}
           GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
           GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}
