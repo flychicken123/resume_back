@@ -17,12 +17,18 @@ func main() {
 
 	// Initialize database
 	dbConfig := config.GetDatabaseConfig()
+	
+	// Debug: Print database configuration
+	log.Printf("Database Config - Host: %s, Port: %d, User: %s, DB: %s, SSL: %s", 
+		dbConfig.Host, dbConfig.Port, dbConfig.User, dbConfig.DBName, dbConfig.SSLMode)
+	
 	db, err := database.Connect(
 		dbConfig.Host,
 		fmt.Sprintf("%d", dbConfig.Port),
 		dbConfig.User,
 		dbConfig.Password,
 		dbConfig.DBName,
+		dbConfig.SSLMode,
 	)
 	if err != nil {
 		log.Fatal("Error connecting to database:", err)

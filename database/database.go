@@ -16,10 +16,10 @@ type DatabaseConfig struct {
 	SSLMode  string
 }
 
-func Connect(host, port, user, password, dbname string) (*sql.DB, error) {
+func Connect(host, port, user, password, dbname, sslmode string) (*sql.DB, error) {
 	// Build connection string
-	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
-		host, port, user, password, dbname)
+	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode)
 
 	// Open database connection
 	db, err := sql.Open("postgres", psqlInfo)
