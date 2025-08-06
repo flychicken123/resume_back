@@ -9,15 +9,11 @@ import (
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
-	"github.com/joho/godotenv"
 )
 
 func main() {
-	err := godotenv.Load(".env")
-	if err != nil {
-		log.Printf("Warning: Error loading .env file: %v", err)
-		log.Println("Continuing with default configuration...")
-	}
+	// Environment variables are passed by Docker Compose
+	// No need to load .env file since variables are set by container environment
 
 	// Initialize database
 	dbConfig := config.GetDatabaseConfig()
