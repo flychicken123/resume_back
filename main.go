@@ -91,6 +91,7 @@ func main() {
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
+	r.POST("/api/experience/optimize", handlers.OptimizeExperience)
 
 	// Protected endpoints (require authentication and API key)
 	protected := r.Group("/api")
@@ -116,7 +117,6 @@ func main() {
 		protected.POST("/resume/generate", handlers.GenerateResume)
 		protected.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		protected.POST("/resume/parse", handlers.ParseResume)
-		protected.POST("/experience/optimize", handlers.OptimizeExperience)
 
 		// User data management
 		protected.POST("/user/save", handlers.SaveUserData(db))
