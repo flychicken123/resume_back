@@ -28,22 +28,7 @@ jobs:
         host: ${{ secrets.BACKEND_EC2_HOST }}
         username: ec2-user
         key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
-        envs: DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,DB_SSLMODE,JWT_SECRET,GCP_PROJECT_ID,GCP_PRIVATE_KEY_ID,GCP_PRIVATE_KEY,GCP_CLIENT_EMAIL,GCP_CLIENT_ID,GCP_CLIENT_X509_CERT_URL,GEMINI_API_KEY
-        env: |
-          DB_HOST: ${{ secrets.DB_HOST }}
-          DB_PORT: ${{ secrets.DB_PORT }}
-          DB_USER: ${{ secrets.DB_USER }}
-          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-          DB_NAME: ${{ secrets.DB_NAME }}
-          DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
-          JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-          GCP_PRIVATE_KEY_ID: ${{ secrets.GCP_PRIVATE_KEY_ID }}
-          GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
-          GCP_CLIENT_EMAIL: ${{ secrets.GCP_CLIENT_EMAIL }}
-          GCP_CLIENT_ID: ${{ secrets.GCP_CLIENT_ID }}
-          GCP_CLIENT_X509_CERT_URL: ${{ secrets.GCP_CLIENT_X509_CERT_URL }}
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
         script: |
           # Update system and install essential packages
           sudo yum update -y
@@ -87,14 +72,29 @@ jobs:
           # Build and start containers with environment variables
           docker-compose -f docker-compose.backend.yml build --no-cache
           
-          # Debug: Check environment variables
-          echo "🔍 Checking environment variables..."
-          echo "DB_HOST: $DB_HOST"
-          echo "DB_PORT: $DB_PORT"
-          echo "DB_USER: $DB_USER"
-          echo "DB_NAME: $DB_NAME"
+          # Create .env file with secrets
+          cat > .env << EOL
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}
+          GCP_PRIVATE_KEY='${{ secrets.GCP_PRIVATE_KEY }}'
+          GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
+          GCP_CLIENT_ID=${{ secrets.GCP_CLIENT_ID }}
+          GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          EOL
           
-          # Start containers (environment variables are passed automatically)
+          # Debug: Show .env file (without sensitive values)
+          echo "📋 Created .env file with the following variables:"
+          cat .env | cut -d= -f1
+          
+          # Start containers using .env file
           docker-compose -f docker-compose.backend.yml up -d
           
           # Wait for container to be ready
