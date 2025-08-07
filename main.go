@@ -34,6 +34,15 @@ func main() {
 
 	r := gin.Default()
 
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Forwarded-Host", "X-Forwarded-Port", "X-API-Key", "x-api-key"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: true,
+		MaxAge:           12 * 60 * 60,
+	}))
+
 	r.Use(func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
 		referer := c.GetHeader("Referer")
@@ -65,15 +74,6 @@ func main() {
 
 		c.Next()
 	})
-
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Forwarded-Host", "X-Forwarded-Port", "X-API-Key", "x-api-key"},
-		ExposeHeaders:    []string{"Content-Length"},
-		AllowCredentials: true,
-		MaxAge:           12 * 60 * 60,
-	}))
 
 	r.Static("/static", "./static")
 
