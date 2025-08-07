@@ -35,6 +35,21 @@ jobs:
         
     - name: Deploy Backend to EC2
       uses: appleboy/ssh-action@v0.1.5
+      env:
+        DB_HOST: ${{ secrets.DB_HOST }}
+        DB_PORT: ${{ secrets.DB_PORT }}
+        DB_USER: ${{ secrets.DB_USER }}
+        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+        DB_NAME: ${{ secrets.DB_NAME }}
+        DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
+        JWT_SECRET: ${{ secrets.JWT_SECRET }}
+        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+        GCP_PRIVATE_KEY_ID: ${{ secrets.GCP_PRIVATE_KEY_ID }}
+        GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
+        GCP_CLIENT_EMAIL: ${{ secrets.GCP_CLIENT_EMAIL }}
+        GCP_CLIENT_ID: ${{ secrets.GCP_CLIENT_ID }}
+        GCP_CLIENT_X509_CERT_URL: ${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       with:
         host: ${{ secrets.BACKEND_EC2_HOST }}
         username: ec2-user
@@ -82,21 +97,21 @@ jobs:
           # Build and start containers with environment variables
           docker-compose -f docker-compose.backend.yml build --no-cache
           
-          # Create .env file line by line
-          echo "DB_HOST=${{ secrets.DB_HOST }}" > .env
-          echo "DB_PORT=${{ secrets.DB_PORT }}" >> .env
-          echo "DB_USER=${{ secrets.DB_USER }}" >> .env
-          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-          echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
-          echo "DB_SSLMODE=${{ secrets.DB_SSLMODE }}" >> .env
-          echo "JWT_SECRET=${{ secrets.JWT_SECRET }}" >> .env
-          echo "GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}" >> .env
-          echo "GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}" >> .env
-          echo "GCP_PRIVATE_KEY=${{ secrets.GCP_PRIVATE_KEY }}" >> .env
-          echo "GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}" >> .env
-          echo "GCP_CLIENT_ID=${{ secrets.GCP_CLIENT_ID }}" >> .env
-          echo "GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}" >> .env
-          echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
+          # Create .env file using environment variables
+          echo "DB_HOST=$DB_HOST" > .env
+          echo "DB_PORT=$DB_PORT" >> .env
+          echo "DB_USER=$DB_USER" >> .env
+          echo "DB_PASSWORD=$DB_PASSWORD" >> .env
+          echo "DB_NAME=$DB_NAME" >> .env
+          echo "DB_SSLMODE=$DB_SSLMODE" >> .env
+          echo "JWT_SECRET=$JWT_SECRET" >> .env
+          echo "GCP_PROJECT_ID=$GCP_PROJECT_ID" >> .env
+          echo "GCP_PRIVATE_KEY_ID=$GCP_PRIVATE_KEY_ID" >> .env
+          echo "GCP_PRIVATE_KEY=$GCP_PRIVATE_KEY" >> .env
+          echo "GCP_CLIENT_EMAIL=$GCP_CLIENT_EMAIL" >> .env
+          echo "GCP_CLIENT_ID=$GCP_CLIENT_ID" >> .env
+          echo "GCP_CLIENT_X509_CERT_URL=$GCP_CLIENT_X509_CERT_URL" >> .env
+          echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
           
           # Debug: Check if .env file was created properly
           echo "📋 Created .env file contents:"
