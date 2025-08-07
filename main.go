@@ -38,7 +38,7 @@ func main() {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Forwarded-Host", "X-Forwarded-Port", "X-API-Key", "x-api-key"},
+		AllowHeaders:     []string{"*"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * 60 * 60,
