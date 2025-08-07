@@ -67,9 +67,9 @@ func main() {
 	})
 
 	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org"},
+		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Forwarded-Host", "X-Forwarded-Port"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Forwarded-Host", "X-Forwarded-Port", "X-API-Key", "x-api-key"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * 60 * 60,
@@ -80,7 +80,6 @@ func main() {
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
-	r.POST("/api/experience/optimize", handlers.OptimizeExperience)
 
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
@@ -105,6 +104,7 @@ func main() {
 
 		protected.POST("/user/save", handlers.SaveUserData(db))
 		protected.GET("/user/load", handlers.LoadUserData(db))
+		protected.POST("/experience/optimize", handlers.OptimizeExperience)
 	}
 
 	log.Println("Server starting on port 8081")
