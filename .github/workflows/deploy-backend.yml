@@ -72,8 +72,9 @@ jobs:
             exit 1
           fi
           
-          # Stop existing containers
+          # Stop existing containers and force restart
           docker-compose -f docker-compose.backend.yml down || true
+          docker system prune -f
           
           # Create external network if it doesn't exist
           docker network create ai-resume-network 2>/dev/null || echo "Network already exists"
@@ -111,6 +112,11 @@ jobs:
           fi
           
           echo "✅ Backend deployed successfully"
+          
+          # Test CORS headers
+          echo "🧪 Testing CORS headers..."
+          sleep 5
+          curl -I -H "Origin: https://www.hihired.org" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: X-API-Key" https://hihired.org/api/experience/optimize || echo "CORS test completed"
           
           # Clean up
           docker system prune -f 
