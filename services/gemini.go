@@ -47,7 +47,7 @@ func CallGeminiWithAPIKey(prompt string) (string, error) {
 	if apiKey == "" {
 		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
-	
+
 	url := "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=" + apiKey
 
 	requestBody := GeminiRequest{
@@ -203,15 +203,22 @@ Please optimize the user's experience description by:
 4. Maintaining the same level of detail but making it more relevant
 5. Making the language more professional and impactful
 
-IMPORTANT: Return ONLY the optimized description text without bullet points. Do NOT include:
+IMPORTANT: Return ONLY the optimized description text with each bullet point on a separate line. Do NOT include:
 - Job title
 - Company name
 - Dates
 - Any header information
 - Explanations or additional text
-- Bullet points (• or -)
+- Bullet point symbols (• or -)
 
-Format the response as clean text that can be directly used as the experience description.`, jobDescription, userExperience)
+Format the response as clean text with each achievement on a new line, like this:
+Spearheaded the design, planning, construction, and maintenance of a new e-commerce logistics monitoring system, directly enhancing the reliability and observability of Stripe's core operational metrics.
+
+Scaled the platform's capacity to track key performance indicators, including Estimated Delivery Time (EDT), cancellations, Order SLA exemptions, and Delivery Not Received (DNR) cases, optimizing fulfillment operations and achieving significant cost savings.
+
+Collaborated with product and engineering teams to integrate predictive AI models into the system, further enhancing scalability and proactively addressing potential delivery risks.
+
+Each achievement should be on its own line without bullet points.`, jobDescription, userExperience)
 }
 
 func getAccessToken() (string, error) {

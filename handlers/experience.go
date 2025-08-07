@@ -66,7 +66,15 @@ func cleanupAIResponse(text string) string {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		}
 
-		// Add the cleaned line without bullet point
+		// Remove bullet points if they exist
+		if strings.HasPrefix(line, "•") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "•"))
+		}
+		if strings.HasPrefix(line, "-") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
+		}
+
+		// Add the cleaned line
 		if line != "" {
 			cleanedLines = append(cleanedLines, line)
 		}
