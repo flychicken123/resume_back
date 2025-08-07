@@ -35,25 +35,26 @@ jobs:
         
     - name: Deploy Backend to EC2
       uses: appleboy/ssh-action@v0.1.5
-      envs:
-        DB_HOST: ${{ secrets.DB_HOST }}
-        DB_PORT: ${{ secrets.DB_PORT }}
-        DB_USER: ${{ secrets.DB_USER }}
-        DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
-        DB_NAME: ${{ secrets.DB_NAME }}
-        DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
-        JWT_SECRET: ${{ secrets.JWT_SECRET }}
-        GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-        GCP_PRIVATE_KEY_ID: ${{ secrets.GCP_PRIVATE_KEY_ID }}
-        GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
-        GCP_CLIENT_EMAIL: ${{ secrets.GCP_CLIENT_EMAIL }}
-        GCP_CLIENT_ID: ${{ secrets.GCP_CLIENT_ID }}
-        GCP_CLIENT_X509_CERT_URL: ${{ secrets.GCP_CLIENT_X509_CERT_URL }}
-        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       with:
         host: ${{ secrets.BACKEND_EC2_HOST }}
         username: ec2-user
         key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
+        envs: DB_HOST,DB_PORT,DB_USER,DB_PASSWORD,DB_NAME,DB_SSLMODE,JWT_SECRET,GCP_PROJECT_ID,GCP_PRIVATE_KEY_ID,GCP_PRIVATE_KEY,GCP_CLIENT_EMAIL,GCP_CLIENT_ID,GCP_CLIENT_X509_CERT_URL,GEMINI_API_KEY
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_SSLMODE: ${{ secrets.DB_SSLMODE }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+          GCP_PRIVATE_KEY_ID: ${{ secrets.GCP_PRIVATE_KEY_ID }}
+          GCP_PRIVATE_KEY: ${{ secrets.GCP_PRIVATE_KEY }}
+          GCP_CLIENT_EMAIL: ${{ secrets.GCP_CLIENT_EMAIL }}
+          GCP_CLIENT_ID: ${{ secrets.GCP_CLIENT_ID }}
+          GCP_CLIENT_X509_CERT_URL: ${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         script: |
           # Update system and install essential packages
           sudo yum update -y
