@@ -90,7 +90,7 @@ func main() {
 		fmt.Printf("🔧 Handling OPTIONS request for: %s\n", c.Request.URL.Path)
 		c.Header("Access-Control-Allow-Origin", "https://www.hihired.org")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Forwarded-Host, X-Forwarded-Port, X-API-Key, x-api-key")
+		c.Header("Access-Control-Allow-Headers", "*")
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
 		fmt.Printf("✅ Set CORS headers for OPTIONS request\n")
