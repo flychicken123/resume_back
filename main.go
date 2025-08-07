@@ -85,17 +85,7 @@ func main() {
 
 	r.Static("/static", "./static")
 
-	// Handle OPTIONS requests explicitly
-	r.OPTIONS("/*path", func(c *gin.Context) {
-		fmt.Printf("🔧 Handling OPTIONS request for: %s\n", c.Request.URL.Path)
-		c.Header("Access-Control-Allow-Origin", "https://www.hihired.org")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "*")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400")
-		fmt.Printf("✅ Set CORS headers for OPTIONS request\n")
-		c.Status(200)
-	})
+
 
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
