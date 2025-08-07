@@ -43,7 +43,12 @@ type Experience struct {
 }
 
 func CallGeminiWithAPIKey(prompt string) (string, error) {
-	url := "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=" + os.Getenv("GEMINI_API_KEY")
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	if apiKey == "" {
+		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	}
+	
+	url := "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-pro:generateContent?key=" + apiKey
 
 	requestBody := GeminiRequest{
 		Contents: []Content{
@@ -76,7 +81,7 @@ func CallGeminiWithAPIKey(prompt string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := ioutil.ReadAll(resp.Body)
-		return "", fmt.Errorf("Gemini API error: %s", b)
+		return "", fmt.Errorf("Gemini API error (Status: %d): %s", resp.StatusCode, string(b))
 	}
 
 	var gemResp GeminiResponse

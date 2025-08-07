@@ -63,7 +63,7 @@ func main() {
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
-	
+
 	// Add experience optimization route (no auth required)
 	r.POST("/experience/optimize", handlers.OptimizeExperience)
 
