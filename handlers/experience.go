@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"resumeai/services"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -34,10 +35,41 @@ func OptimizeExperience(c *gin.Context) {
 		return
 	}
 
+	// Clean up the AI response to remove asterisks and format properly
+	cleanedExperience := cleanupAIResponse(optimizedExperience)
+
 	response := ExperienceOptimizationResponse{
-		OptimizedExperience: optimizedExperience,
+		OptimizedExperience: cleanedExperience,
 		Message:             "Experience optimized successfully based on job description.",
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// cleanupAIResponse removes asterisks and cleans up the AI response
+func cleanupAIResponse(text string) string {
+	// Split into lines
+	lines := strings.Split(text, "\n")
+	var cleanedLines []string
+	
+	for _, line := range lines {
+		// Trim whitespace
+		line = strings.TrimSpace(line)
+		
+		// Skip empty lines
+		if line == "" {
+			continue
+		}
+		
+		// Remove leading asterisk and any whitespace after it
+		if strings.HasPrefix(line, "*") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
+		}
+		
+		// Add the cleaned line
+		cleanedLines = append(cleanedLines, line)
+	}
+	
+	// Join lines back together
+	return strings.Join(cleanedLines, "\n")
 }
