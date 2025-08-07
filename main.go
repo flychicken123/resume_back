@@ -85,6 +85,18 @@ func main() {
 
 	r.Static("/static", "./static")
 
+	// Add OPTIONS handler at the very beginning, before any middleware
+	r.OPTIONS("/api/experience/optimize", func(c *gin.Context) {
+		fmt.Printf("🔧 Handling OPTIONS request for: %s\n", c.Request.URL.Path)
+		c.Header("Access-Control-Allow-Origin", "https://www.hihired.org")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Allow-Credentials", "true")
+		c.Header("Access-Control-Max-Age", "86400")
+		fmt.Printf("✅ Set CORS headers for OPTIONS request\n")
+		c.Status(200)
+	})
+
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
@@ -114,16 +126,6 @@ func main() {
 		protected.GET("/user/load", handlers.LoadUserData(db))
 		protected.POST("/experience/optimize", handlers.OptimizeExperience)
 	}
-
-	// Add OPTIONS handler outside protected group
-	r.OPTIONS("/api/experience/optimize", func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "https://www.hihired.org")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "*")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400")
-		c.Status(200)
-	})
 
 	log.Println("Server starting on port 8081")
 	r.Run(":8081")
