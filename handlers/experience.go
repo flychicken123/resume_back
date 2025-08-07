@@ -66,10 +66,12 @@ func cleanupAIResponse(text string) string {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		}
 		
-		// Add the cleaned line
-		cleanedLines = append(cleanedLines, line)
+		// Add the cleaned line with a bullet point
+		if line != "" {
+			cleanedLines = append(cleanedLines, "• "+line)
+		}
 	}
 	
-	// Join lines back together
-	return strings.Join(cleanedLines, "\n")
+	// Join lines back together with double newlines for proper spacing
+	return strings.Join(cleanedLines, "\n\n")
 }
