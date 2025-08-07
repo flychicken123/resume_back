@@ -33,4 +33,4 @@ services:
 
 networks:
   ai-resume-network:
-    driver: bridge 
+    external: true 

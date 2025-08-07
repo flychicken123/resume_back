@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 )
@@ -23,13 +24,21 @@ type AppConfig struct {
 
 func GetDatabaseConfig() DatabaseConfig {
 	port, _ := strconv.Atoi(getEnv("DB_PORT", "5432"))
+	password := getEnv("DB_PASSWORD", "")
+
+	if password == "" {
+		fmt.Println("⚠️  Warning: DB_PASSWORD environment variable is not set.")
+		fmt.Println("   Please run the development script: .\\dev-run.ps1")
+		fmt.Println("   Or set environment variables manually:")
+		fmt.Println("   $env:DB_PASSWORD='your_password'; go run .\\main.go")
+	}
 
 	return DatabaseConfig{
 		Host:     getEnv("DB_HOST", "localhost"),
 		Port:     port,
 		User:     getEnv("DB_USER", "postgres"),
-		Password: getEnv("DB_PASSWORD", ""),
-		DBName:   getEnv("DB_NAME", "resumeai"),
+		Password: password,
+		DBName:   getEnv("DB_NAME", ""),
 		SSLMode:  getEnv("DB_SSLMODE", "disable"),
 	}
 }

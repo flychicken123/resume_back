@@ -75,6 +75,9 @@ jobs:
           # Stop existing containers
           docker-compose -f docker-compose.backend.yml down || true
           
+          # Create external network if it doesn't exist
+          docker network create ai-resume-network 2>/dev/null || echo "Network already exists"
+          
           # Create .env file for docker-compose
           cat > .env << EOF
           DB_HOST=${{ secrets.DB_HOST }}
@@ -96,6 +99,18 @@ jobs:
           # Build and start containers
           docker-compose -f docker-compose.backend.yml build --no-cache
           docker-compose -f docker-compose.backend.yml up -d
+          
+          # Wait for container to be ready
+          sleep 10
+          
+          # Check if container is running
+          if ! docker ps | grep -q "ai-resume-backend"; then
+            echo "❌ Backend container failed to start"
+            docker-compose -f docker-compose.backend.yml logs
+            exit 1
+          fi
+          
+          echo "✅ Backend deployed successfully"
           
           # Clean up
           docker system prune -f 

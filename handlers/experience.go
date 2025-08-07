@@ -51,27 +51,27 @@ func cleanupAIResponse(text string) string {
 	// Split into lines
 	lines := strings.Split(text, "\n")
 	var cleanedLines []string
-	
+
 	for _, line := range lines {
 		// Trim whitespace
 		line = strings.TrimSpace(line)
-		
+
 		// Skip empty lines
 		if line == "" {
 			continue
 		}
-		
+
 		// Remove leading asterisk and any whitespace after it
 		if strings.HasPrefix(line, "*") {
 			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
 		}
-		
+
 		// Add the cleaned line with a bullet point
 		if line != "" {
 			cleanedLines = append(cleanedLines, "• "+line)
 		}
 	}
-	
+
 	// Join lines back together with double newlines for proper spacing
 	return strings.Join(cleanedLines, "\n\n")
 }
