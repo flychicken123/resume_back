@@ -97,27 +97,7 @@ jobs:
           # Build and start containers with environment variables
           docker-compose -f docker-compose.backend.yml build --no-cache
           
-          # Create .env file using environment variables
-          echo "DB_HOST=$DB_HOST" > .env
-          echo "DB_PORT=$DB_PORT" >> .env
-          echo "DB_USER=$DB_USER" >> .env
-          echo "DB_PASSWORD=$DB_PASSWORD" >> .env
-          echo "DB_NAME=$DB_NAME" >> .env
-          echo "DB_SSLMODE=$DB_SSLMODE" >> .env
-          echo "JWT_SECRET=$JWT_SECRET" >> .env
-          echo "GCP_PROJECT_ID=$GCP_PROJECT_ID" >> .env
-          echo "GCP_PRIVATE_KEY_ID=$GCP_PRIVATE_KEY_ID" >> .env
-          echo "GCP_PRIVATE_KEY=$GCP_PRIVATE_KEY" >> .env
-          echo "GCP_CLIENT_EMAIL=$GCP_CLIENT_EMAIL" >> .env
-          echo "GCP_CLIENT_ID=$GCP_CLIENT_ID" >> .env
-          echo "GCP_CLIENT_X509_CERT_URL=$GCP_CLIENT_X509_CERT_URL" >> .env
-          echo "GEMINI_API_KEY=$GEMINI_API_KEY" >> .env
-          
-          # Debug: Check if .env file was created properly
-          echo "📋 Created .env file contents:"
-          cat .env
-          
-          # Start containers
+          # Start containers with environment variables
           docker-compose -f docker-compose.backend.yml up -d
           
           # Wait for container to be ready
