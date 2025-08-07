@@ -122,7 +122,7 @@ SKILLS:
 
 **FORMATTING REQUIREMENTS:**
 - Use professional fonts (Arial, Calibri, or Times New Roman)
-- Use consistent bullet points (• or -)
+- Use consistent formatting without bullet points
 - Include proper spacing between sections
 - Use bold for section headers
 - Use italics for company names and dates
@@ -132,7 +132,7 @@ SKILLS:
 **RESUME STRUCTURE:**
 1. Contact Information (Name, Email, Phone)
 2. Professional Summary (if provided)
-3. Experience (with bullet points)
+3. Experience (without bullet points)
 4. Education (with details)
 5. Skills (organized by category if applicable)
 
@@ -173,7 +173,7 @@ func getFormatInstructions(format string) string {
 
 	default:
 		return `- Use clear section headers
-- Use bullet points for experience descriptions
+- Use clean formatting for experience descriptions without bullet points
 - Use action verbs and quantifiable achievements
 - Keep formatting clean and professional
 - Use consistent spacing and alignment`
@@ -198,14 +198,15 @@ Please optimize the user's experience description by:
 4. Maintaining the same level of detail but making it more relevant
 5. Making the language more professional and impactful
 
-IMPORTANT: Return ONLY the optimized description text with bullet points (• or -). Do NOT include:
+IMPORTANT: Return ONLY the optimized description text without bullet points. Do NOT include:
 - Job title
 - Company name
 - Dates
 - Any header information
 - Explanations or additional text
+- Bullet points (• or -)
 
-Format the response as clean bullet points that can be directly used as the experience description.`, jobDescription, userExperience)
+Format the response as clean text that can be directly used as the experience description.`, jobDescription, userExperience)
 }
 
 func getAccessToken() (string, error) {
