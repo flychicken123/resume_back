@@ -124,7 +124,7 @@ jobs:
           curl -v -X OPTIONS -H "Origin: https://www.hihired.org" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: X-API-Key" https://hihired.org/api/experience/optimize
           
           echo "Testing actual request:"
-          curl -v -X POST -H "Origin: https://www.hihired.org" -H "Content-Type: application/json" -H "X-API-Key: hihired-secure-api-2024" -d '{"test": "data"}' https://hihired.org/api/experience/optimize
+          curl -v -X POST -H "Origin: https://www.hihired.org" -H "Content-Type: application/json" -H "X-API-Key: hihired-secure-api-2024" -d '{"jobDescription": "Software Engineer", "userExperience": "Developed web applications using React and Node.js"}' https://hihired.org/api/experience/optimize
           
           # Clean up
           docker system prune -f 
