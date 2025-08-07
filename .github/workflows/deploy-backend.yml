@@ -40,7 +40,7 @@ jobs:
         GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       run: |
         echo "Creating deployment script..."
-        cat > deploy.sh << 'EOL'
+        cat > deploy.sh << EOL
         #!/bin/bash
         
         # Update system and install essential packages
@@ -70,7 +70,7 @@ jobs:
         git clone -b main https://github.com/flychicken123/resume_back.git .
         
         # Create .env file
-        cat > .env << 'EOF'
+        cat > .env << EOF
         DB_HOST="${DB_HOST}"
         DB_PORT="${DB_PORT}"
         DB_USER="${DB_USER}"
