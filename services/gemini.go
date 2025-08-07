@@ -196,10 +196,16 @@ Please optimize the user's experience description by:
 2. Highlighting achievements that align with the job requirements
 3. Using action verbs and quantifiable results where possible
 4. Maintaining the same level of detail but making it more relevant
-5. Keeping the same company name, role, and duration
-6. Making the language more professional and impactful
+5. Making the language more professional and impactful
 
-Return only the optimized experience description in a clear, professional format with bullet points. Do not include explanations or additional text.`, jobDescription, userExperience)
+IMPORTANT: Return ONLY the optimized description text with bullet points (• or -). Do NOT include:
+- Job title
+- Company name
+- Dates
+- Any header information
+- Explanations or additional text
+
+Format the response as clean bullet points that can be directly used as the experience description.`, jobDescription, userExperience)
 }
 
 func getAccessToken() (string, error) {
