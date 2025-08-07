@@ -26,6 +26,9 @@ go.work
 .env.local
 .env.production
 
+# Local development scripts
+dev-run.ps1
+
 # IDE
 .vscode/
 .idea/
