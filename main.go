@@ -48,10 +48,10 @@ func main() {
 
 	r.Static("/static", "./static")
 
-	// Add OPTIONS handler at the very beginning, before any middleware
-	r.OPTIONS("/api/experience/optimize", func(c *gin.Context) {
+	// Add OPTIONS handler for experience optimization
+	r.OPTIONS("/experience/optimize", func(c *gin.Context) {
 		fmt.Printf("🔧 Handling OPTIONS request for: %s\n", c.Request.URL.Path)
-		c.Header("Access-Control-Allow-Origin", "https://www.hihired.org")
+		c.Header("Access-Control-Allow-Origin", "*")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		c.Header("Access-Control-Allow-Headers", "*")
 		c.Header("Access-Control-Allow-Credentials", "true")
@@ -63,6 +63,9 @@ func main() {
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
+	
+	// Add experience optimization route (no auth required)
+	r.POST("/experience/optimize", handlers.OptimizeExperience)
 
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
