@@ -103,16 +103,7 @@ func main() {
 
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
-	protected.Use(func(c *gin.Context) {
-		apiKey := c.GetHeader("X-API-Key")
-		if apiKey != "hihired-secure-api-2024" {
-			fmt.Printf("❌ Invalid API key from: %s\n", c.GetHeader("Origin"))
-			c.JSON(401, gin.H{"error": "Invalid API key"})
-			c.Abort()
-			return
-		}
-		c.Next()
-	})
+
 	{
 		protected.GET("/user/profile", handlers.GetUserProfile(db))
 		protected.PUT("/user/profile", handlers.UpdateUserProfile(db))
