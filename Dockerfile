@@ -32,7 +32,7 @@ COPY --from=builder /app/main .
 COPY --from=builder /app/static ./static
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/generate_resume.py ./generate_resume.py
-COPY --from=builder /app/config.cfg ./config.cfg
+
 
 # Expose port 8081
 EXPOSE 8081
