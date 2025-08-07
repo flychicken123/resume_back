@@ -35,7 +35,7 @@ jobs:
         
     - name: Deploy Backend to EC2
       uses: appleboy/ssh-action@v0.1.5
-      env:
+      envs:
         DB_HOST: ${{ secrets.DB_HOST }}
         DB_PORT: ${{ secrets.DB_PORT }}
         DB_USER: ${{ secrets.DB_USER }}
@@ -96,6 +96,15 @@ jobs:
           
           # Build and start containers with environment variables
           docker-compose -f docker-compose.backend.yml build --no-cache
+          
+          # Debug: Check environment variables
+          echo "🔍 Checking environment variables..."
+          echo "DB_HOST: $DB_HOST"
+          echo "DB_PORT: $DB_PORT"
+          echo "DB_USER: $DB_USER"
+          echo "DB_NAME: $DB_NAME"
+          echo "DB_SSLMODE: $DB_SSLMODE"
+          echo "GCP_PROJECT_ID: $GCP_PROJECT_ID"
           
           # Start containers with environment variables passed directly
           DB_HOST="$DB_HOST" \
