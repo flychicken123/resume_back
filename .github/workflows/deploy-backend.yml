@@ -97,6 +97,22 @@ jobs:
           # Build and start containers with environment variables
           docker-compose -f docker-compose.backend.yml build --no-cache
           
+          # Export environment variables for docker-compose
+          export DB_HOST="$DB_HOST"
+          export DB_PORT="$DB_PORT"
+          export DB_USER="$DB_USER"
+          export DB_PASSWORD="$DB_PASSWORD"
+          export DB_NAME="$DB_NAME"
+          export DB_SSLMODE="$DB_SSLMODE"
+          export JWT_SECRET="$JWT_SECRET"
+          export GCP_PROJECT_ID="$GCP_PROJECT_ID"
+          export GCP_PRIVATE_KEY_ID="$GCP_PRIVATE_KEY_ID"
+          export GCP_PRIVATE_KEY="$GCP_PRIVATE_KEY"
+          export GCP_CLIENT_EMAIL="$GCP_CLIENT_EMAIL"
+          export GCP_CLIENT_ID="$GCP_CLIENT_ID"
+          export GCP_CLIENT_X509_CERT_URL="$GCP_CLIENT_X509_CERT_URL"
+          export GEMINI_API_KEY="$GEMINI_API_KEY"
+          
           # Start containers with environment variables
           docker-compose -f docker-compose.backend.yml up -d
           
