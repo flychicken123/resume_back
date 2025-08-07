@@ -6,7 +6,6 @@ import (
 	"resumeai/config"
 	"resumeai/database"
 	"resumeai/handlers"
-	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -44,44 +43,8 @@ func main() {
 		MaxAge:           12 * 60 * 60,
 	}))
 
-	r.Use(func(c *gin.Context) {
-		origin := c.GetHeader("Origin")
-		referer := c.GetHeader("Referer")
-
-		fmt.Printf("Request: %s %s\n", c.Request.Method, c.Request.URL.Path)
-		fmt.Printf("Origin: %s\n", origin)
-		fmt.Printf("Referer: %s\n", referer)
-
-		// Allow health checks and internal requests
-		if origin == "" && (strings.Contains(c.Request.RemoteAddr, "127.0.0.1") || strings.Contains(c.Request.RemoteAddr, "::1")) {
-			fmt.Printf("✅ Allowing internal request from: %s\n", c.Request.RemoteAddr)
-			c.Next()
-			return
-		}
-
-		allowedDomains := []string{"https://hihired.org", "https://www.hihired.org"}
-		isAllowed := false
-
-		for _, domain := range allowedDomains {
-			if origin == domain || (referer != "" && len(referer) >= len(domain) && referer[:len(domain)] == domain) {
-				isAllowed = true
-				break
-			}
-		}
-
-		if origin == "http://localhost:3000" || origin == "http://127.0.0.1:3000" {
-			isAllowed = true
-		}
-
-		if !isAllowed {
-			fmt.Printf("❌ Blocked request from unauthorized origin: %s\n", origin)
-			c.JSON(403, gin.H{"error": "Unauthorized origin"})
-			c.Abort()
-			return
-		}
-
-		c.Next()
-	})
+	// CORS is already handled by the cors.New() middleware above
+	// This custom middleware was causing issues and is redundant
 
 	r.Static("/static", "./static")
 
