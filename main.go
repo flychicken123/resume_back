@@ -63,7 +63,7 @@ func main() {
 		isAllowed := false
 
 		for _, domain := range allowedDomains {
-			if origin == domain || (referer != "" && referer[:len(domain)] == domain) {
+			if origin == domain || (referer != "" && len(referer) >= len(domain) && referer[:len(domain)] == domain) {
 				isAllowed = true
 				break
 			}
