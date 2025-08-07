@@ -51,6 +51,12 @@ func main() {
 		fmt.Printf("Origin: %s\n", origin)
 		fmt.Printf("Referer: %s\n", referer)
 
+		// Allow health checks and internal requests
+		if origin == "" && (c.Request.RemoteAddr == "127.0.0.1" || c.Request.RemoteAddr == "::1") {
+			c.Next()
+			return
+		}
+
 		allowedDomains := []string{"https://hihired.org", "https://www.hihired.org"}
 		isAllowed := false
 
