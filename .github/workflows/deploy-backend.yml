@@ -98,6 +98,10 @@ jobs:
           echo "GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}" >> .env
           echo "GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}" >> .env
           
+          # Debug: Check if .env file was created properly
+          echo "📋 Created .env file contents:"
+          cat .env
+          
           # Start containers
           docker-compose -f docker-compose.backend.yml up -d
           
