@@ -113,10 +113,18 @@ jobs:
           
           echo "✅ Backend deployed successfully"
           
-          # Test CORS headers
+          # Show container logs
+          echo "📋 Container logs:"
+          docker-compose -f docker-compose.backend.yml logs --tail=20
+          
+          # Test CORS headers with detailed output
           echo "🧪 Testing CORS headers..."
           sleep 5
-          curl -I -H "Origin: https://www.hihired.org" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: X-API-Key" https://hihired.org/api/experience/optimize || echo "CORS test completed"
+          echo "Testing OPTIONS request:"
+          curl -v -X OPTIONS -H "Origin: https://www.hihired.org" -H "Access-Control-Request-Method: POST" -H "Access-Control-Request-Headers: X-API-Key" https://hihired.org/api/experience/optimize
+          
+          echo "Testing actual request:"
+          curl -v -X POST -H "Origin: https://www.hihired.org" -H "Content-Type: application/json" -H "X-API-Key: hihired-secure-api-2024" -d '{"test": "data"}' https://hihired.org/api/experience/optimize
           
           # Clean up
           docker system prune -f 
