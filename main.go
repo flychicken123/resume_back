@@ -6,6 +6,7 @@ import (
 	"resumeai/config"
 	"resumeai/database"
 	"resumeai/handlers"
+	"strings"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -52,7 +53,8 @@ func main() {
 		fmt.Printf("Referer: %s\n", referer)
 
 		// Allow health checks and internal requests
-		if origin == "" && (c.Request.RemoteAddr == "127.0.0.1" || c.Request.RemoteAddr == "::1") {
+		if origin == "" && (strings.Contains(c.Request.RemoteAddr, "127.0.0.1") || strings.Contains(c.Request.RemoteAddr, "::1")) {
+			fmt.Printf("✅ Allowing internal request from: %s\n", c.Request.RemoteAddr)
 			c.Next()
 			return
 		}
