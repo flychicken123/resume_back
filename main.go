@@ -63,21 +63,6 @@ func main() {
 		c.Next()
 	})
 
-	// Generic OPTIONS handler to ensure preflight succeeds for all routes (including /api/*)
-	r.OPTIONS("/*path", func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400")
-		c.Status(http.StatusNoContent)
-	})
-
 	// Serve static files without /api prefix
 	r.Static("/static", "./static")
 
