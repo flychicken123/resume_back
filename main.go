@@ -63,11 +63,6 @@ func main() {
 		c.Next()
 	})
 
-	// CORS is already handled by the cors.New() middleware above
-	// This custom middleware was causing issues and is redundant
-
-	r.Static("/static", "./static")
-
 	// Generic OPTIONS handler to ensure preflight succeeds for all routes (including /api/*)
 	r.OPTIONS("/*path", func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
@@ -83,6 +78,9 @@ func main() {
 		c.Status(http.StatusNoContent)
 	})
 
+	// Serve static files without /api prefix
+	r.Static("/static", "./static")
+
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
@@ -97,9 +95,6 @@ func main() {
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
 	}
-
-	// Serve static files without /api prefix
-	r.Static("/static", "./static")
 
 	// Protected routes (require auth)
 	protected := r.Group("/api")
