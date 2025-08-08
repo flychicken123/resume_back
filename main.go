@@ -72,19 +72,39 @@ func main() {
 		filename := c.Param("filename")
 		filepath := "./static/" + filename
 
+		log.Printf("Download request for file: %s", filename)
+		log.Printf("Full filepath: %s", filepath)
+
 		// Check if file exists
 		if _, err := os.Stat(filepath); os.IsNotExist(err) {
+			log.Printf("File not found: %s", filepath)
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 			return
+		}
+
+		// Get file info for debugging
+		if fileInfo, err := os.Stat(filepath); err == nil {
+			log.Printf("File found: %s, size: %d bytes", filepath, fileInfo.Size())
 		}
 
 		// Set proper headers for file download
 		c.Header("Content-Type", "application/pdf")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Cache-Control", "no-cache")
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type")
 
 		// Serve the file
 		c.File(filepath)
+	})
+
+	// Add OPTIONS handler for download endpoint
+	r.OPTIONS("/download/:filename", func(c *gin.Context) {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Content-Type")
+		c.Status(http.StatusNoContent)
 	})
 
 	r.POST("/api/auth/register", handlers.RegisterUser(db))
