@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"net/http"
 	"resumeai/config"
 	"resumeai/database"
 	"resumeai/handlers"
@@ -48,16 +49,19 @@ func main() {
 
 	r.Static("/static", "./static")
 
-	// Add OPTIONS handler for experience optimization
-	r.OPTIONS("/experience/optimize", func(c *gin.Context) {
-		fmt.Printf("🔧 Handling OPTIONS request for: %s\n", c.Request.URL.Path)
-		c.Header("Access-Control-Allow-Origin", "*")
+	// Generic OPTIONS handler to ensure preflight succeeds for all routes (including /api/*)
+	r.OPTIONS("/*path", func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		c.Header("Access-Control-Allow-Origin", origin)
+		c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port")
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
-		fmt.Printf("✅ Set CORS headers for OPTIONS request\n")
-		c.Status(200)
+		c.Status(http.StatusNoContent)
 	})
 
 	r.POST("/api/auth/register", handlers.RegisterUser(db))

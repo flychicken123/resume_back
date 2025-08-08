@@ -99,3 +99,29 @@ jobs:
           
           # Clean up
           docker system prune -f 
+
+          # Smoke test CORS preflight for common endpoints
+          echo "🧪 Testing CORS preflight..."
+          sleep 5
+          for EP in \
+            "/api/auth/register" \
+            "/api/auth/login" \
+            "/api/auth/logout" \
+            "/experience/optimize" \
+            "/resume/generate" \
+            "/resume/generate-pdf" \
+            "/resume/parse" \
+            "/ai/education" \
+            "/ai/summary" \
+            "/api/user/save"; do
+            echo "Testing OPTIONS $EP"
+            curl -sS -i -X OPTIONS \
+              -H "Origin: https://www.hihired.org" \
+              -H "Access-Control-Request-Method: POST" \
+              https://hihired.org$EP | grep -i "Access-Control-Allow-Origin" || true
+          done
+          echo "Testing GET preflight for /api/user/load"
+          curl -sS -i -X OPTIONS \
+            -H "Origin: https://www.hihired.org" \
+            -H "Access-Control-Request-Method: GET" \
+            https://hihired.org/api/user/load | grep -i "Access-Control-Allow-Origin" || true
