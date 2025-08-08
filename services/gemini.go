@@ -81,7 +81,7 @@ func CallGeminiWithAPIKey(prompt string) (string, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := ioutil.ReadAll(resp.Body)
-		return "", fmt.Errorf("Gemini API error (Status: %d): %s", resp.StatusCode, string(b))
+		return "", fmt.Errorf("gemini api error (status: %d): %s", resp.StatusCode, string(b))
 	}
 
 	var gemResp GeminiResponse
@@ -218,8 +218,7 @@ Scaled the platform's capacity to track key performance indicators, including Es
 
 Collaborated with product and engineering teams to integrate predictive AI models into the system, further enhancing scalability and proactively addressing potential delivery risks.
 
-Each achievement should be on its own line without bullet points.`, jobDescription, userExperience)
-<<<<<<< HEAD
+    Each achievement should be on its own line without bullet points.`, jobDescription, userExperience)
 }
 
 func BuildEducationOptimizationPrompt(education string) string {
@@ -272,9 +271,7 @@ IMPORTANT: Return ONLY the professional summary text. Do NOT include:
 - Bullet point symbols (• or -)
 - Any header information
 
-Format the response as a clean, professional summary that can be directly used in a resume.`, experience, education, skillsText)
-=======
->>>>>>> 374a471980f2bf82fe1b84e96b779a1bef75bd20
+    Format the response as a clean, professional summary that can be directly used in a resume.`, experience, education, skillsText)
 }
 
 func getAccessToken() (string, error) {
