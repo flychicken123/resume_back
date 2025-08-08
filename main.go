@@ -106,14 +106,8 @@ func main() {
 		protected.GET("/user/profile", handlers.GetUserProfile(db))
 		protected.PUT("/user/profile", handlers.UpdateUserProfile(db))
 		protected.POST("/user/change-password", handlers.ChangePassword(db))
-
-		protected.POST("/resume/generate", handlers.GenerateResume)
-		protected.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
-		protected.POST("/resume/parse", handlers.ParseResume)
-
 		protected.POST("/user/save", handlers.SaveUserData(db))
 		protected.GET("/user/load", handlers.LoadUserData(db))
-		protected.POST("/experience/optimize", handlers.OptimizeExperience)
 	}
 
 	log.Println("Server starting on port 8081")
