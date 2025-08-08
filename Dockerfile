@@ -27,15 +27,20 @@ RUN apt-get update \
        fontconfig \
        fonts-dejavu \
        python3 \
+       python3-pip \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory and required subdirectories
 WORKDIR /root/
 RUN mkdir -p static templates
 
-# Copy the binary and python script
+# Copy the binary and python scripts
 COPY --from=builder /app/main .
 COPY --from=builder /app/generate_resume.py .
+COPY --from=builder /app/generate_pdf.py .
+
+# Install Python dependencies
+RUN pip3 install weasyprint
 
 # Expose port 8081
 EXPOSE 8081
