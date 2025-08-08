@@ -28,6 +28,7 @@ go.work
 
 # Local development scripts
 dev-run.ps1
+test-docker.ps1
 
 # IDE
 .vscode/
