@@ -2,15 +2,12 @@ package services
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"strings"
-
-	"golang.org/x/oauth2/google"
 )
 
 type GeminiRequest struct {
@@ -80,7 +77,7 @@ func CallGeminiWithAPIKey(prompt string) (string, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		b, _ := ioutil.ReadAll(resp.Body)
+		b, _ := io.ReadAll(resp.Body)
 		return "", fmt.Errorf("gemini api error (status: %d): %s", resp.StatusCode, string(b))
 	}
 
@@ -272,18 +269,4 @@ IMPORTANT: Return ONLY the professional summary text. Do NOT include:
 - Any header information
 
     Format the response as a clean, professional summary that can be directly used in a resume.`, experience, education, skillsText)
-}
-
-func getAccessToken() (string, error) {
-	ctx := context.Background()
-	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
-	if err != nil {
-		return "", err
-	}
-	tokenSource := creds.TokenSource
-	token, err := tokenSource.Token()
-	if err != nil {
-		return "", err
-	}
-	return token.AccessToken, nil
 }

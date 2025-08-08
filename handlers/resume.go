@@ -48,7 +48,10 @@ func GenerateResume(c *gin.Context) {
 
 	// Create static directory if it doesn't exist
 	saveDir := "./static"
-	os.MkdirAll(saveDir, os.ModePerm)
+	if err := os.MkdirAll(saveDir, os.ModePerm); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create directory"})
+		return
+	}
 
 	// Generate filename with timestamp
 	filename := "resume_" + time.Now().Format("20060102150405") + ".html"
@@ -183,7 +186,7 @@ func GeneratePDFResume(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message":     "PDF resume generated successfully.",
-		"downloadURL": presignedURL, // Use presigned URL to avoid CORS
+		"downloadURL": presignedURL,          // Use presigned URL to avoid CORS
 		"filePath":    "/static/" + filename, // Keep for backward compatibility
 	})
 }
@@ -202,20 +205,22 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		return fmt.Errorf("failed to write HTML file: %v", err)
 	}
 
-	// Convert HTML to PDF using wkhtmltopdf with optimized settings
+	// Convert HTML to PDF using wkhtmltopdf with minimal margins to reduce whitespace
 	fmt.Printf("Generating PDF with wkhtmltopdf...\n")
 	cmd := exec.Command(
 		"wkhtmltopdf",
 		"--page-size", "A4",
-		"--margin-top", "0.5in",
-		"--margin-right", "0.5in",
-		"--margin-bottom", "0.5in",
-		"--margin-left", "0.5in",
+		"--margin-top", "0.1in",
+		"--margin-right", "0.1in",
+		"--margin-bottom", "0.1in",
+		"--margin-left", "0.1in",
 		"--encoding", "UTF-8",
 		"--print-media-type",
 		"--no-stop-slow-scripts",
 		"--load-error-handling", "ignore",
 		"--quiet",
+		"--disable-smart-shrinking",
+		"--zoom", "1.0",
 		htmlPath,
 		outputPath,
 	)

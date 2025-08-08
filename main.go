@@ -91,7 +91,7 @@ func main() {
 		c.Header("Content-Type", "application/pdf")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Cache-Control", "no-cache")
-		
+
 		// Set CORS headers for cross-origin requests
 		origin := c.Request.Header.Get("Origin")
 		if origin == "" {
@@ -148,5 +148,7 @@ func main() {
 	}
 
 	log.Println("Server starting on port 8081")
-	r.Run(":8081")
+	if err := r.Run(":8081"); err != nil {
+		log.Fatal("Failed to start server:", err)
+	}
 }
