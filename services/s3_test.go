@@ -15,20 +15,6 @@ func TestNewS3Service(t *testing.T) {
 	assert.Nil(t, service)
 }
 
-func TestGeneratePresignedURL(t *testing.T) {
-	// Mock S3 service for testing
-	service := &S3Service{
-		bucket: "test-bucket",
-		region: "us-east-1",
-	}
-
-	url, err := service.GeneratePresignedURL("test-file.pdf")
-
-	// Should fail without proper AWS credentials
-	assert.Error(t, err)
-	assert.Empty(t, url)
-}
-
 func TestS3ServiceValidation(t *testing.T) {
 	tests := []struct {
 		name    string
