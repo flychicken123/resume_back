@@ -13,9 +13,6 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Create required directories
-RUN mkdir -p /app/static /app/templates
-
 # Build the application (only main.go to avoid conflicts)
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main main.go
 
@@ -32,19 +29,13 @@ RUN apt-get update \
        python3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+# Create app directory and required subdirectories
 WORKDIR /root/
+RUN mkdir -p static templates
 
-# Create required directories
-RUN mkdir -p ./static ./templates
-
-# Copy the binary from builder stage
+# Copy the binary and python script
 COPY --from=builder /app/main .
-
-# Copy static files and templates
-COPY --from=builder /app/static ./static
-COPY --from=builder /app/templates ./templates
-COPY --from=builder /app/generate_resume.py ./generate_resume.py
+COPY --from=builder /app/generate_resume.py .
 
 # Expose port 8081
 EXPOSE 8081
