@@ -171,9 +171,11 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		"--zoom", "0.98",
 		// Normalize DPI for consistent sizing
 		"--dpi", "96",
-		// Remove problematic flag that's not supported in all versions
-		// "--disable-smart-shrinking",
-		"--quiet",
+		// Headless mode for Docker
+		"--no-stop-slow-scripts",
+		"--javascript-delay", "1000",
+		"--load-error-handling", "ignore",
+		"--load-media-error-handling", "ignore",
 		htmlPath,
 		outputPath,
 	)
@@ -181,13 +183,46 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("wkhtmltopdf error: %v\n", err)
-		// If wkhtmltopdf fails, return the error instead of creating a corrupted file
-		return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
+		// Try alternative approach with different options
+		fmt.Printf("Trying alternative wkhtmltopdf approach...\n")
+		
+		cmd2 := exec.Command(
+			"wkhtmltopdf",
+			"--page-size", "A4",
+			"--margin-top", "0.5in",
+			"--margin-right", "0.5in",
+			"--margin-bottom", "0.5in",
+			"--margin-left", "0.5in",
+			"--encoding", "UTF-8",
+			"--no-stop-slow-scripts",
+			"--load-error-handling", "ignore",
+			htmlPath,
+			outputPath,
+		)
+		
+		output2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			fmt.Printf("Alternative wkhtmltopdf also failed: %v\n", err2)
+			return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
+		}
+		
+		fmt.Printf("Alternative PDF generation output: %s\n", string(output2))
+		output = output2
 	}
 
 	// Clean up temporary HTML file
 	os.Remove(htmlPath)
 
 	fmt.Printf("PDF generation output: %s\n", string(output))
+	
+	// Check if PDF file was created and has content
+	if fileInfo, err := os.Stat(outputPath); err != nil {
+		return fmt.Errorf("PDF file not found after generation: %v", err)
+	} else if fileInfo.Size() == 0 {
+		return fmt.Errorf("PDF file is empty after generation")
+	} else {
+		fmt.Printf("PDF file created successfully: %s, size: %d bytes\n", outputPath, fileInfo.Size())
+	}
+	
 	return nil
 }
