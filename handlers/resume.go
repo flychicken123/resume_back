@@ -3,9 +3,11 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
+	"resumeai/services"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -137,9 +139,34 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
+	// Initialize S3 service
+	s3Service, err := services.NewS3Service()
+	if err != nil {
+		log.Printf("Failed to initialize S3 service: %v", err)
+		// Fallback to local file
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "PDF resume generated successfully.",
+			"filePath": "/static/" + filename,
+		})
+		return
+	}
+
+	// Upload to S3
+	downloadURL, err := s3Service.UploadFile(filepath, filename)
+	if err != nil {
+		log.Printf("Failed to upload to S3: %v", err)
+		// Fallback to local file
+		c.JSON(http.StatusOK, gin.H{
+			"message":  "PDF resume generated successfully.",
+			"filePath": "/static/" + filename,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":  "PDF resume generated successfully.",
-		"filePath": "/static/" + filename,
+		"message":      "PDF resume generated successfully.",
+		"downloadURL":  downloadURL,
+		"filePath":     "/static/" + filename, // Keep for backward compatibility
 	})
 }
 
@@ -175,12 +202,12 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		outputPath,
 	)
 
-		output, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("wkhtmltopdf error: %v\n", err)
 		return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
 	}
-	
+
 	fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output))
 
 	// Clean up temporary HTML file
