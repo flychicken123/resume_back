@@ -171,7 +171,9 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		"--zoom", "0.98",
 		// Normalize DPI for consistent sizing
 		"--dpi", "96",
-		"--disable-smart-shrinking",
+		// Remove problematic flag that's not supported in all versions
+		// "--disable-smart-shrinking",
+		"--quiet",
 		htmlPath,
 		outputPath,
 	)
@@ -179,13 +181,8 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("wkhtmltopdf error: %v\n", err)
-		// If wkhtmltopdf fails, copy HTML content as fallback
-		err = os.WriteFile(outputPath, []byte(htmlContent), 0644)
-		if err != nil {
-			return fmt.Errorf("failed to write fallback HTML: %v", err)
-		}
-		fmt.Printf("Using HTML fallback due to wkhtmltopdf error: %v\n", err)
-		return nil
+		// If wkhtmltopdf fails, return the error instead of creating a corrupted file
+		return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
 	}
 
 	// Clean up temporary HTML file
