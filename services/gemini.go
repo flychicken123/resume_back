@@ -219,6 +219,7 @@ Scaled the platform's capacity to track key performance indicators, including Es
 Collaborated with product and engineering teams to integrate predictive AI models into the system, further enhancing scalability and proactively addressing potential delivery risks.
 
 Each achievement should be on its own line without bullet points.`, jobDescription, userExperience)
+<<<<<<< HEAD
 }
 
 func BuildEducationOptimizationPrompt(education string) string {
@@ -272,6 +273,8 @@ IMPORTANT: Return ONLY the professional summary text. Do NOT include:
 - Any header information
 
 Format the response as a clean, professional summary that can be directly used in a resume.`, experience, education, skillsText)
+=======
+>>>>>>> 374a471980f2bf82fe1b84e96b779a1bef75bd20
 }
 
 func getAccessToken() (string, error) {
