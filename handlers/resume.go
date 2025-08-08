@@ -157,28 +157,16 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		return fmt.Errorf("failed to write HTML file: %v", err)
 	}
 
-	// Convert HTML to PDF using wkhtmltopdf with simpler, more reliable options
-	cmd := exec.Command(
-		"wkhtmltopdf",
-		"--page-size", "A4",
-		"--margin-top", "0.5in",
-		"--margin-right", "0.5in",
-		"--margin-bottom", "0.5in",
-		"--margin-left", "0.5in",
-		"--encoding", "UTF-8",
-		"--print-media-type",
-		"--no-stop-slow-scripts",
-		"--load-error-handling", "ignore",
-		htmlPath,
-		outputPath,
-	)
+	// Try WeasyPrint first as it's more reliable
+	fmt.Printf("Trying WeasyPrint for PDF generation...\n")
+	cmd := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
 
-	output, err := cmd.CombinedOutput()
+		output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("wkhtmltopdf error: %v\n", err)
-		// Try alternative approach with different options
-		fmt.Printf("Trying alternative wkhtmltopdf approach...\n")
-
+		fmt.Printf("WeasyPrint error: %v\n", err)
+		// Try wkhtmltopdf as fallback
+		fmt.Printf("Trying wkhtmltopdf as fallback...\n")
+		
 		cmd2 := exec.Command(
 			"wkhtmltopdf",
 			"--page-size", "A4",
@@ -192,26 +180,17 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 			htmlPath,
 			outputPath,
 		)
-
+		
 		output2, err2 := cmd2.CombinedOutput()
 		if err2 != nil {
-			fmt.Printf("Alternative wkhtmltopdf also failed: %v\n", err2)
-			fmt.Printf("Trying WeasyPrint as final fallback...\n")
-
-			// Try WeasyPrint as final fallback
-			cmd3 := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
-			output3, err3 := cmd3.CombinedOutput()
-			if err3 != nil {
-				fmt.Printf("WeasyPrint also failed: %v\n", err3)
-				return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
-			}
-
-			fmt.Printf("WeasyPrint PDF generation output: %s\n", string(output3))
-			output = output3
-		} else {
-			fmt.Printf("Alternative PDF generation output: %s\n", string(output2))
-			output = output2
+			fmt.Printf("wkhtmltopdf also failed: %v\n", err2)
+			return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
 		}
+		
+		fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output2))
+		output = output2
+	} else {
+		fmt.Printf("WeasyPrint PDF generation output: %s\n", string(output))
 	}
 
 	// Clean up temporary HTML file

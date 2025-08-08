@@ -14,7 +14,7 @@ def generate_pdf(html_content, output_path):
         # Create HTML object
         html = HTML(string=html_content)
         
-        # Define CSS for PDF styling
+        # Define CSS for PDF styling - more comprehensive
         css_content = """
         @page {
             size: A4;
@@ -25,11 +25,14 @@ def generate_pdf(html_content, output_path):
             font-size: 11pt;
             line-height: 1.15;
             color: #374151;
+            margin: 0;
+            padding: 0;
         }
         .preview {
             min-height: auto !important;
             box-shadow: none !important;
             border: none !important;
+            padding: 0.5in;
         }
         .preview * {
             page-break-inside: avoid;
@@ -37,6 +40,51 @@ def generate_pdf(html_content, output_path):
         .preview::after {
             display: none !important;
             content: none !important;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 1rem;
+        }
+        .name {
+            font-size: 18pt;
+            font-weight: bold;
+            color: #1f2937;
+            margin-bottom: 0.5rem;
+        }
+        .contact-info {
+            font-size: 10pt;
+            color: #6b7280;
+        }
+        .section-header {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #1f2937;
+            border-bottom: 1px solid #000;
+            margin-top: 1rem;
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.25rem;
+        }
+        .experience-item, .education-item {
+            margin-bottom: 1rem;
+        }
+        .institution-header {
+            font-size: 11pt;
+            font-weight: bold;
+            color: #374151;
+            margin-bottom: 0.25rem;
+        }
+        .education-details {
+            font-size: 10pt;
+            color: #6b7280;
+            margin-bottom: 0.5rem;
+        }
+        .bullet-points {
+            margin: 0.5rem 0;
+            padding-left: 1rem;
+        }
+        .bullet-points li {
+            margin-bottom: 0.25rem;
+            line-height: 1.2;
         }
         """
         
