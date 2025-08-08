@@ -221,6 +221,59 @@ Collaborated with product and engineering teams to integrate predictive AI model
 Each achievement should be on its own line without bullet points.`, jobDescription, userExperience)
 }
 
+func BuildEducationOptimizationPrompt(education string) string {
+	return fmt.Sprintf(`You are an expert resume writer and career coach.
+
+Your task is to optimize a user's education section to make it more professional and impactful.
+
+User's Original Education:
+%s
+
+Please optimize the education description by:
+1. Making it more professional and concise
+2. Highlighting relevant coursework and achievements
+3. Using clear, professional language
+4. Maintaining the same level of detail but making it more impactful
+5. Focusing on relevant academic achievements and skills
+
+IMPORTANT: Return ONLY the optimized education text. Do NOT include:
+- Explanations or additional text
+- Bullet point symbols (• or -)
+- Any header information
+
+Format the response as clean, professional text that can be directly used as the education description.`, education)
+}
+
+func BuildSummaryOptimizationPrompt(experience, education string, skills []string) string {
+	skillsText := ""
+	if len(skills) > 0 {
+		skillsText = strings.Join(skills, ", ")
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer and career coach.
+
+Your task is to create a compelling professional summary based on the user's experience, education, and skills.
+
+Experience: %s
+Education: %s
+Skills: %s
+
+Please create a professional summary that:
+1. Highlights key achievements and experience
+2. Emphasizes relevant skills and expertise
+3. Shows career progression and impact
+4. Uses professional, concise language
+5. Captures the reader's attention in 2-3 sentences
+6. Focuses on quantifiable achievements where possible
+
+IMPORTANT: Return ONLY the professional summary text. Do NOT include:
+- Explanations or additional text
+- Bullet point symbols (• or -)
+- Any header information
+
+Format the response as a clean, professional summary that can be directly used in a resume.`, experience, education, skillsText)
+}
+
 func getAccessToken() (string, error) {
 	ctx := context.Background()
 	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")

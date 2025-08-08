@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{name} - Resume</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 40px;
+            background-color: white;
+            font-size: 16px;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 3px solid #3498db;
+            padding-bottom: 15px;
+            margin-bottom: 30px;
+        }
+        .name {
+            font-size: 32px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 8px;
+        }
+        .contact {
+            color: #7f8c8d;
+            font-size: 18px;
+        }
+        .section {
+            margin-bottom: 30px;
+        }
+        .section-title {
+            font-size: 24px;
+            font-weight: bold;
+            color: #3498db;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 8px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+        }
+        .experience-item {
+            margin-bottom: 25px;
+        }
+        .job-title {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 10px;
+        }
+        .achievement {
+            margin-left: 25px;
+            margin-bottom: 8px;
+            font-size: 16px;
+            line-height: 1.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="name">{name}</div>
+        <div class="contact">{email} • {phone}</div>
+    </div>
+    
+    <div class="section">
+        <div class="section-title">Experience</div>
+        <div class="experience-item">
+            <div class="job-title">{position} Seattle, WA • Nov 2022 - Nov 2024</div>
+            {experience_bullets}
+        </div>
+    </div>
+    
+    <div class="section">
+        <div class="section-title">Education</div>
+        <div class="experience-item">
+            <div class="job-title">{education}</div>
+        </div>
+    </div>
+</body>
+</html>

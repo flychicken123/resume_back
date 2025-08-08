@@ -67,6 +67,15 @@ func main() {
 	// Add experience optimization route (no auth required)
 	r.POST("/experience/optimize", handlers.OptimizeExperience)
 
+	// Add resume generation routes (no auth required)
+	r.POST("/resume/generate", handlers.GenerateResume)
+	r.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
+	r.POST("/resume/parse", handlers.ParseResume)
+
+	// Add AI optimization routes (no auth required)
+	r.POST("/ai/education", handlers.OptimizeEducation)
+	r.POST("/ai/summary", handlers.OptimizeSummary)
+
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
 

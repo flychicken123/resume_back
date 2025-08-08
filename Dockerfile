@@ -19,8 +19,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main main.go
 # Final stage
 FROM alpine:latest
 
-# Install ca-certificates for HTTPS requests
-RUN apk --no-cache add ca-certificates
+# Install ca-certificates for HTTPS requests and wkhtmltopdf for PDF generation
+RUN apk --no-cache add ca-certificates wkhtmltopdf
 
 # Create app directory
 WORKDIR /root/

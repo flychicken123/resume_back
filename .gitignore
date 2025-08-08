@@ -46,4 +46,9 @@ dist/
 
 # Temporary files
 *.tmp
-*.temp 
+*.temp
+
+# Generated resumes
+static/resume_*.html
+static/resume_*.pdf
+static/resume_*.docx
