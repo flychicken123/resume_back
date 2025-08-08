@@ -157,41 +157,31 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		return fmt.Errorf("failed to write HTML file: %v", err)
 	}
 
-	// Try WeasyPrint first as it's more reliable
-	fmt.Printf("Trying WeasyPrint for PDF generation...\n")
-	cmd := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
+	// Convert HTML to PDF using wkhtmltopdf with optimized settings
+	fmt.Printf("Generating PDF with wkhtmltopdf...\n")
+	cmd := exec.Command(
+		"wkhtmltopdf",
+		"--page-size", "A4",
+		"--margin-top", "0.5in",
+		"--margin-right", "0.5in",
+		"--margin-bottom", "0.5in",
+		"--margin-left", "0.5in",
+		"--encoding", "UTF-8",
+		"--print-media-type",
+		"--no-stop-slow-scripts",
+		"--load-error-handling", "ignore",
+		"--quiet",
+		htmlPath,
+		outputPath,
+	)
 
-	output, err := cmd.CombinedOutput()
+		output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("WeasyPrint error: %v\n", err)
-		// Try wkhtmltopdf as fallback
-		fmt.Printf("Trying wkhtmltopdf as fallback...\n")
-
-		cmd2 := exec.Command(
-			"wkhtmltopdf",
-			"--page-size", "A4",
-			"--margin-top", "0.5in",
-			"--margin-right", "0.5in",
-			"--margin-bottom", "0.5in",
-			"--margin-left", "0.5in",
-			"--encoding", "UTF-8",
-			"--no-stop-slow-scripts",
-			"--load-error-handling", "ignore",
-			htmlPath,
-			outputPath,
-		)
-
-		output2, err2 := cmd2.CombinedOutput()
-		if err2 != nil {
-			fmt.Printf("wkhtmltopdf also failed: %v\n", err2)
-			return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
-		}
-
-		fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output2))
-		output = output2
-	} else {
-		fmt.Printf("WeasyPrint PDF generation output: %s\n", string(output))
+		fmt.Printf("wkhtmltopdf error: %v\n", err)
+		return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
 	}
+	
+	fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output))
 
 	// Clean up temporary HTML file
 	os.Remove(htmlPath)

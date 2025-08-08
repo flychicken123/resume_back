@@ -66,23 +66,23 @@ func main() {
 
 	// Serve static files without /api prefix
 	r.Static("/static", "./static")
-	
+
 	// Add a dedicated endpoint for PDF downloads with proper headers
 	r.GET("/download/:filename", func(c *gin.Context) {
 		filename := c.Param("filename")
 		filepath := "./static/" + filename
-		
+
 		// Check if file exists
 		if _, err := os.Stat(filepath); os.IsNotExist(err) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "File not found"})
 			return
 		}
-		
+
 		// Set proper headers for file download
 		c.Header("Content-Type", "application/pdf")
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Cache-Control", "no-cache")
-		
+
 		// Serve the file
 		c.File(filepath)
 	})
