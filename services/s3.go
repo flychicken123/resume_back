@@ -95,3 +95,16 @@ func (s *S3Service) GeneratePresignedURL(fileName string) (string, error) {
 
 	return url, nil
 }
+
+// validate checks if the S3Service configuration is valid
+func (s *S3Service) validate() error {
+	if s.bucket == "" {
+		return fmt.Errorf("bucket name is required")
+	}
+
+	if s.region == "" {
+		return fmt.Errorf("region is required")
+	}
+
+	return nil
+}
