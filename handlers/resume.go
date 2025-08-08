@@ -205,22 +205,22 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		return fmt.Errorf("failed to write HTML file: %v", err)
 	}
 
-	// Convert HTML to PDF using wkhtmltopdf with minimal margins to reduce whitespace
+	// Convert HTML to PDF using wkhtmltopdf with optimized margins and zoom for better layout
 	fmt.Printf("Generating PDF with wkhtmltopdf...\n")
 	cmd := exec.Command(
 		"wkhtmltopdf",
 		"--page-size", "A4",
-		"--margin-top", "0.1in",
-		"--margin-right", "0.1in",
-		"--margin-bottom", "0.1in",
-		"--margin-left", "0.1in",
+		"--margin-top", "0.2in",
+		"--margin-right", "0.3in",
+		"--margin-bottom", "0.2in",
+		"--margin-left", "0.3in",
 		"--encoding", "UTF-8",
 		"--print-media-type",
 		"--no-stop-slow-scripts",
 		"--load-error-handling", "ignore",
 		"--quiet",
 		"--disable-smart-shrinking",
-		"--zoom", "1.0",
+		"--zoom", "1.1",
 		htmlPath,
 		outputPath,
 	)
