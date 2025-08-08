@@ -63,7 +63,8 @@ func (s *S3Service) UploadFile(filePath, fileName string) (string, error) {
 		Key:         aws.String(fileName),
 		Body:        bytes.NewReader(fileContent),
 		ContentType: aws.String("application/pdf"),
-		ACL:         aws.String("public-read"), // Make file publicly readable
+		// Note: ACL is removed as the bucket doesn't support ACLs
+		// The bucket should be configured for public read access
 	}
 
 	// Upload to S3
@@ -74,7 +75,7 @@ func (s *S3Service) UploadFile(filePath, fileName string) (string, error) {
 
 	// Generate download URL
 	downloadURL := fmt.Sprintf("https://%s.s3.%s.amazonaws.com/%s", s.bucket, s.region, fileName)
-	
+
 	log.Printf("File uploaded to S3: %s", downloadURL)
 	return downloadURL, nil
 }

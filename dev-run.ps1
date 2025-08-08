@@ -8,6 +8,11 @@ $env:DB_NAME = "resumeai"
 $env:DB_SSLMODE = "disable"
 $env:ENVIRONMENT = "development"
 $env:GEMINI_API_KEY = "AIzaSyD18Ge_xBz7dyvvOpE2yju2XJk60hgK9ww"
+$env:AWS_REGION  = "us-east-2"
+$env:AWS_S3_BUCKET  = "airesumestorage"
+# AWS credentials should be set via environment variables or .env file
+# $env:AWS_ACCESS_KEY_ID = "your-access-key"
+# $env:AWS_SECRET_ACCESS_KEY = "your-secret-key"
 
 Write-Host "✅ Environment variables set for local development" -ForegroundColor Green
 Write-Host "   DB_HOST: $env:DB_HOST" -ForegroundColor Yellow

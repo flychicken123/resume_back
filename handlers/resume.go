@@ -163,10 +163,23 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
+	// Generate presigned URL for secure download (avoids CORS issues)
+	presignedURL, err := s3Service.GeneratePresignedURL(filename)
+	if err != nil {
+		log.Printf("Failed to generate presigned URL: %v", err)
+		// Use direct S3 URL as fallback
+		c.JSON(http.StatusOK, gin.H{
+			"message":     "PDF resume generated successfully.",
+			"downloadURL": downloadURL,
+			"filePath":    "/static/" + filename,
+		})
+		return
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"message":      "PDF resume generated successfully.",
-		"downloadURL":  downloadURL,
-		"filePath":     "/static/" + filename, // Keep for backward compatibility
+		"message":     "PDF resume generated successfully.",
+		"downloadURL": presignedURL, // Use presigned URL to avoid CORS
+		"filePath":    "/static/" + filename, // Keep for backward compatibility
 	})
 }
 
