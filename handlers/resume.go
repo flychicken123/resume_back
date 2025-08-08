@@ -193,25 +193,25 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 			outputPath,
 		)
 
-			output2, err2 := cmd2.CombinedOutput()
-	if err2 != nil {
-		fmt.Printf("Alternative wkhtmltopdf also failed: %v\n", err2)
-		fmt.Printf("Trying WeasyPrint as final fallback...\n")
-		
-		// Try WeasyPrint as final fallback
-		cmd3 := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
-		output3, err3 := cmd3.CombinedOutput()
-		if err3 != nil {
-			fmt.Printf("WeasyPrint also failed: %v\n", err3)
-			return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
+		output2, err2 := cmd2.CombinedOutput()
+		if err2 != nil {
+			fmt.Printf("Alternative wkhtmltopdf also failed: %v\n", err2)
+			fmt.Printf("Trying WeasyPrint as final fallback...\n")
+
+			// Try WeasyPrint as final fallback
+			cmd3 := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
+			output3, err3 := cmd3.CombinedOutput()
+			if err3 != nil {
+				fmt.Printf("WeasyPrint also failed: %v\n", err3)
+				return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
+			}
+
+			fmt.Printf("WeasyPrint PDF generation output: %s\n", string(output3))
+			output = output3
+		} else {
+			fmt.Printf("Alternative PDF generation output: %s\n", string(output2))
+			output = output2
 		}
-		
-		fmt.Printf("WeasyPrint PDF generation output: %s\n", string(output3))
-		output = output3
-	} else {
-		fmt.Printf("Alternative PDF generation output: %s\n", string(output2))
-		output = output2
-	}
 	}
 
 	// Clean up temporary HTML file
