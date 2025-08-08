@@ -72,9 +72,6 @@ jobs:
             exit 1
           fi
           
-          # Stop existing containers
-          docker-compose -f docker-compose.backend.yml down || true
-          
           # Create .env file for docker-compose (restoring known working approach)
           cat > .env << EOF
           DB_HOST=${{ secrets.DB_HOST }}
@@ -92,6 +89,9 @@ jobs:
           GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}
           GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
           EOF
+
+          # Stop existing containers (after .env exists to avoid var-warnings)
+          docker-compose -f docker-compose.backend.yml down || true
 
           # Build and start containers
           docker-compose -f docker-compose.backend.yml build --no-cache
