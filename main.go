@@ -98,6 +98,9 @@ func main() {
 		public.POST("/ai/summary", handlers.OptimizeSummary)
 	}
 
+	// Serve static files without /api prefix
+	r.Static("/static", "./static")
+
 	// Protected routes (require auth)
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
