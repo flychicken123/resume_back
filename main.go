@@ -38,11 +38,30 @@ func main() {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"*"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Forwarded-Host", "X-Forwarded-Port"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 		MaxAge:           12 * 60 * 60,
 	}))
+
+	// Ensure all OPTIONS preflight requests succeed with proper CORS headers
+	r.Use(func(c *gin.Context) {
+		if c.Request.Method == http.MethodOptions {
+			origin := c.Request.Header.Get("Origin")
+			if origin == "" {
+				origin = "*"
+			}
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Max-Age", "86400")
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	})
 
 	// CORS is already handled by the cors.New() middleware above
 	// This custom middleware was causing issues and is redundant
