@@ -36,7 +36,11 @@ func ParseResume(c *gin.Context) {
 		return
 	}
 	defer out.Close()
-	io.Copy(out, file)
+	_, err = io.Copy(out, file)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to save file"})
+		return
+	}
 
 	// Call Python script
 	cmd := exec.Command("python", "parse_resume.py", tempFile)

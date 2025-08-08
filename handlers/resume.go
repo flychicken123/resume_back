@@ -97,7 +97,8 @@ func GeneratePDFResume(c *gin.Context) {
 	fmt.Println("GeneratePDFResume handler called")
 
 	var req ResumeRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	var err error
+	if err = c.ShouldBindJSON(&req); err != nil {
 		fmt.Printf("Error binding JSON: %v\n", err)
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
@@ -120,7 +121,11 @@ func GeneratePDFResume(c *gin.Context) {
 
 	// Create static directory if it doesn't exist
 	saveDir := "./static"
-	os.MkdirAll(saveDir, os.ModePerm)
+	err = os.MkdirAll(saveDir, os.ModePerm)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create directory"})
+		return
+	}
 
 	// Generate filename with timestamp
 	filename := "resume_" + time.Now().Format("20060102150405") + ".pdf"
@@ -133,7 +138,7 @@ func GeneratePDFResume(c *gin.Context) {
 	}
 
 	// Generate PDF resume using Python
-	err := generatePDFResumeWithPython(templateFormat, userData, filepath)
+	err = generatePDFResumeWithPython(templateFormat, userData, filepath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

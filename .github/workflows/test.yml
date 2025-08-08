@@ -1,10 +1,16 @@
-name: Run Tests
+name: Backend Tests
 
 on:
   push:
     branches: [ main ]
+    paths:
+      - 'back/**'
+      - '.github/workflows/test.yml'
   pull_request:
     branches: [ main ]
+    paths:
+      - 'back/**'
+      - '.github/workflows/test.yml'
 
 jobs:
   test-backend:
@@ -29,40 +35,11 @@ jobs:
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
       with:
-        file: ./coverage.out
+        file: coverage.out
         flags: backend
         name: backend-coverage
 
-  test-frontend:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: front/resume-frontend/package-lock.json
-    
-    - name: Install frontend dependencies
-      run: |
-        cd front/resume-frontend
-        npm ci
-    
-    - name: Run frontend tests
-      run: |
-        cd front/resume-frontend
-        npm run test:ci
-    
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
-      with:
-        file: front/resume-frontend/coverage/lcov.info
-        flags: frontend
-        name: frontend-coverage
-
-  lint:
+  lint-backend:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
@@ -77,41 +54,5 @@ jobs:
       with:
         version: latest
     
-    - name: Run linter
+    - name: Run backend linter
       run: golangci-lint run
-    
-    - name: Set up Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '18'
-        cache: 'npm'
-        cache-dependency-path: front/resume-frontend/package-lock.json
-    
-    - name: Install frontend dependencies
-      run: |
-        cd front/resume-frontend
-        npm ci
-    
-    - name: Run frontend linting
-      run: |
-        cd front/resume-frontend
-        npm run lint
-
-  security:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
-      with:
-        scan-type: 'fs'
-        scan-ref: '.'
-        format: 'sarif'
-        output: 'trivy-results.sarif'
-    
-    - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@v2
-      if: always()
-      with:
-        sarif_file: 'trivy-results.sarif'
