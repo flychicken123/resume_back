@@ -87,18 +87,18 @@ func main() {
 	r.POST("/api/auth/login", handlers.LoginUser(db))
 	r.POST("/api/auth/logout", handlers.LogoutUser())
 
-	// Add experience optimization route (no auth required)
-	r.POST("/experience/optimize", handlers.OptimizeExperience)
+	// Public routes (no auth required)
+	public := r.Group("/api")
+	{
+		public.POST("/experience/optimize", handlers.OptimizeExperience)
+		public.POST("/resume/generate", handlers.GenerateResume)
+		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
+		public.POST("/resume/parse", handlers.ParseResume)
+		public.POST("/ai/education", handlers.OptimizeEducation)
+		public.POST("/ai/summary", handlers.OptimizeSummary)
+	}
 
-	// Add resume generation routes (no auth required)
-	r.POST("/resume/generate", handlers.GenerateResume)
-	r.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
-	r.POST("/resume/parse", handlers.ParseResume)
-
-	// Add AI optimization routes (no auth required)
-	r.POST("/ai/education", handlers.OptimizeEducation)
-	r.POST("/ai/summary", handlers.OptimizeSummary)
-
+	// Protected routes (require auth)
 	protected := r.Group("/api")
 	protected.Use(handlers.AuthMiddleware())
 
