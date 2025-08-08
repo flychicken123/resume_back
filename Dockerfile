@@ -13,6 +13,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Create required directories
+RUN mkdir -p /app/static /app/templates
+
 # Build the application (only main.go to avoid conflicts)
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main main.go
 
@@ -26,10 +29,14 @@ RUN apt-get update \
        wkhtmltopdf \
        fontconfig \
        fonts-dejavu \
+       python3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /root/
+
+# Create required directories
+RUN mkdir -p ./static ./templates
 
 # Copy the binary from builder stage
 COPY --from=builder /app/main .
@@ -38,7 +45,6 @@ COPY --from=builder /app/main .
 COPY --from=builder /app/static ./static
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/generate_resume.py ./generate_resume.py
-
 
 # Expose port 8081
 EXPOSE 8081
