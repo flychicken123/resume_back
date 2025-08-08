@@ -17,10 +17,16 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main main.go
 
 # Final stage
-FROM alpine:latest
+FROM debian:bookworm-slim
 
-# Install ca-certificates for HTTPS requests and wkhtmltopdf for PDF generation
-RUN apk --no-cache add ca-certificates wkhtmltopdf
+# Install wkhtmltopdf and fonts (Debian provides more reliable package)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       ca-certificates \
+       wkhtmltopdf \
+       fontconfig \
+       fonts-dejavu \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /root/

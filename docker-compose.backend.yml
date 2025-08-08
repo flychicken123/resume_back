@@ -33,4 +33,4 @@ services:
 
 networks:
   ai-resume-network:
-    external: true 
+    external: true
