@@ -161,12 +161,12 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 	fmt.Printf("Trying WeasyPrint for PDF generation...\n")
 	cmd := exec.Command("python3", "generate_pdf.py", htmlPath, outputPath)
 
-		output, err := cmd.CombinedOutput()
+	output, err := cmd.CombinedOutput()
 	if err != nil {
 		fmt.Printf("WeasyPrint error: %v\n", err)
 		// Try wkhtmltopdf as fallback
 		fmt.Printf("Trying wkhtmltopdf as fallback...\n")
-		
+
 		cmd2 := exec.Command(
 			"wkhtmltopdf",
 			"--page-size", "A4",
@@ -180,13 +180,13 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 			htmlPath,
 			outputPath,
 		)
-		
+
 		output2, err2 := cmd2.CombinedOutput()
 		if err2 != nil {
 			fmt.Printf("wkhtmltopdf also failed: %v\n", err2)
 			return fmt.Errorf("all PDF generation methods failed: %v, output: %s", err, string(output))
 		}
-		
+
 		fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output2))
 		output = output2
 	} else {
