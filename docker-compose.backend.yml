@@ -20,7 +20,11 @@ services:
       - GCP_CLIENT_ID=${GCP_CLIENT_ID}
       - GCP_CLIENT_X509_CERT_URL=${GCP_CLIENT_X509_CERT_URL}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - NODE_ENV=production
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      - NODE_ENV=prod
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "--method=OPTIONS", "http://localhost:8081/api/auth/login"]

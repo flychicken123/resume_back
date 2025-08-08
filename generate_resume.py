@@ -70,7 +70,6 @@ def main():
         success, error = generate_pdf_resume(template_name, user_data, output_path)
     else:
         success, error = generate_html_resume(template_name, user_data, output_path)
-
     if not success:
         print(f"Failed to generate resume: {error}")
         sys.exit(1)
