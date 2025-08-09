@@ -8,6 +8,7 @@ import (
 	"resumeai/config"
 	"resumeai/database"
 	"resumeai/handlers"
+	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -120,9 +121,20 @@ func main() {
 		c.Status(http.StatusNoContent)
 	})
 
-	r.POST("/api/auth/register", handlers.RegisterUser(db))
-	r.POST("/api/auth/login", handlers.LoginUser(db))
-	r.POST("/api/auth/logout", handlers.LogoutUser())
+	// API routes
+	api := r.Group("/api")
+	{
+		api.GET("/version", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"version":     "1.0.1",
+				"build_time":  time.Now().Format("2006-01-02 15:04:05"),
+				"pdf_margins": "zero_margins_v2",
+			})
+		})
+		api.POST("/auth/register", handlers.RegisterUser(db))
+		api.POST("/auth/login", handlers.LoginUser(db))
+		api.POST("/auth/logout", handlers.LogoutUser())
+	}
 
 	// Public routes (no auth required)
 	public := r.Group("/api")
