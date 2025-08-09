@@ -3,12 +3,12 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
-	"resumeai/services"
 	"time"
+
+	"resumeai/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -107,25 +107,18 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
-	fmt.Printf("Received PDF generation request: %+v\n", req)
+	fmt.Printf("Received resume generation request: %+v\n", req)
 
-	// Prepare user data for template
-	userData := map[string]interface{}{
-		"name":        req.Name,
-		"email":       req.Email,
-		"phone":       req.Phone,
-		"summary":     req.Summary,
-		"experience":  req.Experience,
-		"education":   req.Education,
-		"skills":      req.Skills,
-		"position":    req.Position,
-		"htmlContent": req.HtmlContent,
+	// Get HTML content from the request
+	htmlContent := req.HtmlContent
+	if htmlContent == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "HTML content is required"})
+		return
 	}
 
 	// Create static directory if it doesn't exist
 	saveDir := "./static"
-	err = os.MkdirAll(saveDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(saveDir, os.ModePerm); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to create directory"})
 		return
 	}
@@ -134,118 +127,65 @@ func GeneratePDFResume(c *gin.Context) {
 	filename := "resume_" + time.Now().Format("20060102150405") + ".pdf"
 	filepath := saveDir + "/" + filename
 
-	// Use default template if none selected
-	templateFormat := req.Format
-	if templateFormat == "" {
-		templateFormat = "temp1"
+	// Prepare user data for PDF generation
+	userData := map[string]interface{}{
+		"htmlContent": htmlContent,
 	}
 
 	// Generate PDF resume using Python
-	err = generatePDFResumeWithPython(templateFormat, userData, filepath)
+	err = generatePDFResumeWithPython("temp1", userData, filepath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	// Initialize S3 service
-	s3Service, err := services.NewS3Service()
-	if err != nil {
-		log.Printf("Failed to initialize S3 service: %v", err)
-		// Fallback to local file
-		c.JSON(http.StatusOK, gin.H{
-			"message":  "PDF resume generated successfully.",
-			"filePath": "/static/" + filename,
-		})
+	// S3-only: attempt upload and return URL; otherwise return error
+	s3svc, s3err := services.NewS3Service()
+	if s3err != nil {
+		fmt.Printf("S3 not configured or invalid: %v\n", s3err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Storage service unavailable"})
 		return
 	}
 
-	// Upload to S3
-	downloadURL, err := s3Service.UploadFile(filepath, filename)
-	if err != nil {
-		log.Printf("Failed to upload to S3: %v", err)
-		// Fallback to local file
-		c.JSON(http.StatusOK, gin.H{
-			"message":  "PDF resume generated successfully.",
-			"filePath": "/static/" + filename,
-		})
+	key := "resumes/" + filename
+	url, uploadErr := s3svc.UploadFile(filepath, key)
+	if uploadErr != nil {
+		fmt.Printf("S3 upload failed: %v\n", uploadErr)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload PDF to storage"})
 		return
 	}
 
-	// Generate presigned URL for secure download (avoids CORS issues)
-	presignedURL, err := s3Service.GeneratePresignedURL(filename)
-	if err != nil {
-		log.Printf("Failed to generate presigned URL: %v", err)
-		// Use direct S3 URL as fallback
+	if presigned, preErr := s3svc.GeneratePresignedURL(key); preErr == nil {
 		c.JSON(http.StatusOK, gin.H{
-			"message":     "PDF resume generated successfully.",
-			"downloadURL": downloadURL,
-			"filePath":    "/static/" + filename,
+			"message":     "PDF resume generated and uploaded to S3.",
+			"downloadURL": presigned,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":     "PDF resume generated successfully.",
-		"downloadURL": presignedURL,          // Use presigned URL to avoid CORS
-		"filePath":    "/static/" + filename, // Keep for backward compatibility
+		"message":     "PDF resume generated and uploaded to S3.",
+		"downloadURL": url,
 	})
+	return
 }
 
 func generatePDFResumeWithPython(templateName string, userData map[string]interface{}, outputPath string) error {
-	// Get HTML content from the request
-	htmlContent, ok := userData["htmlContent"].(string)
-	if !ok || htmlContent == "" {
-		return fmt.Errorf("HTML content is required for PDF generation")
-	}
-
-	// Create temporary HTML file
-	htmlPath := outputPath[:len(outputPath)-4] + ".html"
-	err := os.WriteFile(htmlPath, []byte(htmlContent), 0644)
+	// Convert userData to JSON
+	userDataJSON, err := json.Marshal(userData)
 	if err != nil {
-		return fmt.Errorf("failed to write HTML file: %v", err)
+		return fmt.Errorf("failed to marshal user data: %v", err)
 	}
 
-	// Convert HTML to PDF using wkhtmltopdf with optimized margins and zoom for better layout
-	fmt.Printf("Generating PDF with wkhtmltopdf...\n")
-	cmd := exec.Command(
-		"wkhtmltopdf",
-		"--page-size", "A4",
-		"--margin-top", "0.2in",
-		"--margin-right", "0.3in",
-		"--margin-bottom", "0.2in",
-		"--margin-left", "0.3in",
-		"--encoding", "UTF-8",
-		"--print-media-type",
-		"--no-stop-slow-scripts",
-		"--load-error-handling", "ignore",
-		"--quiet",
-		"--disable-smart-shrinking",
-		"--zoom", "1.1",
-		htmlPath,
-		outputPath,
-	)
+	// Run Python script with correct working directory
+	cmd := exec.Command("python", "generate_resume.py", templateName, string(userDataJSON), outputPath)
+	cmd.Dir = "." // Set working directory to current directory where templates are located
 
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		fmt.Printf("wkhtmltopdf error: %v\n", err)
-		return fmt.Errorf("wkhtmltopdf failed: %v, output: %s", err, string(output))
+		return fmt.Errorf("python script failed: %v, output: %s", err, string(output))
 	}
 
-	fmt.Printf("wkhtmltopdf PDF generation output: %s\n", string(output))
-
-	// Clean up temporary HTML file
-	os.Remove(htmlPath)
-
-	fmt.Printf("PDF generation output: %s\n", string(output))
-
-	// Check if PDF file was created and has content
-	if fileInfo, err := os.Stat(outputPath); err != nil {
-		return fmt.Errorf("PDF file not found after generation: %v", err)
-	} else if fileInfo.Size() == 0 {
-		return fmt.Errorf("PDF file is empty after generation")
-	} else {
-		fmt.Printf("PDF file created successfully: %s, size: %d bytes\n", outputPath, fileInfo.Size())
-	}
-
+	fmt.Printf("Python script output: %s\n", string(output))
 	return nil
 }
