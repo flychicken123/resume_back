@@ -93,7 +93,87 @@ Hints:
 
 	aiResp, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		// Graceful fallback: build a minimal structured object from deterministic extraction
+		sections, _ := extracted["sections"].(map[string]interface{})
+		getSection := func(key string) string {
+			if sections == nil {
+				return ""
+			}
+			lowerKey := strings.ToLower(key)
+			for k, v := range sections {
+				if strings.Contains(strings.ToLower(k), lowerKey) {
+					if s, ok := v.(string); ok {
+						return s
+					}
+				}
+			}
+			return ""
+		}
+
+		summaryText := getSection("summary")
+		experienceText := getSection("experience")
+		educationText := getSection("education")
+		skillsText := getSection("skill")
+
+		// Build skills array by splitting commas/newlines/semicolons
+		var skillsArr []string
+		if skillsText != "" {
+			fields := strings.FieldsFunc(skillsText, func(r rune) bool { return r == ',' || r == '\n' || r == ';' })
+			for _, f := range fields {
+				trimmed := strings.TrimSpace(f)
+				if trimmed != "" {
+					skillsArr = append(skillsArr, trimmed)
+				}
+			}
+		}
+
+		// Build a single experience entry with lines as bullets
+		var expArr []map[string]interface{}
+		if experienceText != "" {
+			var bullets []string
+			for _, line := range strings.Split(experienceText, "\n") {
+				line = strings.TrimSpace(line)
+				if line != "" {
+					bullets = append(bullets, line)
+				}
+			}
+			expArr = append(expArr, map[string]interface{}{
+				"company":   nil,
+				"role":      nil,
+				"location":  nil,
+				"startDate": nil,
+				"endDate":   nil,
+				"bullets":   bullets,
+			})
+		}
+
+		// Build minimal education array
+		var eduArr []map[string]interface{}
+		if educationText != "" {
+			eduArr = append(eduArr, map[string]interface{}{
+				"school":    nil,
+				"degree":    nil,
+				"field":     nil,
+				"startDate": nil,
+				"endDate":   nil,
+			})
+		}
+
+		structured := map[string]interface{}{
+			"name":       nil,
+			"email":      email,
+			"phone":      phone,
+			"summary":    summaryText,
+			"experience": expArr,
+			"education":  eduArr,
+			"skills":     skillsArr,
+		}
+
+		c.JSON(200, gin.H{
+			"structured": structured,
+			"extracted":  extracted,
+			"aiError":    err.Error(),
+		})
 		return
 	}
 
