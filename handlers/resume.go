@@ -84,7 +84,7 @@ func generateHTMLResumeWithPython(templateName string, userData map[string]inter
 	}
 
 	// Run Python script with correct working directory
-	cmd := exec.Command("python", "generate_resume.py", templateName, string(userDataJSON), outputPath)
+	cmd := exec.Command("python3", "generate_resume.py", templateName, string(userDataJSON), outputPath)
 	cmd.Dir = "." // Set working directory to current directory where templates are located
 
 	output, err := cmd.CombinedOutput()
@@ -178,7 +178,7 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 	}
 
 	// Run Python script with correct working directory
-	cmd := exec.Command("python", "generate_resume.py", templateName, string(userDataJSON), outputPath)
+	cmd := exec.Command("python3", "generate_resume.py", templateName, string(userDataJSON), outputPath)
 	cmd.Dir = "." // Set working directory to current directory where templates are located
 
 	output, err := cmd.CombinedOutput()

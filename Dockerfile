@@ -27,6 +27,7 @@ RUN apt-get update \
        fonts-dejavu \
        wkhtmltopdf \
        python3 \
+    && ln -s /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory and required subdirectories
