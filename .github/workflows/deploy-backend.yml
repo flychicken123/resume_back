@@ -40,6 +40,9 @@ jobs:
         username: ec2-user
         key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
         script: |
+          set -Eeuo pipefail
+          trap 'echo "❌ Error on line $LINENO"; exit 1' ERR
+          
           # Update system and install essential packages
           sudo yum update -y
           sudo yum install -y git wget --allowerasing || sudo yum install -y git wget --skip-broken
@@ -97,15 +100,14 @@ jobs:
           # Stop existing containers (after .env exists to avoid var-warnings)
           docker-compose -f docker-compose.backend.yml down || true
 
-          # Build and start containers
-          docker-compose -f docker-compose.backend.yml build --no-cache
-          # Ensure external network exists
+          # Build and start containers (fail fast if build fails)
           docker network create ai-resume-network || true
+          docker-compose -f docker-compose.backend.yml build --no-cache
           docker-compose -f docker-compose.backend.yml up -d
           
           # Clean up
           docker system prune -f 
-
+          
           # Smoke test CORS preflight for common endpoints
           echo "🧪 Testing CORS preflight..."
           sleep 5

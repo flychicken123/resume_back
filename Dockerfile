@@ -14,7 +14,8 @@ RUN go mod download
 COPY . .
 
 # Build the application (only main.go to avoid conflicts)
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main main.go
+# Remove expensive flags to reduce memory usage during build
+RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
 
 # Final stage
 FROM debian:bookworm-slim
@@ -28,11 +29,18 @@ RUN apt-get update \
        wkhtmltopdf \
        python3 \
        python3-pip \
+       python3-pdfminer \
+       python3-docx \
     && ln -s /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-# Python libs for parsing
-RUN pip3 install --no-cache-dir pdfminer.six python-docx
+# Speed up pip and reduce memory/disk usage
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Python libs via Debian packages (lighter than pip on low-memory builders)
+# (No additional pip installs required)
 
 # Create app directory and required subdirectories
 WORKDIR /root/

@@ -31,9 +31,23 @@ func ParseResume(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Save file to temp location
-	tempDir := os.TempDir()
-	tempFile := filepath.Join(tempDir, header.Filename)
+	// Save file to a safe temp location with preserved extension
+	ext := filepath.Ext(header.Filename)
+	if ext == "" {
+		ext = ".bin"
+	}
+	tmp, err := os.CreateTemp("", "resume-*")
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Failed to create temp file"})
+		return
+	}
+	tempPathNoExt := tmp.Name()
+	tmp.Close()
+	tempFile := tempPathNoExt + ext
+	if err := os.Rename(tempPathNoExt, tempFile); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to prepare temp file"})
+		return
+	}
 	out, err := os.Create(tempFile)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save file"})
@@ -45,17 +59,35 @@ func ParseResume(c *gin.Context) {
 		return
 	}
 
-	// Deterministic extraction via python3 parse_resume.py
-	cmd := exec.Command("python3", "parse_resume.py", tempFile)
+	// Ensure script exists
+	if _, statErr := os.Stat("parse_resume.py"); statErr != nil {
+		fmt.Printf("[parse] missing script parse_resume.py: %v\n", statErr)
+		c.JSON(500, gin.H{"error": "Python script failed", "details": "parse_resume.py not found"})
+		return
+	}
+
+	// Determine python executable (python3 preferred, fallback to python)
+	pythonExec := "python3"
+	if _, lookErr := exec.LookPath(pythonExec); lookErr != nil {
+		pythonExec = "python"
+	}
+
+	// Deterministic extraction via python parse_resume.py
+	cmd := exec.Command(pythonExec, "parse_resume.py", tempFile)
 	cmd.Dir = "." // script resides in backend root
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Text extraction failed", "details": err.Error(), "stdout": string(output)})
+		fmt.Printf("[parse] python exec error: %v\n", err)
+		fmt.Printf("[parse] output: %s\n", string(output))
+	}
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Python script failed", "details": err.Error(), "stdout": string(output)})
 		return
 	}
 
 	var extracted map[string]interface{}
 	if err := json.Unmarshal(output, &extracted); err != nil {
+		fmt.Printf("[parse] invalid extractor JSON: %v\nraw: %s\n", err, string(output))
 		c.JSON(500, gin.H{"error": "Failed to parse extractor output"})
 		return
 	}
