@@ -27,16 +27,21 @@ RUN apt-get update \
        fonts-dejavu \
        wkhtmltopdf \
        python3 \
+       python3-pip \
     && ln -s /usr/bin/python3 /usr/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
+# Python libs for parsing
+RUN pip3 install --no-cache-dir pdfminer.six python-docx
+
 # Create app directory and required subdirectories
 WORKDIR /root/
-RUN mkdir -p static templates
+RUN mkdir -p static templates uploads
 
 # Copy the binary and scripts
 COPY --from=builder /app/main .
 COPY --from=builder /app/generate_resume.py .
+COPY --from=builder /app/parse_resume.py .
 
 # Expose port 8081
 EXPOSE 8081

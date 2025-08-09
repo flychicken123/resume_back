@@ -2,10 +2,14 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+
+	"resumeai/services"
 
 	"github.com/gin-gonic/gin"
 )
@@ -36,30 +40,80 @@ func ParseResume(c *gin.Context) {
 		return
 	}
 	defer out.Close()
-	_, err = io.Copy(out, file)
-	if err != nil {
+	if _, err = io.Copy(out, file); err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save file"})
 		return
 	}
 
-	// Call Python script
-	cmd := exec.Command("python", "parse_resume.py", tempFile)
-	cmd.Dir = "../back" // Set working directory to where the script is
-	output, err := cmd.Output()
+	// Deterministic extraction via python3 parse_resume.py
+	cmd := exec.Command("python3", "parse_resume.py", tempFile)
+	cmd.Dir = "." // script resides in backend root
+	output, err := cmd.CombinedOutput()
 	if err != nil {
-		c.JSON(500, gin.H{"error": "Python script failed", "details": err.Error()})
+		c.JSON(500, gin.H{"error": "Text extraction failed", "details": err.Error(), "stdout": string(output)})
 		return
 	}
 
-	// Parse JSON output
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(output, &parsed); err != nil {
-		c.JSON(500, gin.H{"error": "Failed to parse script output"})
+	var extracted map[string]interface{}
+	if err := json.Unmarshal(output, &extracted); err != nil {
+		c.JSON(500, gin.H{"error": "Failed to parse extractor output"})
+		return
+	}
+
+	rawText, _ := extracted["raw_text"].(string)
+	email, _ := extracted["email"].(string)
+	phone, _ := extracted["phone"].(string)
+
+	// Build strict schema prompt
+	schema := `{
+      "name": string | null,
+      "email": string | null,
+      "phone": string | null,
+      "summary": string | null,
+      "experience": [
+        {"company": string | null, "role": string | null, "location": string | null, "startDate": string | null, "endDate": string | null, "bullets": string[] | null}
+      ],
+      "education": [
+        {"school": string | null, "degree": string | null, "field": string | null, "startDate": string | null, "endDate": string | null}
+      ],
+      "skills": string[]
+    }`
+
+	prompt := fmt.Sprintf(`Extract resume information from the following text and return ONLY strict JSON matching this schema (no markdown, no extra text). Do not invent data. Unknown fields must be null.
+
+Schema:
+%s
+
+Text:
+%s
+
+Hints:
+- If a value is already known, keep it. Known email: %s; known phone: %s.
+- Dates can be in formats like "Nov 2022 - Present".`, schema, rawText, email, phone)
+
+	aiResp, err := services.CallGeminiWithAPIKey(prompt)
+	if err != nil {
+		c.JSON(500, gin.H{"error": err.Error()})
+		return
+	}
+
+	cleaned := strings.TrimSpace(aiResp)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var structured map[string]interface{}
+	if err := json.Unmarshal([]byte(cleaned), &structured); err != nil {
+		c.JSON(500, gin.H{"error": "AI output was not valid JSON", "raw": aiResp})
 		return
 	}
 
 	// Clean up temp file
-	os.Remove(tempFile)
+	_ = os.Remove(tempFile)
 
-	c.JSON(200, parsed)
+	c.JSON(200, gin.H{
+		"structured": structured,
+		"extracted":  extracted,
+	})
 }

@@ -5,11 +5,9 @@ import sys
 from subprocess import run
 
 def generate_html_resume(template_name, user_data, output_path):
-    """Generate HTML resume from template and user data."""
     html_content = user_data.get('htmlContent', '')
     if not html_content:
         return False, "HTML content is required"
-        
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
@@ -18,7 +16,6 @@ def generate_html_resume(template_name, user_data, output_path):
         return False, str(e)
 
 def generate_pdf_resume(template_name, user_data, output_path):
-    """Generate PDF resume using wkhtmltopdf."""
     # First generate HTML
     html_path = output_path.replace('.pdf', '.html')
     success, error = generate_html_resume(template_name, user_data, html_path)
@@ -30,21 +27,21 @@ def generate_pdf_resume(template_name, user_data, output_path):
         result = run([
             'wkhtmltopdf',
             '--page-size', 'Letter',
-            '--margin-top', '0',
-            '--margin-right', '0',
-            '--margin-bottom', '0',
-            '--margin-left', '0',
-            '--zoom', '0.98',
+            '--margin-top', '12',      # ~0.47in
+            '--margin-right', '15',    # ~0.59in
+            '--margin-bottom', '18',   # ~0.71in
+            '--margin-left', '15',     # ~0.59in
+            '--print-media-type',
+            '--zoom', '1.0',
             '--dpi', '96',
             '--disable-smart-shrinking',
             html_path,
             output_path
         ], capture_output=True, text=True)
-        
+
         if result.returncode != 0:
             return False, f"wkhtmltopdf failed: {result.stderr}"
-            
-        # Clean up temporary HTML file
+
         os.unlink(html_path)
         return True, None
     except Exception as e:
@@ -63,9 +60,7 @@ def main():
         sys.exit(1)
     output_path = sys.argv[3]
 
-    # Determine output type from extension
     is_pdf = output_path.lower().endswith('.pdf')
-    
     if is_pdf:
         success, error = generate_pdf_resume(template_name, user_data, output_path)
     else:
@@ -73,7 +68,7 @@ def main():
     if not success:
         print(f"Failed to generate resume: {error}")
         sys.exit(1)
-    
+
     print(f"Successfully generated {'PDF' if is_pdf else 'HTML'} resume at {output_path}")
 
 if __name__ == '__main__':
