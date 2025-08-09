@@ -20,13 +20,21 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
 # Final stage
 FROM debian:bookworm-slim
 
-# Install basic dependencies and wkhtmltopdf
+# Install wkhtmltopdf 0.12.6 to match local version and fonts for consistent rendering
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
        fontconfig \
        fonts-dejavu \
-       wkhtmltopdf \
+       fonts-liberation \
+       fonts-noto \
+       fonts-noto-cjk \
+       wget \
+       gnupg \
+    && wget -qO- https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.bullseye_amd64.deb \
+    && apt-get install -y ./wkhtmltox_0.12.6-1.bullseye_amd64.deb \
+    && rm wkhtmltox_0.12.6-1.bullseye_amd64.deb \
+    && apt-get install -y --no-install-recommends \
        python3 \
        python3-pip \
        python3-pdfminer \
