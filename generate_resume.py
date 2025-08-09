@@ -23,14 +23,14 @@ def generate_pdf_resume(template_name, user_data, output_path):
         return False, error
 
     try:
-        # Convert HTML to PDF using wkhtmltopdf
+        # Convert HTML to PDF using wkhtmltopdf with bottom margin for whitespace
         result = run([
             'wkhtmltopdf',
             '--page-size', 'Letter',
-            '--margin-top', '12',      # ~0.47in
-            '--margin-right', '15',    # ~0.59in
-            '--margin-bottom', '18',   # ~0.71in
-            '--margin-left', '15',     # ~0.59in
+            '--margin-top', '0',
+            '--margin-right', '0',
+            '--margin-bottom', '24',  # ~0.33in bottom whitespace
+            '--margin-left', '0',
             '--print-media-type',
             '--zoom', '1.0',
             '--dpi', '96',

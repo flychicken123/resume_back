@@ -54,8 +54,8 @@ func GenerateResume(c *gin.Context) {
 		return
 	}
 
-	// Generate filename with timestamp
-	filename := "resume_" + time.Now().Format("20060102150405") + ".html"
+	// Generate unique filename (nanosecond precision) to avoid caching/stale files
+	filename := fmt.Sprintf("resume_%d.html", time.Now().UnixNano())
 	filepath := saveDir + "/" + filename
 
 	// Use default template if none selected
@@ -115,7 +115,8 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
-	filename := "resume_" + time.Now().Format("20060102150405") + ".pdf"
+	// Unique filename for PDF to avoid collisions and stale caching
+	filename := fmt.Sprintf("resume_%d.pdf", time.Now().UnixNano())
 	pdfPath := filepath.Join(saveDir, filename)
 
 	// Prepare user data for PDF generation
