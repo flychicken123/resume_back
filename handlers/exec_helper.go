@@ -9,3 +9,4 @@ func runCombined(name string, args ...string) ([]byte, error) {
 	cmd.Dir = "."
 	return cmd.CombinedOutput()
 }
+
