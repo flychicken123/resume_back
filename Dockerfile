@@ -22,20 +22,28 @@ FROM ubuntu:22.04
 
 # Install wkhtmltopdf and fonts for consistent rendering
 ENV DEBIAN_FRONTEND=noninteractive
+# Pin wkhtmltopdf version and allow arch/distro to be overridden at build time
+ARG WKHTML_VERSION=0.12.6-1
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
+       curl \
+        xz-utils \
        fontconfig \
        fonts-dejavu \
        fonts-liberation \
        fonts-noto \
        fonts-noto-cjk \
-       wkhtmltopdf \
        python3 \
        python3-pip \
        python3-pdfminer \
        python3-docx \
+    && curl -L -o /tmp/wkhtmltox.deb https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTML_VERSION}/wkhtmltox_${WKHTML_VERSION}.${WKHTML_DIST}_${WKHTML_ARCH}.deb \
+    && dpkg -i /tmp/wkhtmltox.deb || apt-get -f install -y \
+    && rm -f /tmp/wkhtmltox.deb \
     && ln -sf /usr/bin/python3 /usr/bin/python \
+    && wkhtmltopdf --version \
     && fc-cache -f -v \
     && rm -rf /var/lib/apt/lists/*
 
