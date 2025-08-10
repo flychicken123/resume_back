@@ -70,13 +70,15 @@ def generate_pdf_resume(template_name, user_data, output_path):
         except Exception as e:
             print(f"Error reading HTML for logging: {e}")
         
-        # Convert HTML to PDF using wkhtmltopdf with bottom margin for whitespace
+        # Convert HTML to PDF using wkhtmltopdf with balanced, small top/bottom margins
         cmd = [
             'wkhtmltopdf',
             '--page-size', 'Letter',
-            '--margin-top', '0',
+            # Add a little whitespace at the top of every page so page 2+ match page 1
+            '--margin-top', '6',   # ~0.08in (reduced top whitespace)
             '--margin-right', '0',
-            '--margin-bottom', '24',  # ~0.33in bottom whitespace
+            # Reduce bottom whitespace while keeping a consistent look across pages
+            '--margin-bottom', '12',  # ~0.17in
             '--margin-left', '0',
             '--print-media-type',
             '--zoom', '1.0',
