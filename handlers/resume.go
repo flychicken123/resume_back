@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -84,8 +85,10 @@ func generateHTMLResumeWithPython(templateName string, userData map[string]inter
 		return fmt.Errorf("failed to marshal user data: %v", err)
 	}
 
-	cmd := exec.Command("python3", "generate_resume.py", templateName, string(userDataJSON), outputPath)
+	// Pass JSON via stdin to avoid command line length limits (Windows)
+	cmd := exec.Command("python3", "generate_resume.py", templateName, "-", outputPath)
 	cmd.Dir = "."
+	cmd.Stdin = bytes.NewReader(userDataJSON)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("python script failed: %v, output: %s", err, string(output))
@@ -137,6 +140,15 @@ func GeneratePDFResume(c *gin.Context) {
 	}
 	if strings.Contains(htmlContent, "!important") {
 		fmt.Println("Found !important declarations in HTML content")
+	}
+	if strings.Contains(htmlContent, "ULTRA-AGGRESSIVE") {
+		fmt.Println("Found ULTRA-AGGRESSIVE overrides in HTML content")
+	}
+	if strings.Contains(htmlContent, "color: #000000") {
+		fmt.Println("Found #000000 color overrides in HTML content")
+	}
+	if strings.Contains(htmlContent, ".preview.modern .name") {
+		fmt.Println("Found .preview.modern .name overrides in HTML content")
 	}
 
 	// Ensure output dir exists
@@ -197,9 +209,11 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 		return fmt.Errorf("failed to marshal user data: %v", err)
 	}
 
-	fmt.Printf("Calling Python script with template: %s, outputPath: %s\n", templateName, outputPath)
-	cmd := exec.Command("python3", "generate_resume.py", templateName, string(userDataJSON), outputPath)
+	fmt.Printf("Calling Python script with template: %s, outputPath: %s (passing %d bytes via stdin)\n", templateName, outputPath, len(userDataJSON))
+	// Pass JSON via stdin to avoid command line length limits (Windows) and quoting issues
+	cmd := exec.Command("python3", "generate_resume.py", templateName, "-", outputPath)
 	cmd.Dir = "."
+	cmd.Stdin = bytes.NewReader(userDataJSON)
 	output, err := cmd.CombinedOutput()
 
 	// Always log the output for debugging

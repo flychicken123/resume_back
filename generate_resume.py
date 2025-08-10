@@ -105,15 +105,23 @@ def generate_pdf_resume(template_name, user_data, output_path):
 
 def main():
     if len(sys.argv) != 4:
-        print("Usage: generate_resume.py <template_name> <user_data_json> <output_path>")
+        print("Usage: generate_resume.py <template_name> <user_data_json|'-'> <output_path>")
         sys.exit(1)
 
     template_name = sys.argv[1]
-    try:
-        user_data = json.loads(sys.argv[2])
-    except json.JSONDecodeError as e:
-        print(f"Failed to parse user data JSON: {e}")
-        sys.exit(1)
+    # Support large payloads via stdin: pass '-' as the second arg
+    if sys.argv[2] == '-':
+        try:
+            user_data = json.load(sys.stdin)
+        except Exception as e:
+            print(f"Failed to read user data JSON from stdin: {e}")
+            sys.exit(1)
+    else:
+        try:
+            user_data = json.loads(sys.argv[2])
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse user data JSON: {e}")
+            sys.exit(1)
     output_path = sys.argv[3]
 
     is_pdf = output_path.lower().endswith('.pdf')
