@@ -111,11 +111,11 @@ func GeneratePDFResume(c *gin.Context) {
 
 	// Log HTML content details for debugging
 	fmt.Printf("HTML Content Length: %d characters\n", len(htmlContent))
-	previewLength := 500
+	previewLength := 4000
 	if len(htmlContent) < previewLength {
 		previewLength = len(htmlContent)
 	}
-	fmt.Printf("HTML Content Preview (first 500 chars): %s\n", htmlContent[:previewLength])
+	fmt.Printf("HTML Content Preview (first 4000 chars): %s\n", htmlContent[:previewLength])
 
 	// Check for specific CSS properties in the HTML
 	if strings.Contains(htmlContent, "@page") {
@@ -126,6 +126,17 @@ func GeneratePDFResume(c *gin.Context) {
 	}
 	if strings.Contains(htmlContent, "width:") {
 		fmt.Println("Found width CSS property in HTML content")
+	}
+
+	// Check for our specific CSS overrides
+	if strings.Contains(htmlContent, "font-size: 18pt") {
+		fmt.Println("Found font-size: 18pt override in HTML content")
+	}
+	if strings.Contains(htmlContent, "font-size: 14pt") {
+		fmt.Println("Found font-size: 14pt override in HTML content")
+	}
+	if strings.Contains(htmlContent, "!important") {
+		fmt.Println("Found !important declarations in HTML content")
 	}
 
 	// Ensure output dir exists
