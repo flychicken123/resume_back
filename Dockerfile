@@ -17,40 +17,36 @@ COPY . .
 # Remove expensive flags to reduce memory usage during build
 RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
 
-# Final stage (Ubuntu)
-FROM ubuntu:22.04
+# Final stage (Ubuntu focal to support wkhtmltopdf 0.12.6-1 .deb with patched Qt)
+FROM ubuntu:20.04
 
 # Install wkhtmltopdf and fonts for consistent rendering
 ENV DEBIAN_FRONTEND=noninteractive
-# Pin wkhtmltopdf version (with patched Qt) and allow arch override if needed
 ENV WKHTML_VERSION=0.12.6-1
-ARG WKHTML_ARCH=amd64
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-       ca-certificates \
-       curl \
-        xz-utils \
-       fontconfig \
-       fonts-dejavu \
-       fonts-liberation \
-       fonts-noto \
-       fonts-noto-cjk \
-       python3 \
-       python3-pip \
-       python3-pdfminer \
-       python3-docx \
-    # Install wkhtmltopdf 0.12.6-1 (with patched Qt) via linux-generic static build
-    && curl -fsSL -o /tmp/wkhtmltox.tar.xz \
-       https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTML_VERSION}/wkhtmltox-${WKHTML_VERSION}.linux-generic-${WKHTML_ARCH}.tar.xz \
-    && mkdir -p /opt/wkhtmltox \
-    && tar -xJf /tmp/wkhtmltox.tar.xz -C /opt/wkhtmltox --strip-components=1 \
-    && ln -sf /opt/wkhtmltox/bin/wkhtmltopdf /usr/local/bin/wkhtmltopdf \
-    && ln -sf /opt/wkhtmltox/bin/wkhtmltoimage /usr/local/bin/wkhtmltoimage \
-    && rm -f /tmp/wkhtmltox.tar.xz \
-    && ln -sf /usr/bin/python3 /usr/bin/python \
-    && wkhtmltopdf --version \
-    && fc-cache -f -v \
-    && rm -rf /var/lib/apt/lists/*
+RUN set -eux; \
+  apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl xz-utils fontconfig \
+    fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
+    python3 python3-pip python3-pdfminer; \
+  arch="$(uname -m)"; \
+  case "$arch" in \
+    x86_64)  WK_ARCH=amd64 ;; \
+    aarch64) WK_ARCH=arm64 ;; \
+    *) echo "Unsupported arch: $arch"; exit 1 ;; \
+  esac; \
+  # Use focal .deb which exists and includes patched Qt
+  DEB_URL="https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTML_VERSION}/wkhtmltox_${WKHTML_VERSION}.focal_${WK_ARCH}.deb"; \
+  echo "Downloading $DEB_URL"; \
+  curl -fSL --retry 5 --retry-connrefused -o /tmp/wkhtmltox.deb "$DEB_URL"; \
+  apt-get install -y --no-install-recommends gdebi-core || true; \
+  dpkg -i /tmp/wkhtmltox.deb || apt-get -f install -y; \
+  rm -f /tmp/wkhtmltox.deb; \
+  # Focal does not ship python3-docx; install via pip
+  pip3 install --no-cache-dir python-docx; \
+  ln -sf /usr/bin/python3 /usr/bin/python; \
+  wkhtmltopdf --version; \
+  fc-cache -f -v; \
+  rm -rf /var/lib/apt/lists/*
 
 # Speed up pip and reduce memory/disk usage
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
