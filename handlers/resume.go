@@ -112,13 +112,14 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
-	// Log HTML content details for debugging
+	// Log HTML content details (debug-only)
 	fmt.Printf("HTML Content Length: %d characters\n", len(htmlContent))
-	previewLength := 4000
+
+	previewLength := 1000
 	if len(htmlContent) < previewLength {
 		previewLength = len(htmlContent)
 	}
-	fmt.Printf("HTML Content Preview (first 4000 chars): %s\n", htmlContent[:previewLength])
+	fmt.Printf("HTML Content Preview (first %d chars): %s\n", previewLength, htmlContent[:previewLength])
 
 	// Check for specific CSS properties in the HTML
 	if strings.Contains(htmlContent, "@page") {
