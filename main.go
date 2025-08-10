@@ -131,6 +131,7 @@ func main() {
 				"pdf_margins": "zero_margins_v2",
 			})
 		})
+
 		api.POST("/auth/register", handlers.RegisterUser(db))
 		api.POST("/auth/login", handlers.LoginUser(db))
 		api.POST("/auth/logout", handlers.LogoutUser())
