@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"resumeai/services"
@@ -108,6 +109,25 @@ func GeneratePDFResume(c *gin.Context) {
 		return
 	}
 
+	// Log HTML content details for debugging
+	fmt.Printf("HTML Content Length: %d characters\n", len(htmlContent))
+	previewLength := 500
+	if len(htmlContent) < previewLength {
+		previewLength = len(htmlContent)
+	}
+	fmt.Printf("HTML Content Preview (first 500 chars): %s\n", htmlContent[:previewLength])
+
+	// Check for specific CSS properties in the HTML
+	if strings.Contains(htmlContent, "@page") {
+		fmt.Println("Found @page CSS rule in HTML content")
+	}
+	if strings.Contains(htmlContent, ".preview") {
+		fmt.Println("Found .preview CSS class in HTML content")
+	}
+	if strings.Contains(htmlContent, "width:") {
+		fmt.Println("Found width CSS property in HTML content")
+	}
+
 	// Ensure output dir exists
 	saveDir := "./static"
 	if err := os.MkdirAll(saveDir, os.ModePerm); err != nil {
@@ -165,9 +185,15 @@ func generatePDFResumeWithPython(templateName string, userData map[string]interf
 	if err != nil {
 		return fmt.Errorf("failed to marshal user data: %v", err)
 	}
+
+	fmt.Printf("Calling Python script with template: %s, outputPath: %s\n", templateName, outputPath)
 	cmd := exec.Command("python3", "generate_resume.py", templateName, string(userDataJSON), outputPath)
 	cmd.Dir = "."
 	output, err := cmd.CombinedOutput()
+
+	// Always log the output for debugging
+	fmt.Printf("Python script output:\n%s\n", string(output))
+
 	if err != nil {
 		return fmt.Errorf("python script failed: %v, output: %s", err, string(output))
 	}

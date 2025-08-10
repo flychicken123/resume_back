@@ -50,6 +50,22 @@ def generate_pdf_resume(template_name, user_data, output_path):
         system_info = get_system_info()
         print(f"PDF Generation Debug Info: {json.dumps(system_info, indent=2)}")
         
+        # Log HTML content details for debugging
+        try:
+            with open(html_path, 'r', encoding='utf-8') as f:
+                html_content = f.read()
+                print(f"HTML Content Length: {len(html_content)} characters")
+                print(f"HTML Content Preview (first 500 chars): {html_content[:500]}")
+                # Check for specific CSS properties
+                if '@page' in html_content:
+                    print("Found @page CSS rule in HTML")
+                if '.preview' in html_content:
+                    print("Found .preview CSS class in HTML")
+                if 'width:' in html_content:
+                    print("Found width CSS property in HTML")
+        except Exception as e:
+            print(f"Error reading HTML for logging: {e}")
+        
         # Convert HTML to PDF using wkhtmltopdf with bottom margin for whitespace
         cmd = [
             'wkhtmltopdf',
@@ -74,6 +90,14 @@ def generate_pdf_resume(template_name, user_data, output_path):
             return False, f"wkhtmltopdf failed: {result.stderr}"
         
         print(f"wkhtmltopdf stdout: {result.stdout}")
+        
+        # Log PDF file details
+        if os.path.exists(output_path):
+            pdf_size = os.path.getsize(output_path)
+            print(f"Generated PDF size: {pdf_size} bytes")
+        else:
+            print("Warning: PDF file was not created")
+        
         os.unlink(html_path)
         return True, None
     except Exception as e:
