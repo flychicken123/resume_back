@@ -39,11 +39,15 @@ def generate_html_resume(template_name, user_data, output_path):
         return False, str(e)
 
 def generate_pdf_resume(template_name, user_data, output_path):
-    # First generate HTML
-    html_path = output_path.replace('.pdf', '.html')
-    success, error = generate_html_resume(template_name, user_data, html_path)
-    if not success:
-        return False, error
+    # Determine HTML source: either provided path or content
+    provided_html_path = user_data.get('htmlPath')
+    if provided_html_path and os.path.exists(provided_html_path):
+        html_path = provided_html_path
+    else:
+        html_path = output_path.replace('.pdf', '.html')
+        success, error = generate_html_resume(template_name, user_data, html_path)
+        if not success:
+            return False, error
 
     try:
         # Log system info for debugging
@@ -98,7 +102,12 @@ def generate_pdf_resume(template_name, user_data, output_path):
         else:
             print("Warning: PDF file was not created")
         
-        os.unlink(html_path)
+        # Do not delete html if it was uploaded
+        try:
+            if not provided_html_path and os.path.exists(html_path):
+                os.unlink(html_path)
+        except Exception:
+            pass
         return True, None
     except Exception as e:
         return False, str(e)

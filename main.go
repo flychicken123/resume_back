@@ -143,6 +143,7 @@ func main() {
 		public.POST("/experience/optimize", handlers.OptimizeExperience)
 		public.POST("/resume/generate", handlers.GenerateResume)
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
+		public.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeFromHTMLFile)
 		public.POST("/resume/parse", handlers.ParseResume)
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
