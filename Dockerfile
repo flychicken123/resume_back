@@ -1,5 +1,5 @@
-# Build stage
-FROM golang:1.24-alpine AS builder
+# Build stage (Debian-based to match final image toolchain)
+FROM golang:1.24 AS builder
 
 # Set working directory
 WORKDIR /app
@@ -17,10 +17,11 @@ COPY . .
 # Remove expensive flags to reduce memory usage during build
 RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
 
-# Final stage
-FROM debian:bookworm-slim
+# Final stage (Ubuntu)
+FROM ubuntu:22.04
 
 # Install wkhtmltopdf and fonts for consistent rendering
+ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
@@ -34,7 +35,8 @@ RUN apt-get update \
        python3-pip \
        python3-pdfminer \
        python3-docx \
-    && ln -s /usr/bin/python3 /usr/bin/python \
+    && ln -sf /usr/bin/python3 /usr/bin/python \
+    && fc-cache -f -v \
     && rm -rf /var/lib/apt/lists/*
 
 # Speed up pip and reduce memory/disk usage

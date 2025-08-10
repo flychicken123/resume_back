@@ -37,6 +37,9 @@ func main() {
 
 	r := gin.Default()
 
+	// Allow larger multipart uploads (HTML file uploads)
+	r.MaxMultipartMemory = 16 << 20 // 16 MiB
+
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
