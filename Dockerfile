@@ -22,6 +22,9 @@ FROM ubuntu:22.04
 
 # Install wkhtmltopdf and fonts for consistent rendering
 ENV DEBIAN_FRONTEND=noninteractive
+# Pin wkhtmltopdf version (with patched Qt) and allow arch override if needed
+ENV WKHTML_VERSION=0.12.6-1
+ARG WKHTML_ARCH=amd64
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
        ca-certificates \
@@ -36,10 +39,14 @@ RUN apt-get update \
        python3-pip \
        python3-pdfminer \
        python3-docx \
-    # Install wkhtmltopdf 0.12.6-1 for Ubuntu 22.04 (Jammy) with patched Qt
-    && curl -L -o /tmp/wkhtmltox.deb https://github.com/wkhtmltopdf/packaging/releases/download/0.12.6-1/wkhtmltox_0.12.6-1.jammy_amd64.deb \
-    && dpkg -i /tmp/wkhtmltox.deb || apt-get -f install -y \
-    && rm -f /tmp/wkhtmltox.deb \
+    # Install wkhtmltopdf 0.12.6-1 (with patched Qt) via linux-generic static build
+    && curl -fsSL -o /tmp/wkhtmltox.tar.xz \
+       https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTML_VERSION}/wkhtmltox-${WKHTML_VERSION}.linux-generic-${WKHTML_ARCH}.tar.xz \
+    && mkdir -p /opt/wkhtmltox \
+    && tar -xJf /tmp/wkhtmltox.tar.xz -C /opt/wkhtmltox --strip-components=1 \
+    && ln -sf /opt/wkhtmltox/bin/wkhtmltopdf /usr/local/bin/wkhtmltopdf \
+    && ln -sf /opt/wkhtmltox/bin/wkhtmltoimage /usr/local/bin/wkhtmltoimage \
+    && rm -f /tmp/wkhtmltox.tar.xz \
     && ln -sf /usr/bin/python3 /usr/bin/python \
     && wkhtmltopdf --version \
     && fc-cache -f -v \
