@@ -38,7 +38,7 @@ func main() {
 	r := gin.Default()
 
 	// Allow larger multipart uploads (HTML file uploads)
-	r.MaxMultipartMemory = 32 << 20 // 32 MiB (increased from 16 MiB)
+	r.MaxMultipartMemory = 8 << 20 // 8 MiB (sufficient for typical resume files)
 
 	// Add middleware to handle large request errors
 	r.Use(func(c *gin.Context) {
@@ -47,8 +47,8 @@ func main() {
 		// Check if we have a 413 error
 		if c.Writer.Status() == http.StatusRequestEntityTooLarge {
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
-				"error":    "File too large. Please ensure your resume file is under 32MB.",
-				"max_size": "32MB",
+				"error":    "File too large. Please ensure your resume file is under 8MB.",
+				"max_size": "8MB",
 			})
 		}
 	})

@@ -51,8 +51,8 @@ func ParseResume(c *gin.Context) {
 		if strings.Contains(err.Error(), "too large") || strings.Contains(err.Error(), "413") {
 			fmt.Printf("[ParseResume] File too large error: %v\n", err)
 			c.JSON(413, gin.H{
-				"error":    "File too large. Please ensure your resume file is under 32MB.",
-				"max_size": "32MB",
+				"error":    "File too large. Please ensure your resume file is under 8MB.",
+				"max_size": "8MB",
 				"details":  err.Error(),
 			})
 			return
