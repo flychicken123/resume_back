@@ -6,13 +6,39 @@ import re
 
 # Optional imports guarded; we won't crash if a format lib is missing
 try:
-    from pdfminer.high_level import extract_text as pdf_extract_text
-except Exception:
+    # Try different import paths for pdfminer
+    try:
+        from pdfminer.high_level import extract_text as pdf_extract_text
+    except ImportError:
+        try:
+            from pdfminer.pdfinterp import PDFResourceManager, PDFPageInterpreter
+            from pdfminer.converter import TextConverter
+            from pdfminer.layout import LAParams
+            from pdfminer.pdfpage import PDFPage
+            from io import StringIO
+            
+            def pdf_extract_text(path):
+                resource_manager = PDFResourceManager()
+                string_io = StringIO()
+                converter = TextConverter(resource_manager, string_io, laparams=LAParams())
+                with open(path, 'rb') as file:
+                    interpreter = PDFPageInterpreter(resource_manager, converter)
+                    for page in PDFPage.create_pages(file):
+                        interpreter.process_page(page)
+                text = string_io.getvalue()
+                converter.close()
+                string_io.close()
+                return text
+        except ImportError:
+            pdf_extract_text = None
+except Exception as e:
+    print(f"PDF extraction setup failed: {e}", file=sys.stderr)
     pdf_extract_text = None
 
 try:
     import docx
-except Exception:
+except Exception as e:
+    print(f"DOCX import failed: {e}", file=sys.stderr)
     docx = None
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -96,22 +122,62 @@ def main():
     path = sys.argv[1]
     ext = os.path.splitext(path)[1].lower()
 
+    print(f"Processing file: {path} with extension: {ext}", file=sys.stderr)
+
     if ext == '.pdf':
-        text = read_pdf(path)
+        if pdf_extract_text is None:
+            print("PDF extraction not available", file=sys.stderr)
+            text = ''
+        else:
+            try:
+                text = read_pdf(path)
+                print(f"Extracted {len(text)} characters from PDF", file=sys.stderr)
+            except Exception as e:
+                print(f"PDF extraction failed: {e}", file=sys.stderr)
+                text = ''
     elif ext in ('.docx', '.doc'):
-        text = read_docx(path)
+        if docx is None:
+            print("DOCX extraction not available", file=sys.stderr)
+            text = ''
+        else:
+            try:
+                text = read_docx(path)
+                print(f"Extracted {len(text)} characters from DOCX", file=sys.stderr)
+            except Exception as e:
+                print(f"DOCX extraction failed: {e}", file=sys.stderr)
+                text = ''
     else:
-        text = read_txt(path)
+        try:
+            text = read_txt(path)
+            print(f"Extracted {len(text)} characters from text file", file=sys.stderr)
+        except Exception as e:
+            print(f"Text file reading failed: {e}", file=sys.stderr)
+            text = ''
 
-    basics = extract_basics(text)
-    sections = split_sections(text)
+    if not text.strip():
+        print("No text extracted from file", file=sys.stderr)
+        out = {
+            'raw_text': '',
+            'email': '',
+            'phone': '',
+            'sections': {},
+            'error': 'No text could be extracted from the file'
+        }
+    else:
+        basics = extract_basics(text)
+        sections = split_sections(text)
+        
+        print(f"Found email: {basics.get('email', 'None')}", file=sys.stderr)
+        print(f"Found phone: {basics.get('phone', 'None')}", file=sys.stderr)
+        print(f"Found sections: {list(sections.keys())}", file=sys.stderr)
 
-    out = {
-        'raw_text': text,
-        'email': basics.get('email', ''),
-        'phone': basics.get('phone', ''),
-        'sections': sections,
-    }
+        out = {
+            'raw_text': text,
+            'email': basics.get('email', ''),
+            'phone': basics.get('phone', ''),
+            'sections': sections,
+        }
+    
     print(json.dumps(out, ensure_ascii=False))
 
 if __name__ == '__main__':
