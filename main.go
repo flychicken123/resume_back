@@ -52,8 +52,21 @@ func main() {
 		}
 	})
 
-	// CORS middleware for local development
+	// CORS middleware - only for local development (when nginx is not present)
+	// Check if we're behind a proxy (nginx) by looking for X-Forwarded headers
 	r.Use(func(c *gin.Context) {
+		// If we have X-Forwarded headers, we're behind nginx (production)
+		// Let nginx handle CORS
+		if c.GetHeader("X-Forwarded-For") != "" || c.GetHeader("X-Forwarded-Proto") != "" {
+			if c.Request.Method == http.MethodOptions {
+				c.Status(http.StatusNoContent)
+				return
+			}
+			c.Next()
+			return
+		}
+
+		// Local development - handle CORS ourselves
 		origin := c.Request.Header.Get("Origin")
 		if origin == "" {
 			origin = "*"
