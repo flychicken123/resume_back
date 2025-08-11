@@ -38,13 +38,26 @@ func main() {
 	r := gin.Default()
 
 	// Allow larger multipart uploads (HTML file uploads)
-	r.MaxMultipartMemory = 16 << 20 // 16 MiB
+	r.MaxMultipartMemory = 32 << 20 // 32 MiB (increased from 16 MiB)
+
+	// Add middleware to handle large request errors
+	r.Use(func(c *gin.Context) {
+		c.Next()
+
+		// Check if we have a 413 error
+		if c.Writer.Status() == http.StatusRequestEntityTooLarge {
+			c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":    "File too large. Please ensure your resume file is under 32MB.",
+				"max_size": "32MB",
+			})
+		}
+	})
 
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Forwarded-Host", "X-Forwarded-Port"},
-		ExposeHeaders:    []string{"Content-Length"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Forwarded-Host", "X-Forwarded-Port", "Content-Length"},
+		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
 		AllowCredentials: true,
 		MaxAge:           12 * 60 * 60,
 	}))
@@ -59,9 +72,10 @@ func main() {
 			c.Header("Access-Control-Allow-Origin", origin)
 			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
 			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port")
+			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port,Content-Length")
 			c.Header("Access-Control-Allow-Credentials", "true")
 			c.Header("Access-Control-Max-Age", "86400")
+			c.Header("Content-Type", "text/plain; charset=utf-8")
 			c.AbortWithStatus(http.StatusNoContent)
 			return
 		}
@@ -148,6 +162,18 @@ func main() {
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeFromHTMLFile)
 		public.POST("/resume/parse", handlers.ParseResume)
+		public.OPTIONS("/resume/parse", func(c *gin.Context) {
+			origin := c.Request.Header.Get("Origin")
+			if origin == "" {
+				origin = "*"
+			}
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port,Content-Length")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Max-Age", "86400")
+			c.Status(http.StatusNoContent)
+		})
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
 	}

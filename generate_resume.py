@@ -70,20 +70,22 @@ def generate_pdf_resume(template_name, user_data, output_path):
         except Exception as e:
             print(f"Error reading HTML for logging: {e}")
         
-        # Convert HTML to PDF using wkhtmltopdf with balanced, small top/bottom margins
+        # Convert HTML to PDF using wkhtmltopdf with balanced margins
         cmd = [
             'wkhtmltopdf',
             '--page-size', 'Letter',
-            # Add a little whitespace at the top of every page so page 2+ match page 1
-            '--margin-top', '6',   # ~0.08in (reduced top whitespace)
+            # Minimal top margin to reduce white space on first page
+            '--margin-top', '2',   # ~0.03in (minimal top whitespace for first page)
             '--margin-right', '0',
-            # Reduce bottom whitespace while keeping a consistent look across pages
-            '--margin-bottom', '12',  # ~0.17in
+            # Minimal bottom margin
+            '--margin-bottom', '2',  # ~0.03in (minimal bottom whitespace)
             '--margin-left', '0',
             '--print-media-type',
             '--zoom', '1.0',
             '--dpi', '96',
             '--disable-smart-shrinking',
+            # Add custom CSS for page break controls and Skills section
+            '--user-style-sheet', 'data:text/css,.experience-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.preview .section-header:last-of-type{page-break-before:always!important;page-break-after:avoid!important;margin-top:0!important;orphans:3!important;widows:3!important;}.preview .section-header:last-of-type + p{page-break-before:avoid!important;page-break-inside:avoid!important;margin-top:4pt!important;orphans:3!important;widows:3!important;}.preview .section-header:last-of-type,.preview .section-header:last-of-type + p{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.preview .section-header:last-of-type,.preview .section-header:last-of-type + p,.preview .section-header:last-of-type + p + p{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}',
             html_path,
             output_path
         ]

@@ -24,12 +24,47 @@ type ParsedResume struct {
 }
 
 func ParseResume(c *gin.Context) {
+	// Log request details for debugging
+	fmt.Printf("[ParseResume] Request from: %s\n", c.Request.RemoteAddr)
+	fmt.Printf("[ParseResume] Origin: %s\n", c.GetHeader("Origin"))
+	fmt.Printf("[ParseResume] Content-Type: %s\n", c.GetHeader("Content-Type"))
+	fmt.Printf("[ParseResume] Content-Length: %s\n", c.GetHeader("Content-Length"))
+	fmt.Printf("[ParseResume] Method: %s\n", c.Request.Method)
+
+	// Check if this is a preflight request
+	if c.Request.Method == "OPTIONS" {
+		fmt.Printf("[ParseResume] Handling OPTIONS preflight request\n")
+		c.Status(200)
+		return
+	}
+
+	// Check content type
+	contentType := c.GetHeader("Content-Type")
+	if !strings.Contains(contentType, "multipart/form-data") {
+		c.JSON(400, gin.H{"error": "Expected multipart/form-data content type"})
+		return
+	}
+
 	file, header, err := c.Request.FormFile("resume")
 	if err != nil {
-		c.JSON(400, gin.H{"error": "Could not get file"})
+		// Check if it's a size-related error
+		if strings.Contains(err.Error(), "too large") || strings.Contains(err.Error(), "413") {
+			fmt.Printf("[ParseResume] File too large error: %v\n", err)
+			c.JSON(413, gin.H{
+				"error":    "File too large. Please ensure your resume file is under 32MB.",
+				"max_size": "32MB",
+				"details":  err.Error(),
+			})
+			return
+		}
+		fmt.Printf("[ParseResume] Error getting file: %v\n", err)
+		c.JSON(400, gin.H{"error": "Could not get file", "details": err.Error()})
 		return
 	}
 	defer file.Close()
+
+	// Log file details
+	fmt.Printf("[ParseResume] File received: %s, size: %d bytes\n", header.Filename, header.Size)
 
 	// Save file to a safe temp location with preserved extension
 	ext := filepath.Ext(header.Filename)
