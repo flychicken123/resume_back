@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -110,15 +111,28 @@ func ParseResume(c *gin.Context) {
 	// Deterministic extraction via python parse_resume.py
 	cmd := exec.Command(pythonExec, "parse_resume.py", tempFile)
 	cmd.Dir = "." // script resides in backend root
-	output, err := cmd.CombinedOutput()
+
+	// Capture stdout and stderr separately
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
 	if err != nil {
 		fmt.Printf("[parse] python exec error: %v\n", err)
-		fmt.Printf("[parse] output: %s\n", string(output))
-	}
-	if err != nil {
-		c.JSON(500, gin.H{"error": "Python script failed", "details": err.Error(), "stdout": string(output)})
+		fmt.Printf("[parse] stderr: %s\n", stderr.String())
+		fmt.Printf("[parse] stdout: %s\n", stdout.String())
+		c.JSON(500, gin.H{"error": "Python script failed", "details": err.Error(), "stderr": stderr.String(), "stdout": stdout.String()})
 		return
 	}
+
+	// Log stderr for debugging
+	if stderr.Len() > 0 {
+		fmt.Printf("[parse] stderr: %s\n", stderr.String())
+	}
+
+	// Use only stdout for JSON parsing
+	output := stdout.Bytes()
 
 	var extracted map[string]interface{}
 	if err := json.Unmarshal(output, &extracted); err != nil {

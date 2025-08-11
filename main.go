@@ -52,13 +52,20 @@ func main() {
 		}
 	})
 
-	// Note: CORS is now handled by nginx, so we don't need it here
-	// r.Use(cors.New(cors.Config{...}))
-
-	// Ensure all OPTIONS preflight requests succeed with proper CORS headers
+	// CORS middleware for local development
 	r.Use(func(c *gin.Context) {
+		origin := c.Request.Header.Get("Origin")
+		if origin == "" {
+			origin = "*"
+		}
+		c.Header("Access-Control-Allow-Origin", origin)
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, Content-Length")
+		c.Header("Access-Control-Allow-Credentials", "true")
+		c.Header("Access-Control-Max-Age", "86400")
+
+		// Handle preflight requests
 		if c.Request.Method == http.MethodOptions {
-			// Let nginx handle CORS headers
 			c.Status(http.StatusNoContent)
 			return
 		}
