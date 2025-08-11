@@ -10,7 +10,6 @@ import (
 	"resumeai/handlers"
 	"time"
 
-	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 )
 
@@ -53,30 +52,14 @@ func main() {
 		}
 	})
 
-	r.Use(cors.New(cors.Config{
-		AllowOrigins:     []string{"https://hihired.org", "https://www.hihired.org", "http://localhost:3000", "http://127.0.0.1:3000"},
-		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "X-Forwarded-Host", "X-Forwarded-Port", "Content-Length"},
-		ExposeHeaders:    []string{"Content-Length", "Content-Type"},
-		AllowCredentials: true,
-		MaxAge:           12 * 60 * 60,
-	}))
+	// Note: CORS is now handled by nginx, so we don't need it here
+	// r.Use(cors.New(cors.Config{...}))
 
 	// Ensure all OPTIONS preflight requests succeed with proper CORS headers
 	r.Use(func(c *gin.Context) {
 		if c.Request.Method == http.MethodOptions {
-			origin := c.Request.Header.Get("Origin")
-			if origin == "" {
-				origin = "*"
-			}
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Vary", "Origin, Access-Control-Request-Method, Access-Control-Request-Headers")
-			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port,Content-Length")
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Max-Age", "86400")
-			c.Header("Content-Type", "text/plain; charset=utf-8")
-			c.AbortWithStatus(http.StatusNoContent)
+			// Let nginx handle CORS headers
+			c.Status(http.StatusNoContent)
 			return
 		}
 		c.Next()
@@ -162,18 +145,6 @@ func main() {
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeFromHTMLFile)
 		public.POST("/resume/parse", handlers.ParseResume)
-		public.OPTIONS("/resume/parse", func(c *gin.Context) {
-			origin := c.Request.Header.Get("Origin")
-			if origin == "" {
-				origin = "*"
-			}
-			c.Header("Access-Control-Allow-Origin", origin)
-			c.Header("Access-Control-Allow-Methods", "POST, OPTIONS")
-			c.Header("Access-Control-Allow-Headers", "Origin,Content-Type,Accept,Authorization,X-Requested-With,X-Forwarded-Host,X-Forwarded-Port,Content-Length")
-			c.Header("Access-Control-Allow-Credentials", "true")
-			c.Header("Access-Control-Max-Age", "86400")
-			c.Status(http.StatusNoContent)
-		})
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
 	}
