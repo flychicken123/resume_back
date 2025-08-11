@@ -27,7 +27,8 @@ RUN set -eux; \
   apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl xz-utils fontconfig \
     fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
-    python3 python3-pip python3-pdfminer; \
+    python3 python3-pip python3-pdfminer \
+    poppler-utils tesseract-ocr tesseract-ocr-eng; \
   arch="$(uname -m)"; \
   case "$arch" in \
     x86_64)  WK_ARCH=amd64 ;; \
@@ -42,7 +43,7 @@ RUN set -eux; \
   dpkg -i /tmp/wkhtmltox.deb || apt-get -f install -y; \
   rm -f /tmp/wkhtmltox.deb; \
   # Focal does not ship python3-docx; install via pip
-  pip3 install --no-cache-dir python-docx; \
+  pip3 install --no-cache-dir python-docx pymupdf; \
   ln -sf /usr/bin/python3 /usr/bin/python; \
   wkhtmltopdf --version; \
   fc-cache -f -v; \

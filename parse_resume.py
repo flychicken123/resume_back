@@ -3,6 +3,7 @@ import sys
 import os
 import json
 import re
+import subprocess
 
 # Optional imports guarded; we won't crash if a format lib is missing
 try:
@@ -35,6 +36,37 @@ except Exception as e:
     print(f"PDF extraction setup failed: {e}", file=sys.stderr)
     pdf_extract_text = None
 
+# Try PyMuPDF (fitz) as another PDF extraction method
+try:
+    import fitz  # PyMuPDF
+    def fitz_extract_text(path):
+        try:
+            doc = fitz.open(path)
+            text = ""
+            for page in doc:
+                text += page.get_text()
+            doc.close()
+            return text
+        except Exception as e:
+            print(f"PyMuPDF extraction failed: {e}", file=sys.stderr)
+            return ""
+except ImportError:
+    fitz_extract_text = None
+
+# Try poppler-utils as a system command fallback
+def poppler_extract_text(path):
+    try:
+        result = subprocess.run(['pdftotext', path, '-'], 
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0:
+            return result.stdout
+        else:
+            print(f"Poppler extraction failed: {result.stderr}", file=sys.stderr)
+            return ""
+    except Exception as e:
+        print(f"Poppler command failed: {e}", file=sys.stderr)
+        return ""
+
 try:
     import docx
 except Exception as e:
@@ -56,12 +88,29 @@ def read_txt(path: str) -> str:
 
 
 def read_pdf(path: str) -> str:
-    if pdf_extract_text is None:
-        return ''
-    try:
-        return pdf_extract_text(path) or ''
-    except Exception:
-        return ''
+    """Try multiple PDF extraction methods in sequence"""
+    methods = []
+    
+    if pdf_extract_text is not None:
+        methods.append(("pdfminer", pdf_extract_text))
+    if fitz_extract_text is not None:
+        methods.append(("PyMuPDF", fitz_extract_text))
+    methods.append(("poppler", poppler_extract_text))
+    
+    for method_name, method_func in methods:
+        try:
+            print(f"Trying {method_name} extraction...", file=sys.stderr)
+            text = method_func(path)
+            if text and text.strip():
+                print(f"Successfully extracted {len(text)} characters using {method_name}", file=sys.stderr)
+                return text
+            else:
+                print(f"{method_name} returned empty text", file=sys.stderr)
+        except Exception as e:
+            print(f"{method_name} extraction failed: {e}", file=sys.stderr)
+    
+    print("All PDF extraction methods failed", file=sys.stderr)
+    return ""
 
 
 def read_docx(path: str) -> str:
@@ -116,7 +165,7 @@ def extract_basics(text: str):
 
 def main():
     if len(sys.argv) != 2:
-        print(json.dumps({'error': 'usage: parse_resume.py <file>'}))
+        print(json.dumps({'error': 'usage: parse_resume.py <file>'}), file=sys.stderr)
         sys.exit(1)
 
     path = sys.argv[1]
@@ -178,7 +227,8 @@ def main():
             'sections': sections,
         }
     
-    print(json.dumps(out, ensure_ascii=False))
+    # Only print JSON to stdout, everything else to stderr
+    print(json.dumps(out, ensure_ascii=False), file=sys.stdout)
 
 if __name__ == '__main__':
     main()
