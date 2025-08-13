@@ -1,12 +1,20 @@
 -- AI Resume Builder Database Schema
 -- PostgreSQL
 
+-- Comments for Google OAuth fields
+COMMENT ON COLUMN users.auth_provider IS 'Authentication provider: email, google, etc.';
+COMMENT ON COLUMN users.google_id IS 'Google OAuth user ID';
+COMMENT ON COLUMN users.profile_picture IS 'User profile picture URL from Google';
+
 -- Users table
 CREATE TABLE users (
     id SERIAL PRIMARY KEY,
     email VARCHAR(255) UNIQUE NOT NULL,
     password VARCHAR(255) NOT NULL,
     name VARCHAR(255),
+    auth_provider VARCHAR(50) DEFAULT 'email',
+    google_id VARCHAR(255),
+    profile_picture VARCHAR(500),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -68,6 +76,8 @@ CREATE TABLE resume_history (
 
 -- Indexes for better performance
 CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_google_id ON users(google_id);
+CREATE INDEX idx_users_auth_provider ON users(auth_provider);
 CREATE INDEX idx_resumes_user_id ON resumes(user_id);
 CREATE INDEX idx_experiences_resume_id ON experiences(resume_id);
 CREATE INDEX idx_education_resume_id ON education(resume_id);

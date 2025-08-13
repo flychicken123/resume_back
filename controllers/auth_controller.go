@@ -146,12 +146,16 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	})
 }
 
-func (c *AuthController) GoogleLogin(ctx *gin.Context) {
-	var req struct {
-		Token string `json:"token" binding:"required"`
-		Email string `json:"email" binding:"required,email"`
-	}
+type GoogleLoginRequest struct {
+	Token    string `json:"token" binding:"required"`
+	Email    string `json:"email" binding:"required,email"`
+	Name     string `json:"name,omitempty"`
+	Picture  string `json:"picture,omitempty"`
+	GoogleID string `json:"google_id,omitempty"`
+}
 
+func (c *AuthController) GoogleLogin(ctx *gin.Context) {
+	var req GoogleLoginRequest
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, AuthResponse{
 			Success: false,
@@ -160,17 +164,40 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 		return
 	}
 
-	// Check if user exists, create if not
+	// TODO: Validate Google token here if needed
+	// For now, we trust the frontend to send valid Google data
+
+	// Check if user exists
 	user, err := c.userModel.GetByEmail(req.Email)
+	isNewUser := false
+
 	if err != nil {
-		// User doesn't exist, create them
-		user, err = c.userModel.Create(req.Email, req.Email, "google_oauth_user")
+		// User doesn't exist, create them as a Google user
+		// Use the name from Google if provided, otherwise use email
+		userName := req.Name
+		if userName == "" {
+			userName = req.Email
+		}
+
+		// Create user with Google OAuth provider
+		user, err = c.userModel.CreateWithProvider(req.Email, userName, "google_oauth_user", "google", req.GoogleID, req.Picture)
 		if err != nil {
 			ctx.JSON(http.StatusInternalServerError, AuthResponse{
 				Success: false,
 				Message: "Failed to create user account",
 			})
 			return
+		}
+		isNewUser = true
+	} else {
+		// User exists, just log them in
+		// Update user name if Google provides a different name
+		if req.Name != "" && req.Name != user.Name {
+			err = c.userModel.UpdateProfile(user.ID, req.Name)
+			if err != nil {
+				// Log the error but don't fail the login
+				// You might want to add proper logging here
+			}
 		}
 	}
 
@@ -184,10 +211,20 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 		return
 	}
 
-	ctx.JSON(http.StatusOK, AuthResponse{
-		Success: true,
-		Message: "Google login successful",
-		User:    user.Email,
-		Token:   token,
-	})
+	// Return appropriate response based on whether user is new or existing
+	if isNewUser {
+		ctx.JSON(http.StatusOK, AuthResponse{
+			Success: true,
+			Message: "Google account created and login successful",
+			User:    user.Email,
+			Token:   token,
+		})
+	} else {
+		ctx.JSON(http.StatusOK, AuthResponse{
+			Success: true,
+			Message: "Google login successful",
+			User:    user.Email,
+			Token:   token,
+		})
+	}
 }

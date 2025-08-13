@@ -6,12 +6,15 @@ import (
 )
 
 type User struct {
-	ID        int       `json:"id"`
-	Email     string    `json:"email"`
-	Name      string    `json:"name"`
-	Password  string    `json:"-"` // Don't include password in JSON
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID             int       `json:"id"`
+	Email          string    `json:"email"`
+	Name           string    `json:"name"`
+	Password       string    `json:"-"` // Don't include password in JSON
+	AuthProvider   string    `json:"auth_provider"`
+	GoogleID       string    `json:"google_id,omitempty"`
+	ProfilePicture string    `json:"profile_picture,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type UserModel struct {
@@ -23,14 +26,18 @@ func NewUserModel(db *sql.DB) *UserModel {
 }
 
 func (m *UserModel) Create(email, name, password string) (*User, error) {
+	return m.CreateWithProvider(email, name, password, "email", "", "")
+}
+
+func (m *UserModel) CreateWithProvider(email, name, password, authProvider, googleID, profilePicture string) (*User, error) {
 	user := &User{}
 	query := `
-		INSERT INTO users (email, name, password, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $4)
-		RETURNING id, email, name, created_at, updated_at
+		INSERT INTO users (email, name, password, auth_provider, google_id, profile_picture, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+		RETURNING id, email, name, auth_provider, google_id, profile_picture, created_at, updated_at
 	`
-	err := m.DB.QueryRow(query, email, name, password, time.Now()).Scan(
-		&user.ID, &user.Email, &user.Name, &user.CreatedAt, &user.UpdatedAt,
+	err := m.DB.QueryRow(query, email, name, password, authProvider, googleID, profilePicture, time.Now()).Scan(
+		&user.ID, &user.Email, &user.Name, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -41,11 +48,11 @@ func (m *UserModel) Create(email, name, password string) (*User, error) {
 func (m *UserModel) GetByEmail(email string) (*User, error) {
 	user := &User{}
 	query := `
-		SELECT id, email, name, password, created_at, updated_at
+		SELECT id, email, name, password, auth_provider, google_id, profile_picture, created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	err := m.DB.QueryRow(query, email).Scan(
-		&user.ID, &user.Email, &user.Name, &user.Password, &user.CreatedAt, &user.UpdatedAt,
+		&user.ID, &user.Email, &user.Name, &user.Password, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
