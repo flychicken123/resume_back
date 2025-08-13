@@ -48,7 +48,11 @@ func (m *UserModel) CreateWithProvider(email, name, password, authProvider, goog
 func (m *UserModel) GetByEmail(email string) (*User, error) {
 	user := &User{}
 	query := `
-		SELECT id, email, name, password, auth_provider, google_id, profile_picture, created_at, updated_at
+		SELECT id, email, name, password, 
+		       COALESCE(auth_provider, 'email') as auth_provider, 
+		       google_id, 
+		       profile_picture, 
+		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	err := m.DB.QueryRow(query, email).Scan(

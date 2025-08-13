@@ -2,9 +2,6 @@
 -- PostgreSQL
 
 -- Comments for Google OAuth fields
-COMMENT ON COLUMN users.auth_provider IS 'Authentication provider: email, google, etc.';
-COMMENT ON COLUMN users.google_id IS 'Google OAuth user ID';
-COMMENT ON COLUMN users.profile_picture IS 'User profile picture URL from Google';
 
 -- Users table
 CREATE TABLE users (

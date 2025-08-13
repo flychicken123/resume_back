@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -168,10 +169,12 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 	// For now, we trust the frontend to send valid Google data
 
 	// Check if user exists
+	fmt.Printf("Checking if user exists for email: %s\n", req.Email)
 	user, err := c.userModel.GetByEmail(req.Email)
 	isNewUser := false
 
 	if err != nil {
+		fmt.Printf("User not found, will create new user. Error: %v\n", err)
 		// User doesn't exist, create them as a Google user
 		// Use the name from Google if provided, otherwise use email
 		userName := req.Name
@@ -182,14 +185,17 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 		// Create user with Google OAuth provider
 		user, err = c.userModel.CreateWithProvider(req.Email, userName, "google_oauth_user", "google", req.GoogleID, req.Picture)
 		if err != nil {
+			// Log the actual error for debugging
+			fmt.Printf("Error creating Google user: %v\n", err)
 			ctx.JSON(http.StatusInternalServerError, AuthResponse{
 				Success: false,
-				Message: "Failed to create user account",
+				Message: "Failed to create user account: " + err.Error(),
 			})
 			return
 		}
 		isNewUser = true
 	} else {
+		fmt.Printf("User found, existing user ID: %d, Name: %s, AuthProvider: %s\n", user.ID, user.Name, user.AuthProvider)
 		// User exists, just log them in
 		// Update user name if Google provides a different name
 		if req.Name != "" && req.Name != user.Name {
