@@ -25,6 +25,11 @@ type LoginRequest struct {
 	Password string `json:"password" binding:"required"`
 }
 
+type GoogleLoginRequest struct {
+	Token string `json:"token" binding:"required"`
+	Email string `json:"email" binding:"required,email"`
+}
+
 type AuthResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
@@ -256,6 +261,55 @@ func LoginUser(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "Login successful",
+			User:    req.Email,
+			Token:   token,
+		})
+	}
+}
+
+// GoogleLogin handles Google OAuth login
+func GoogleLogin(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var req GoogleLoginRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			c.JSON(http.StatusBadRequest, AuthResponse{
+				Success: false,
+				Message: "Invalid request data: " + err.Error(),
+			})
+			return
+		}
+
+		// For now, we'll just create or get the user based on email
+		// In a production app, you'd want to verify the Google token
+		var userID int
+		var name string
+		err := db.QueryRow("SELECT id, name FROM users WHERE email = $1", req.Email).Scan(&userID, &name)
+		if err != nil {
+			// User doesn't exist, create them
+			err = db.QueryRow("INSERT INTO users (email, name, password) VALUES ($1, $2, $3) RETURNING id, name",
+				req.Email, req.Email, "google_oauth_user").Scan(&userID, &name)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, AuthResponse{
+					Success: false,
+					Message: "Failed to create user account",
+				})
+				return
+			}
+		}
+
+		// Generate JWT token
+		token, err := GenerateJWT(userID, req.Email)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, AuthResponse{
+				Success: false,
+				Message: "Failed to generate authentication token",
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, AuthResponse{
+			Success: true,
+			Message: "Google login successful",
 			User:    req.Email,
 			Token:   token,
 		})

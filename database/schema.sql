@@ -56,11 +56,23 @@ CREATE TABLE education (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Resume History table
+CREATE TABLE resume_history (
+    id SERIAL PRIMARY KEY,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    resume_name VARCHAR(255) NOT NULL,
+    s3_path VARCHAR(500) NOT NULL,
+    generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for better performance
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_resumes_user_id ON resumes(user_id);
 CREATE INDEX idx_experiences_resume_id ON experiences(resume_id);
 CREATE INDEX idx_education_resume_id ON education(resume_id);
+CREATE INDEX idx_resume_history_user_id ON resume_history(user_id);
+CREATE INDEX idx_resume_history_generated_at ON resume_history(generated_at DESC);
 
 -- Trigger to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()

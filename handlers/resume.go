@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -263,6 +264,87 @@ func GeneratePDFResumeFromHTMLFile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "PDF generated", "downloadURL": url})
+}
+
+// DownloadResume handles resume downloads and records them in history
+func DownloadResume(db *sql.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		filename := c.Param("filename")
+		if filename == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Filename is required"})
+			return
+		}
+
+		fmt.Printf("DownloadResume called for filename: %s\n", filename)
+
+		// Get user ID from context (if authenticated)
+		userID, userExists := c.Get("user_id")
+		fmt.Printf("User exists: %v, User ID: %v\n", userExists, userID)
+
+		// Database is passed directly to the function
+		dbExists := true
+		fmt.Printf("Database exists: %v\n", dbExists)
+
+		// Generate presigned URL for download
+		s3svc, s3err := services.NewS3Service()
+		if s3err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Storage service unavailable"})
+			return
+		}
+
+		key := "resumes/" + filename
+		presignedURL, err := s3svc.GeneratePresignedURL(key)
+		if err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "Resume not found"})
+			return
+		}
+
+		// Record download in history if user is authenticated
+		if userExists && dbExists {
+			fmt.Printf("Recording download in history for user %v\n", userID)
+
+			// Create resume name from filename
+			resumeName := strings.TrimSuffix(filename, ".pdf")
+			resumeName = strings.ReplaceAll(resumeName, "_", " ")
+			resumeName = strings.Title(resumeName)
+			fmt.Printf("Resume name: %s\n", resumeName)
+
+			// Add to history
+			go func() {
+				query := `
+				INSERT INTO resume_history (user_id, resume_name, s3_path, generated_at)
+				VALUES ($1, $2, $3, $4)
+			`
+				_, insertErr := db.Exec(query, userID, resumeName, presignedURL, time.Now())
+				if insertErr != nil {
+					fmt.Printf("Error saving to resume history: %v\n", insertErr)
+				} else {
+					fmt.Printf("Successfully saved to resume history\n")
+				}
+
+				// Clean up old resumes (keep only last 3)
+				cleanupQuery := `
+				DELETE FROM resume_history
+				WHERE user_id = $1
+				AND id NOT IN (
+					SELECT id FROM resume_history
+					WHERE user_id = $1
+					ORDER BY generated_at DESC
+					LIMIT 3
+				)
+			`
+				_, cleanupErr := db.Exec(cleanupQuery, userID)
+				if cleanupErr != nil {
+					fmt.Printf("Error cleaning up old resumes: %v\n", cleanupErr)
+				}
+			}()
+		} else {
+			fmt.Printf("Not recording history - userExists: %v, dbExists: %v\n", userExists, dbExists)
+		}
+
+		// Redirect to the presigned URL
+		c.Redirect(http.StatusTemporaryRedirect, presignedURL)
+	}
 }
 
 func generatePDFResumeWithPython(templateName string, userData map[string]interface{}, outputPath string) error {

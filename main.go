@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"os"
 	"resumeai/config"
+	"resumeai/controllers"
 	"resumeai/database"
 	"resumeai/handlers"
+	"resumeai/models"
+	"resumeai/services"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -33,6 +36,24 @@ func main() {
 	defer db.Close()
 
 	log.Println("✅ Database connection successful!")
+
+	// Initialize models
+	userModel := models.NewUserModel(db)
+	resumeHistoryModel := models.NewResumeHistoryModel(db)
+	resumeModel := models.NewResumeModel(db)
+
+	// Initialize services
+	jwtService := services.NewJWTService(config.GetAppConfig().JWTSecret)
+	s3Service, err := services.NewS3Service()
+	if err != nil {
+		log.Fatal("Error initializing S3 service:", err)
+	}
+	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
+
+	// Initialize controllers
+	authController := controllers.NewAuthController(userModel, jwtService)
+	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
+	userController := controllers.NewUserController(userModel, resumeModel)
 
 	r := gin.Default()
 
@@ -152,12 +173,14 @@ func main() {
 			})
 		})
 
-		api.POST("/auth/register", handlers.RegisterUser(db))
-		api.POST("/auth/login", handlers.LoginUser(db))
+		// Auth routes using new controllers
+		api.POST("/auth/register", authController.Register)
+		api.POST("/auth/login", authController.Login)
+		api.POST("/auth/google", authController.GoogleLogin)
 		api.POST("/auth/logout", handlers.LogoutUser())
 	}
 
-	// Public routes (no auth required)
+	// Public routes (no auth required) - keep using handlers for now
 	public := r.Group("/api")
 	{
 		public.POST("/experience/optimize", handlers.OptimizeExperience)
@@ -174,11 +197,17 @@ func main() {
 	protected.Use(handlers.AuthMiddleware())
 
 	{
-		protected.GET("/user/profile", handlers.GetUserProfile(db))
-		protected.PUT("/user/profile", handlers.UpdateUserProfile(db))
-		protected.POST("/user/change-password", handlers.ChangePassword(db))
-		protected.POST("/user/save", handlers.SaveUserData(db))
-		protected.GET("/user/load", handlers.LoadUserData(db))
+		// User routes using new controllers
+		protected.GET("/user/profile", userController.GetProfile)
+		protected.PUT("/user/profile", userController.UpdateProfile)
+		protected.POST("/user/change-password", userController.ChangePassword)
+		protected.POST("/user/save", userController.SaveUserData)
+		protected.GET("/user/load", userController.LoadUserData)
+
+		// Resume History routes using new controllers
+		protected.GET("/resume/history", resumeController.GetHistory)
+		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
+		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
 	}
 
 	log.Println("Server starting on port 8081")
