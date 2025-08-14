@@ -96,6 +96,24 @@ func (s *S3Service) GeneratePresignedURL(fileName string) (string, error) {
 	return url, nil
 }
 
+// DeleteFile deletes a file from S3
+func (s *S3Service) DeleteFile(fileName string) error {
+	// Create S3 delete input
+	input := &s3.DeleteObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(fileName),
+	}
+
+	// Delete from S3
+	_, err := s.s3Client.DeleteObject(input)
+	if err != nil {
+		return fmt.Errorf("failed to delete file from S3: %v", err)
+	}
+
+	log.Printf("File deleted from S3: %s", fileName)
+	return nil
+}
+
 // validate checks if the S3Service configuration is valid
 func (s *S3Service) validate() error {
 	if s.bucket == "" {
