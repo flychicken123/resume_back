@@ -90,7 +90,7 @@ jobs:
           # Clone the main branch of the repository using HTTPS (public repo)
           git clone -b main https://github.com/flychicken123/resume_back.git .
           
-          # Check if clone was successful
+          # Check if clone was successfu
           if [ ! -f "docker-compose.backend.yml" ]; then
             echo "Failed to clone repository or docker-compose file missing"
             exit 1
