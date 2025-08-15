@@ -112,6 +112,28 @@ jobs:
           echo "Building Go binary on the EC2 instance..."
           go build -o main main.go
 
+          # Create .env file for docker-compose with all required secrets
+          cat > .env << EOF
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}
+          GCP_PRIVATE_KEY='${{ secrets.GCP_PRIVATE_KEY }}'
+          GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
+          GCP_CLIENT_ID=${{ secrets.GCP_CLIENT_ID }}
+          GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+          EOF
+
           # Stop existing containers (after .env exists to avoid var-warnings)
           docker-compose -f docker-compose.backend.yml down || true
 
