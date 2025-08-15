@@ -65,14 +65,22 @@ jobs:
           export PATH=$PATH:/usr/local/go/bin
           go version
 
-          # Install Docker if not installed
+          # Install Docker if not installed, and ensure it's running
           if ! command -v docker &> /dev/null; then
+            echo "Installing Docker..."
             sudo yum install -y docker
-            sudo systemctl start docker
-            sudo systemctl enable docker
-            sudo usermod -aG docker ec2-user
           fi
           
+          echo "Ensuring Docker daemon is running..."
+          sudo systemctl start docker
+          sudo systemctl enable docker
+          sudo usermod -aG docker ec2-user || true
+          
+          # Wait for Docker to be ready
+          echo "Waiting for Docker daemon..."
+          sleep 10
+          sudo docker info
+
           # Clean up docker images from previous runs
           docker system prune -af || true
 
