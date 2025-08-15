@@ -13,8 +13,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
+ENV GOMAXPROCS=1
+RUN GOMAXPROCS=1 CGO_ENABLED=0 GOOS=linux go build -o main main.go
 
 # Final stage (Ubuntu focal to support wkhtmltopdf 0.12.6-1 .deb with patched Qt)
 FROM ubuntu:20.04
