@@ -104,6 +104,10 @@ jobs:
             exit 1
           fi
           
+          # Download Go modules
+          echo "Downloading Go modules..."
+          go mod download
+
           # Build the Go binary on the host machine
           echo "Building Go binary on the EC2 instance..."
           go build -o main main.go
