@@ -20,34 +20,32 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
 # Final stage (Ubuntu focal to support wkhtmltopdf 0.12.6-1 .deb with patched Qt)
 FROM ubuntu:20.04
 
-# Install wkhtmltopdf and fonts for consistent rendering
+# Install essential system packages and fonts
 ENV DEBIAN_FRONTEND=noninteractive
-ENV WKHTML_VERSION=0.12.6-1
-RUN set -eux; \
-  apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl xz-utils fontconfig \
     fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
-    python3 python3-pip python3-pdfminer \
-    poppler-utils tesseract-ocr tesseract-ocr-eng; \
+    python3 python3-pip && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install wkhtmltopdf and Python libraries
+ENV WKHTML_VERSION=0.12.6-1
+RUN set -eux; \
   arch="$(uname -m)"; \
   case "$arch" in \
     x86_64)  WK_ARCH=amd64 ;; \
     aarch64) WK_ARCH=arm64 ;; \
     *) echo "Unsupported arch: $arch"; exit 1 ;; \
   esac; \
-  # Use focal .deb which exists and includes patched Qt
   DEB_URL="https://github.com/wkhtmltopdf/packaging/releases/download/${WKHTML_VERSION}/wkhtmltox_${WKHTML_VERSION}.focal_${WK_ARCH}.deb"; \
   echo "Downloading $DEB_URL"; \
   curl -fSL --retry 5 --retry-connrefused -o /tmp/wkhtmltox.deb "$DEB_URL"; \
-  apt-get install -y --no-install-recommends gdebi-core || true; \
   dpkg -i /tmp/wkhtmltox.deb || apt-get -f install -y; \
   rm -f /tmp/wkhtmltox.deb; \
-  # Focal does not ship python3-docx; install via pip
   pip3 install --no-cache-dir python-docx pymupdf; \
   ln -sf /usr/bin/python3 /usr/bin/python; \
   wkhtmltopdf --version; \
-  fc-cache -f -v; \
-  rm -rf /var/lib/apt/lists/*
+  fc-cache -f -v
 
 # Speed up pip and reduce memory/disk usage
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
