@@ -42,6 +42,14 @@ jobs:
         script: |
           set -Eeuo pipefail
           trap 'echo "❌ Error on line $LINENO"; exit 1' ERR
+
+          # Free up disk space first, before any other commands
+          echo "Cleaning up disk space before updates..."
+          df -h
+          sudo yum clean all
+          sudo rm -rf /var/cache/yum/*
+          sudo rm -rf /home/ec2-user/go
+          df -h
           
           # Update system and install essential packages
           sudo yum update -y
@@ -65,20 +73,15 @@ jobs:
             sudo usermod -aG docker ec2-user
           fi
           
+          # Clean up docker images from previous runs
+          docker system prune -af || true
+
           # Install Docker Compose if not installed
           if ! command -v docker-compose &> /dev/null; then
             sudo curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
             sudo chmod +x /usr/local/bin/docker-compose
           fi
           
-          # Free up disk space
-          echo "Cleaning up disk space..."
-          df -h
-          sudo yum clean all
-          docker system prune -af || true
-          rm -rf /home/ec2-user/go
-          df -h
-
           # Remove existing directory completely and recreate
           rm -rf ~/ai-resume-backend
           mkdir -p ~/ai-resume-backend
