@@ -4,17 +4,10 @@ on:
   push:
     branches: [ main ]
   pull_request:
-    branches: [ m          # Clone the main branch of the repository using HTTPS (public repo)
-          git clone -b main https://github.com/flychicken123/resume_back.git .
-          
-          # Check if clone was successful
-          if [ ! -f "docker-compose.backend.yml" ]; then
-            echo "Failed to clone repository or docker-compose file missing"
-            exit 1
-          fi
-          
-          # Create .env file for docker-compose (restoring known working approach)
-          cat > .env << EOF deploy-backend:
+    branches: [ main ]
+
+jobs:
+  deploy-backend:
     runs-on: ubuntu-latest
     environment: prod
     
@@ -105,15 +98,12 @@ on:
           # Clone the main branch of the repository using HTTPS (public repo)
           git clone -b main https://github.com/flychicken123/resume_back.git .
           
-          # Check if clone was successfu
+          # Check if clone was successful
           if [ ! -f "docker-compose.backend.yml" ]; then
             echo "Failed to clone repository or docker-compose file missing"
             exit 1
           fi
           
-          # Create vendor directory to avoid OOM errors during build
-          go mod vendor
-
           # Create .env file for docker-compose (restoring known working approach)
           cat > .env << EOF
           DB_HOST=${{ secrets.DB_HOST }}
