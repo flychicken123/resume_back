@@ -7,25 +7,23 @@ WORKDIR /app
 # Copy go mod files
 COPY go.mod go.sum ./
 
-# Download dependencies
-RUN go mod download
+# Copy vendor directory
+COPY vendor ./vendor
 
-# Copy source code
-COPY . .
-
-# Build the application (only main.go to avoid conflicts)
-# Remove expensive flags to reduce memory usage during build
-RUN CGO_ENABLED=0 GOOS=linux go build -o main main.go
+# Build the application using vendored packages
+RUN CGO_ENABLED=0 GOOS=linux go build -mod=vendor -o main main.go
 
 # Final stage (Ubuntu focal to support wkhtmltopdf 0.12.6-1 .deb with patched Qt)
 FROM ubuntu:20.04
 
 # Install essential system packages and fonts
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
     ca-certificates curl xz-utils fontconfig \
     fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
-    python3 python3-pip && \
+    python3 python3-pip ghostscript && \
+    apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
 # Install wkhtmltopdf and Python libraries
