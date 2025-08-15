@@ -50,7 +50,7 @@ jobs:
           # Install Go if not present
           if ! command -v go &> /dev/null; then
             echo "Installing Go..."
-            wget https://golang.org/dl/go1.22.0.linux-amd64.tar.gz -O /tmp/go.tar.gz
+            wget https://golang.org/dl/go1.24.0.linux-amd64.tar.gz -O /tmp/go.tar.gz
             sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf /tmp/go.tar.gz
             rm /tmp/go.tar.gz
           fi
