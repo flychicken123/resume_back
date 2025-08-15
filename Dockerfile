@@ -1,21 +1,3 @@
-# Build stage (Debian-based to match final image toolchain)
-FROM golang:1.24 AS builder
-
-# Set working directory
-WORKDIR /app
-
-# Copy go mod files
-COPY go.mod go.sum ./
-
-# Download dependencies
-RUN go mod download
-
-# Copy source code
-COPY . .
-
-ENV GOMAXPROCS=1
-RUN GOMAXPROCS=1 CGO_ENABLED=0 GOOS=linux go build -o main main.go
-
 # Final stage (Ubuntu focal to support wkhtmltopdf 0.12.6-1 .deb with patched Qt)
 FROM ubuntu:20.04
 
@@ -53,17 +35,14 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-# Python libs via Debian packages (lighter than pip on low-memory builders)
-# (No additional pip installs required)
-
 # Create app directory and required subdirectories
 WORKDIR /root/
 RUN mkdir -p static templates uploads
 
-# Copy the binary and scripts
-COPY --from=builder /app/main .
-COPY --from=builder /app/generate_resume.py .
-COPY --from=builder /app/parse_resume.py .
+# Copy the pre-built binary and scripts from the host
+COPY main .
+COPY generate_resume.py .
+COPY parse_resume.py .
 
 # Expose port 8081
 EXPOSE 8081
