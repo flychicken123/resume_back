@@ -1,6 +1,7 @@
 services:
   backend:
     build:
+      runs-on: ubuntu-latest-large
       context: .
       dockerfile: Dockerfile
     ports:
