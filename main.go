@@ -135,16 +135,6 @@ func main() {
 		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
 		c.Header("Cache-Control", "no-cache")
 
-		// Set CORS headers for cross-origin requests
-		origin := c.Request.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type")
-		c.Header("Access-Control-Allow-Credentials", "true")
-
 		// Serve the file
 		c.File(filepath)
 	})
@@ -155,11 +145,6 @@ func main() {
 		if origin == "" {
 			origin = "*"
 		}
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400")
 		c.Status(http.StatusNoContent)
 	})
 
