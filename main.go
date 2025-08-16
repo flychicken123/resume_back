@@ -74,37 +74,38 @@ func main() {
 	})
 
 	// CORS middleware - only for local development (when nginx is not present)
-	// Check if we're behind a proxy (nginx) by looking for X-Forwarded headers
-	r.Use(func(c *gin.Context) {
-		// If we have X-Forwarded headers, we're behind nginx (production)
-		// Let nginx handle CORS
-		if c.GetHeader("X-Forwarded-For") != "" || c.GetHeader("X-Forwarded-Proto") != "" {
+	/*
+		r.Use(func(c *gin.Context) {
+			// If we have X-Forwarded headers, we're behind nginx (production)
+			// Let nginx handle CORS
+			if c.GetHeader("X-Forwarded-For") != "" || c.GetHeader("X-Forwarded-Proto") != "" {
+				if c.Request.Method == http.MethodOptions {
+					c.Status(http.StatusNoContent)
+					return
+				}
+				c.Next()
+				return
+			}
+
+			// Local development - handle CORS ourselves
+			origin := c.Request.Header.Get("Origin")
+			if origin == "" {
+				origin = "*"
+			}
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, Content-Length")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Access-Control-Max-Age", "86400")
+
+			// Handle preflight requests
 			if c.Request.Method == http.MethodOptions {
 				c.Status(http.StatusNoContent)
 				return
 			}
 			c.Next()
-			return
-		}
-
-		// Local development - handle CORS ourselves
-		origin := c.Request.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, Content-Length")
-		c.Header("Access-Control-Allow-Credentials", "true")
-		c.Header("Access-Control-Max-Age", "86400")
-
-		// Handle preflight requests
-		if c.Request.Method == http.MethodOptions {
-			c.Status(http.StatusNoContent)
-			return
-		}
-		c.Next()
-	})
+		})
+	*/
 
 	// Serve static files without /api prefix
 	r.Static("/static", "./static")
