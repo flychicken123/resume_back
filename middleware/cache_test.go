@@ -38,7 +38,8 @@ func TestResponseCache_CacheGETRequest(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	
 	var resp1 map[string]int
-	json.Unmarshal(w1.Body.Bytes(), &resp1)
+	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
+	assert.NoError(t, err)
 	assert.Equal(t, 1, resp1["count"])
 	
 	// Second request - should be cached
@@ -47,7 +48,8 @@ func TestResponseCache_CacheGETRequest(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]int
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err = json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.NoError(t, err)
 	assert.Equal(t, 1, resp2["count"]) // Should still be 1 (cached)
 }
 
@@ -69,7 +71,8 @@ func TestResponseCache_DifferentKeys(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	
 	var resp1 map[string]string
-	json.Unmarshal(w1.Body.Bytes(), &resp1)
+	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
+	assert.NoError(t, err)
 	assert.Equal(t, "a", resp1["query"])
 	
 	// Request with query param "b" - different cache key
@@ -78,7 +81,8 @@ func TestResponseCache_DifferentKeys(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]string
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err = json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.NoError(t, err)
 	assert.Equal(t, "b", resp2["query"])
 }
 
@@ -102,7 +106,8 @@ func TestResponseCache_Expiration(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	
 	var resp1 map[string]int
-	json.Unmarshal(w1.Body.Bytes(), &resp1)
+	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
+	assert.NoError(t, err)
 	assert.Equal(t, 1, resp1["count"])
 	
 	// Wait for cache to expire
@@ -114,7 +119,8 @@ func TestResponseCache_Expiration(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]int
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err = json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.NoError(t, err)
 	assert.Equal(t, 2, resp2["count"]) // Should be 2 (not cached)
 }
 
@@ -148,7 +154,8 @@ func TestResponseCache_OnlyCache200Status(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]interface{}
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err := json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.NoError(t, err)
 	assert.Equal(t, float64(2), resp2["count"]) // Should be 2 (not cached)
 }
 
@@ -172,7 +179,7 @@ func TestResponseCache_POSTRequest(t *testing.T) {
 	router.POST("/api/ai/summary", func(c *gin.Context) {
 		callCount++
 		var body map[string]string
-		c.BindJSON(&body)
+		_ = c.BindJSON(&body)
 		c.JSON(200, gin.H{"processed": body["text"], "count": callCount})
 	})
 	
@@ -195,7 +202,8 @@ func TestResponseCache_POSTRequest(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]interface{}
-	json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err := json.Unmarshal(w2.Body.Bytes(), &resp2)
+	assert.NoError(t, err)
 	assert.Equal(t, float64(1), resp2["count"]) // Should still be 1 (cached)
 }
 

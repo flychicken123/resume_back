@@ -15,6 +15,8 @@ import (
 	"resumeai/services"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 type ResumeRequest struct {
@@ -306,7 +308,7 @@ func DownloadResume(db *sql.DB) gin.HandlerFunc {
 			// Create resume name from filename
 			resumeName := strings.TrimSuffix(filename, ".pdf")
 			resumeName = strings.ReplaceAll(resumeName, "_", " ")
-			resumeName = strings.Title(resumeName)
+			resumeName = cases.Title(language.English).String(resumeName)
 			fmt.Printf("Resume name: %s\n", resumeName)
 
 			// Add to history

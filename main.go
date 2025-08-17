@@ -151,10 +151,6 @@ func main() {
 
 	// Add OPTIONS handler for download endpoint
 	r.OPTIONS("/download/:filename", func(c *gin.Context) {
-		origin := c.Request.Header.Get("Origin")
-		if origin == "" {
-			origin = "*"
-		}
 		c.Status(http.StatusNoContent)
 	})
 

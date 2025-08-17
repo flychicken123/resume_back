@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"resumeai/models"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 type ResumeService struct {
@@ -26,7 +28,7 @@ func (s *ResumeService) RecordDownload(userID int, filename, s3Path string) erro
 	// Create resume name from filename
 	resumeName := strings.TrimSuffix(filename, ".pdf")
 	resumeName = strings.ReplaceAll(resumeName, "_", " ")
-	resumeName = strings.Title(resumeName)
+	resumeName = cases.Title(language.English).String(resumeName)
 
 	// Add to history
 	_, err := s.resumeHistoryModel.Create(userID, resumeName, s3Path)
