@@ -213,12 +213,12 @@ CRITICAL - Use these types of action verbs:
 - DELIVERING: "Delivered", "Launched", "Deployed", "Implemented", "Released"
 
 INCLUDE these types of metrics:
-- Performance improvements (X% faster, X% more efficient)
-- Cost/revenue impact ($X saved, $X generated, X% cost reduction)
+- Performance improvements (X%% faster, X%% more efficient)
+- Cost/revenue impact ($X saved, $X generated, X%% cost reduction)
 - Scale (X users, X transactions, X data processed)
 - Time savings (reduced from X to Y, X hours saved per week)
 - Team size (led team of X, collaborated with X departments)
-- Success rates (increased success rate from X% to Y%)
+- Success rates (increased success rate from X%% to Y%%)
 
 AVOID these weak phrases:
 - "Responsible for", "Worked on", "Helped with", "Assisted in", "Participated in"
@@ -233,9 +233,9 @@ IMPORTANT: Return ONLY the optimized description text with each achievement on a
 Format example:
 Architected and deployed a real-time data processing pipeline using Apache Kafka and Python, handling 50M+ daily events and reducing data latency from 2 hours to under 5 minutes
 
-Led cross-functional team of 8 engineers to migrate legacy monolith to microservices architecture, resulting in 60% improvement in deployment frequency and 40% reduction in production incidents
+Led cross-functional team of 8 engineers to migrate legacy monolith to microservices architecture, resulting in 60%% improvement in deployment frequency and 40%% reduction in production incidents
 
-Implemented automated testing framework that increased code coverage from 45% to 95%, reducing critical bugs in production by 80% and saving 20 hours per week in manual testing
+Implemented automated testing framework that increased code coverage from 45%% to 95%%, reducing critical bugs in production by 80%% and saving 20 hours per week in manual testing
 
 Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, jobDescription, userExperience)
 }
@@ -344,12 +344,12 @@ CRITICAL - Use these types of action verbs:
 - DELIVERING: "Delivered", "Launched", "Deployed", "Implemented", "Released"
 
 ENHANCE with these types of metrics:
-- Performance improvements (X% faster, X% more efficient)
-- Cost/revenue impact ($X saved, $X generated, X% cost reduction)
+- Performance improvements (X%% faster, X%% more efficient)
+- Cost/revenue impact ($X saved, $X generated, X%% cost reduction)
 - Scale (X users, X transactions, X data processed)
 - Time savings (reduced from X to Y, X hours saved per week)
 - Team size (led team of X, collaborated with X departments)
-- Success rates (increased success rate from X% to Y%)
+- Success rates (increased success rate from X%% to Y%%)
 
 AVOID these weak phrases:
 - "Responsible for", "Worked on", "Helped with", "Assisted in", "Participated in"
@@ -364,8 +364,8 @@ IMPORTANT: Return ONLY the improved description text. Do NOT include:
 
 Format the response as clean text with each achievement on a new line, like this:
 Architected and deployed real-time data processing pipeline using Apache Kafka, handling 50M+ daily events and reducing data latency from 2 hours to under 5 minutes
-Led cross-functional team of 8 engineers to migrate legacy systems, resulting in 60% improvement in deployment frequency and 40% reduction in production incidents
-Implemented automated testing framework that increased code coverage from 45% to 95%, reducing critical bugs by 80% and saving 20 hours per week
+Led cross-functional team of 8 engineers to migrate legacy systems, resulting in 60%% improvement in deployment frequency and 40%% reduction in production incidents
+Implemented automated testing framework that increased code coverage from 45%% to 95%%, reducing critical bugs by 80%% and saving 20 hours per week
 
 Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, experience)
 }

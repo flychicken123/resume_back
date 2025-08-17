@@ -24,13 +24,44 @@ jobs:
         go-version: '1.24'
     
     - name: Install dependencies
-      run: go mod download
+      run: |
+        go mod download
+        go get -u github.com/stretchr/testify/assert
     
-    - name: Run backend tests
-      run: go test -v ./...
+    - name: Run unit tests
+      run: |
+        echo "🧪 Running Unit Tests..."
+        go test -v -short ./...
     
-    - name: Run backend tests with coverage
-      run: go test -v -coverprofile=coverage.out ./...
+    - name: Run middleware tests
+      run: |
+        echo "🔧 Testing Middleware..."
+        go test -v ./middleware -timeout 30s
+    
+    - name: Run handler tests
+      run: |
+        echo "📡 Testing Handlers..."
+        go test -v ./handlers -timeout 30s
+    
+    - name: Run integration tests
+      run: |
+        echo "🔗 Running Integration Tests..."
+        go test -v -run Integration ./...
+    
+    - name: Generate coverage report
+      run: |
+        echo "📊 Generating Coverage Report..."
+        go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        go tool cover -func=coverage.out
+    
+    - name: Check coverage threshold
+      run: |
+        echo "📈 Checking Coverage Threshold..."
+        coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Total coverage: $coverage%"
+        if (( $(echo "$coverage < 40" | bc -l) )); then
+          echo "⚠️ Warning: Coverage is below 40%"
+        fi
     
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -38,6 +69,7 @@ jobs:
         file: coverage.out
         flags: backend
         name: backend-coverage
+        fail_ci_if_error: false
 
   lint-backend:
     runs-on: ubuntu-latest

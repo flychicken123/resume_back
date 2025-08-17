@@ -8,7 +8,6 @@ import (
 	"testing"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
-	"resumeai/utils"
 )
 
 func TestMaxRequestSize(t *testing.T) {
@@ -125,7 +124,7 @@ func TestSanitizeInput(t *testing.T) {
 	
 	// Test null byte removal
 	w1 := httptest.NewRecorder()
-	req1, _ := http.NewRequest("GET", "/test?q=hello\x00world", nil)
+	req1, _ := http.NewRequest("GET", "/test?q=hello%00world", nil)
 	router.ServeHTTP(w1, req1)
 	assert.Equal(t, http.StatusOK, w1.Code)
 	assert.Contains(t, w1.Body.String(), "helloworld") // null byte removed

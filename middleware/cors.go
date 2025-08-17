@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"github.com/gin-gonic/gin"
@@ -44,10 +45,10 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		origin := c.Request.Header.Get("Origin")
 		
 		// Check if origin is allowed
-		if isOriginAllowed(origin, config.AllowedOrigins) {
-			c.Header("Access-Control-Allow-Origin", origin)
-		} else if len(config.AllowedOrigins) == 1 && config.AllowedOrigins[0] == "*" {
+		if len(config.AllowedOrigins) == 1 && config.AllowedOrigins[0] == "*" {
 			c.Header("Access-Control-Allow-Origin", "*")
+		} else if isOriginAllowed(origin, config.AllowedOrigins) {
+			c.Header("Access-Control-Allow-Origin", origin)
 		}
 
 		// Set other CORS headers
@@ -63,7 +64,7 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		}
 		
 		if config.MaxAge > 0 {
-			c.Header("Access-Control-Max-Age", string(config.MaxAge))
+			c.Header("Access-Control-Max-Age", fmt.Sprintf("%d", config.MaxAge))
 		}
 
 		// Handle preflight requests
@@ -94,7 +95,7 @@ func isOriginAllowed(origin string, allowedOrigins []string) bool {
 		// Support wildcard subdomains
 		if strings.HasPrefix(allowed, "*.") {
 			domain := allowed[2:]
-			if strings.HasSuffix(origin, domain) {
+			if strings.HasSuffix(origin, "."+domain) && origin != domain {
 				return true
 			}
 		}
