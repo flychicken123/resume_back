@@ -202,7 +202,7 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 			err = c.userModel.UpdateProfile(user.ID, req.Name)
 			if err != nil {
 				// Log the error but don't fail the login
-				// You might want to add proper logging here
+				fmt.Printf("Warning: Failed to update user profile during Google login: %v\n", err)
 			}
 		}
 	}
