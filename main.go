@@ -62,6 +62,7 @@ func main() {
 	authController := controllers.NewAuthController(userModel, jwtService)
 	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
 	userController := controllers.NewUserController(userModel, resumeModel)
+	jobController := controllers.NewJobController()
 
 	r := gin.Default()
 	
@@ -201,11 +202,14 @@ func main() {
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
 		
-		// Resume generation endpoints
+		// Resume generation endpoints (public - no history saving)
 		public.POST("/resume/generate", handlers.GenerateResume)
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
-		public.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeFromHTMLFile)
 		public.POST("/resume/parse", handlers.ParseResume)
+		
+		// Job automation endpoints (public for now, can be moved to protected later)
+		public.POST("/jobs/parse", jobController.ParseJob)
+		public.GET("/jobs/platforms", jobController.GetSupportedPlatforms)
 	}
 
 	// Protected routes (require auth)
@@ -224,6 +228,13 @@ func main() {
 		protected.GET("/resume/history", resumeController.GetHistory)
 		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
+		
+		// Protected resume generation (saves to history)
+		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
+		
+		// Job automation routes (require authentication)
+		protected.POST("/jobs/submit", jobController.SubmitApplication)
+		protected.GET("/jobs/applications/:applicationId/status", jobController.CheckApplicationStatus)
 	}
 
 	log.Println("Server starting on port 8081")
