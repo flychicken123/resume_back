@@ -62,7 +62,6 @@ func main() {
 	authController := controllers.NewAuthController(userModel, jwtService)
 	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
 	userController := controllers.NewUserController(userModel, resumeModel)
-	jobController := controllers.NewJobController()
 
 	r := gin.Default()
 	
@@ -207,9 +206,7 @@ func main() {
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/parse", handlers.ParseResume)
 		
-		// Job automation endpoints (public for now, can be moved to protected later)
-		public.POST("/jobs/parse", jobController.ParseJob)
-		public.GET("/jobs/platforms", jobController.GetSupportedPlatforms)
+		// Job automation endpoints removed - feature in development
 	}
 
 	// Protected routes (require auth)
@@ -232,9 +229,7 @@ func main() {
 		// Protected resume generation (saves to history)
 		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
 		
-		// Job automation routes (require authentication)
-		protected.POST("/jobs/submit", jobController.SubmitApplication)
-		protected.GET("/jobs/applications/:applicationId/status", jobController.CheckApplicationStatus)
+		// Job automation routes removed - feature in development
 	}
 
 	log.Println("Server starting on port 8081")
