@@ -83,3 +83,40 @@ func cleanupAIResponse(text string) string {
 	// Join lines back together with double newlines for proper spacing
 	return strings.Join(cleanedLines, "\n\n")
 }
+
+type ExperienceGrammarRequest struct {
+	UserExperience string `json:"userExperience" binding:"required"`
+}
+
+type ExperienceGrammarResponse struct {
+	ImprovedExperience string `json:"improvedExperience"`
+	Message            string `json:"message"`
+}
+
+func ImproveExperienceGrammar(c *gin.Context) {
+	var req ExperienceGrammarRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Build prompt for grammar improvement
+	prompt := services.BuildExperienceGrammarPrompt(req.UserExperience)
+
+	// Call AI service to improve grammar
+	improvedExperience, err := services.CallGeminiWithAPIKey(prompt)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// Clean up the AI response
+	cleanedExperience := cleanupAIResponse(improvedExperience)
+
+	response := ExperienceGrammarResponse{
+		ImprovedExperience: cleanedExperience,
+		Message:            "Experience grammar and style improved successfully.",
+	}
+
+	c.JSON(http.StatusOK, response)
+}

@@ -167,13 +167,24 @@ func main() {
 	// Public routes (no auth required) - keep using handlers for now
 	public := r.Group("/api")
 	{
+		// Existing AI optimization endpoints
 		public.POST("/experience/optimize", handlers.OptimizeExperience)
+		public.POST("/ai/education", handlers.OptimizeEducation)
+		public.POST("/ai/summary", handlers.OptimizeSummary)
+		
+		// New grammar improvement endpoints
+		public.POST("/experience/improve-grammar", handlers.ImproveExperienceGrammar)
+		public.POST("/summary/improve-grammar", handlers.ImproveSummaryGrammar)
+		
+		// New final step AI endpoints
+		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
+		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
+		
+		// Resume generation endpoints
 		public.POST("/resume/generate", handlers.GenerateResume)
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeFromHTMLFile)
 		public.POST("/resume/parse", handlers.ParseResume)
-		public.POST("/ai/education", handlers.OptimizeEducation)
-		public.POST("/ai/summary", handlers.OptimizeSummary)
 	}
 
 	// Protected routes (require auth)
