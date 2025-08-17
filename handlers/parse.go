@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"resumeai/parsers"
 	"resumeai/services"
 
 	"github.com/gin-gonic/gin"
@@ -95,57 +96,59 @@ func ParseResume(c *gin.Context) {
 		return
 	}
 
-	// Ensure script exists
-	if _, statErr := os.Stat("parse_resume.py"); statErr != nil {
-		fmt.Printf("[parse] missing script parse_resume.py: %v\n", statErr)
-		c.JSON(500, gin.H{"error": "Python script failed", "details": "parse_resume.py not found"})
-		return
-	}
-
-	// Determine python executable (python3 preferred, fallback to python)
-	pythonExec := "python3"
-	if _, lookErr := exec.LookPath(pythonExec); lookErr != nil {
-		pythonExec = "python"
-	}
-
-	// Deterministic extraction via python parse_resume.py
-	cmd := exec.Command(pythonExec, "parse_resume.py", tempFile)
-	cmd.Dir = "." // script resides in backend root
-
-	// Capture stdout and stderr separately
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err = cmd.Run()
-	if err != nil {
-		fmt.Printf("[parse] python exec error: %v\n", err)
-		fmt.Printf("[parse] stderr: %s\n", stderr.String())
-		fmt.Printf("[parse] stdout: %s\n", stdout.String())
-		c.JSON(500, gin.H{"error": "Python script failed", "details": err.Error(), "stderr": stderr.String(), "stdout": stdout.String()})
-		return
-	}
-
-	// Log stderr for debugging
-	if stderr.Len() > 0 {
-		fmt.Printf("[parse] stderr: %s\n", stderr.String())
-	}
-
-	// Use only stdout for JSON parsing
-	output := stdout.Bytes()
-
+	// Method 1: Use our Go-based parser (primary method)
+	fmt.Printf("[parse] Attempting Go-based extraction...\n")
+	
+	extractor := parsers.NewPDFExtractor()
+	rawText, extractErr := extractor.ExtractFromFile(tempFile)
+	
 	var extracted map[string]interface{}
-	if err := json.Unmarshal(output, &extracted); err != nil {
-		fmt.Printf("[parse] invalid extractor JSON: %v\nraw: %s\n", err, string(output))
-		c.JSON(500, gin.H{"error": "Failed to parse extractor output"})
+	
+	if extractErr != nil || strings.TrimSpace(rawText) == "" {
+		fmt.Printf("[parse] Go extraction failed: %v, falling back to Python...\n", extractErr)
+		
+		// Method 2: Fallback to Python script
+		extracted = fallbackToPython(tempFile)
+		if extracted == nil {
+			c.JSON(500, gin.H{"error": "All extraction methods failed", "go_error": extractErr})
+			return
+		}
+		rawText, _ = extracted["raw_text"].(string)
+	} else {
+		fmt.Printf("[parse] Go extraction successful, extracted %d characters\n", len(rawText))
+		// Create extracted structure for compatibility
+		extracted = map[string]interface{}{
+			"raw_text": rawText,
+			"method":   "go_parser",
+		}
+	}
+	// Method 3: Use our Go parser for structured extraction (primary method)
+	fmt.Printf("[parse] Attempting Go-based structured parsing...\n")
+	
+	goParser := parsers.NewResumeParser()
+	structuredData, parseErr := goParser.Parse(rawText)
+	
+	if parseErr == nil && structuredData != nil {
+		fmt.Printf("[parse] Go parsing successful!\n")
+		// Clean up temp file
+		_ = os.Remove(tempFile)
+		
+		c.JSON(200, gin.H{
+			"structured": structuredData,
+			"extracted":  extracted,
+			"method":     "go_primary",
+		})
 		return
 	}
-
-	rawText, _ := extracted["raw_text"].(string)
+	
+	fmt.Printf("[parse] Go parsing failed: %v, falling back to AI...\n", parseErr)
+	
+	// Extract basic contact info for AI fallback
 	email, _ := extracted["email"].(string)
 	phone, _ := extracted["phone"].(string)
 
-	// Build strict schema prompt
+	// Method 4: Fallback to AI parsing
+	fmt.Printf("[parse] Using AI as final fallback...\n")
 	schema := `{
       "name": string | null,
       "email": string | null,
@@ -276,5 +279,49 @@ Hints:
 	c.JSON(200, gin.H{
 		"structured": structured,
 		"extracted":  extracted,
+		"method":     "ai_fallback",
 	})
+}
+
+// fallbackToPython attempts to extract text using the Python script
+func fallbackToPython(tempFile string) map[string]interface{} {
+	// Check if Python script exists
+	if _, statErr := os.Stat("parse_resume.py"); statErr != nil {
+		fmt.Printf("[parse] Python script not found: %v\n", statErr)
+		return nil
+	}
+
+	// Determine python executable
+	pythonExec := "python3"
+	if _, lookErr := exec.LookPath(pythonExec); lookErr != nil {
+		pythonExec = "python"
+		if _, lookErr := exec.LookPath(pythonExec); lookErr != nil {
+			fmt.Printf("[parse] Python not available\n")
+			return nil
+		}
+	}
+
+	// Run Python script
+	cmd := exec.Command(pythonExec, "parse_resume.py", tempFile)
+	cmd.Dir = "."
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		fmt.Printf("[parse] Python execution failed: %v\n", err)
+		fmt.Printf("[parse] stderr: %s\n", stderr.String())
+		return nil
+	}
+
+	// Parse JSON output
+	var extracted map[string]interface{}
+	if err := json.Unmarshal(stdout.Bytes(), &extracted); err != nil {
+		fmt.Printf("[parse] Failed to parse Python output: %v\n", err)
+		return nil
+	}
+
+	fmt.Printf("[parse] Python extraction successful\n")
+	return extracted
 }
