@@ -4,6 +4,8 @@ inner-melody-461103-f0-066cce03aa73.json
 
 # Go
 *.exe
+resumeai.exe
+main.exe
 *.exe~
 *.dll
 *.so

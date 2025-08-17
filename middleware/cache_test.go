@@ -192,7 +192,8 @@ func TestResponseCache_POSTRequest(t *testing.T) {
 	router.ServeHTTP(w1, req1)
 	
 	var resp1 map[string]interface{}
-	json.Unmarshal(w1.Body.Bytes(), &resp1)
+	err := json.Unmarshal(w1.Body.Bytes(), &resp1)
+	assert.NoError(t, err)
 	assert.Equal(t, float64(1), resp1["count"])
 	
 	// Same POST request - should be cached for AI endpoint
@@ -202,7 +203,7 @@ func TestResponseCache_POSTRequest(t *testing.T) {
 	router.ServeHTTP(w2, req2)
 	
 	var resp2 map[string]interface{}
-	err := json.Unmarshal(w2.Body.Bytes(), &resp2)
+	err = json.Unmarshal(w2.Body.Bytes(), &resp2)
 	assert.NoError(t, err)
 	assert.Equal(t, float64(1), resp2["count"]) // Should still be 1 (cached)
 }
