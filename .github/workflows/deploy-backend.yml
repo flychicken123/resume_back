@@ -184,24 +184,32 @@ jobs:
           # Ensure network exists
           docker network create ai-resume-network || true
           
-          # Build new image
+          # Build new image - FAIL on error
           echo "🔨 Building new backend image..."
-          docker-compose -f docker-compose.backend.yml build --no-cache backend
+          if ! docker-compose -f docker-compose.backend.yml build --no-cache backend; then
+            echo "❌ Failed to build Docker image"
+            exit 1
+          fi
           
-          # Deploy with compose (this will replace the existing container)
+          # Deploy with compose - FAIL on error
           echo "🚀 Deploying backend..."
-          docker-compose -f docker-compose.backend.yml up -d
+          if ! docker-compose -f docker-compose.backend.yml up -d; then
+            echo "❌ Failed to deploy with docker-compose"
+            exit 1
+          fi
           
           # Wait for service to be ready
           echo "⏳ Waiting for service to be ready..."
           sleep 30
           
-          # Check health
+          # Check health - FAIL if not healthy
           echo "🏥 Checking service health..."
           if curl -f http://localhost:8081/api/health > /dev/null 2>&1; then
             echo "✅ Deployment successful - service is healthy!"
           else
-            echo "⚠️ Service may still be starting up..."
+            echo "❌ Service failed to start properly"
+            docker-compose -f docker-compose.backend.yml logs --tail=50
+            exit 1
           fi
           
           # Clean up
@@ -220,8 +228,9 @@ jobs:
             exit 1
           fi
           
-          # Test CORS headers
+          # Test CORS headers - FAIL on critical endpoints
           echo "Testing CORS headers..."
+          CORS_FAILED=false
           for EP in \
             "/api/auth/register" \
             "/api/auth/login" \
@@ -235,9 +244,15 @@ jobs:
               https://hihired.org$EP | grep -i "Access-Control-Allow-Origin"; then
               echo "✅ CORS working for $EP"
             else
-              echo "⚠️ CORS may not be working for $EP"
+              echo "❌ CORS not working for $EP"
+              CORS_FAILED=true
             fi
           done
+          
+          if [ "$CORS_FAILED" = true ]; then
+            echo "❌ CORS configuration failed - deployment aborted"
+            exit 1
+          fi
           
           # Test API validation (should return proper error responses)
           echo "Testing API validation..."
