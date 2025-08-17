@@ -9,18 +9,26 @@ import (
 	"resumeai/controllers"
 	"resumeai/database"
 	"resumeai/handlers"
+	"resumeai/middleware"
 	"resumeai/models"
 	"resumeai/services"
+	"resumeai/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
+	// Initialize structured logger
+	logger := utils.NewLogger()
+	
 	dbConfig := config.GetDatabaseConfig()
 
-	log.Printf("Database Config - Host: %s, Port: %d, User: %s, DB: %s, SSL: %s",
-		dbConfig.Host, dbConfig.Port, dbConfig.User, dbConfig.DBName, dbConfig.SSLMode)
+	logger.Info("Starting application", map[string]interface{}{
+		"db_host": dbConfig.Host,
+		"db_port": dbConfig.Port,
+		"db_name": dbConfig.DBName,
+	})
 
 	db, err := database.Connect(
 		dbConfig.Host,
@@ -56,6 +64,10 @@ func main() {
 	userController := controllers.NewUserController(userModel, resumeModel)
 
 	r := gin.Default()
+	
+	// Create rate limiters and caches
+	rateLimiters := middleware.CreateRateLimiters()
+	caches := middleware.CreateCaches()
 
 	// Allow larger multipart uploads (HTML file uploads)
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB (sufficient for typical resume files)
@@ -149,6 +161,16 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
+		// Health check endpoint for Docker Compose
+		api.GET("/health", func(c *gin.Context) {
+			c.JSON(200, gin.H{
+				"status":    "healthy",
+				"timestamp": time.Now().Unix(),
+				"version":   "1.0.1",
+				"uptime":    "ok",
+			})
+		})
+
 		api.GET("/version", func(c *gin.Context) {
 			c.JSON(200, gin.H{
 				"version":     "1.0.1",
@@ -166,6 +188,9 @@ func main() {
 
 	// Public routes (no auth required) - keep using handlers for now
 	public := r.Group("/api")
+	// Add rate limiting and caching for AI endpoints
+	public.Use(rateLimiters["ai"].Limit())
+	public.Use(caches["ai"].Cache())
 	{
 		// Existing AI optimization endpoints
 		public.POST("/experience/optimize", handlers.OptimizeExperience)

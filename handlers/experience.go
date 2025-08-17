@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"resumeai/services"
+	"resumeai/utils"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +22,7 @@ type ExperienceOptimizationResponse struct {
 func OptimizeExperience(c *gin.Context) {
 	var req ExperienceOptimizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.ValidationError(c, err)
 		return
 	}
 
@@ -31,7 +32,7 @@ func OptimizeExperience(c *gin.Context) {
 	// Call AI service to generate optimized experience
 	optimizedExperience, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		utils.InternalServerError(c, "Failed to optimize experience", err)
 		return
 	}
 
@@ -43,7 +44,7 @@ func OptimizeExperience(c *gin.Context) {
 		Message:             "Experience optimized successfully based on job description.",
 	}
 
-	c.JSON(http.StatusOK, response)
+	utils.SuccessResponse(c, http.StatusOK, "Experience optimized successfully", response)
 }
 
 // cleanupAIResponse removes asterisks and cleans up the AI response

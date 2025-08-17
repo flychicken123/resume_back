@@ -3,6 +3,7 @@ package handlers
 import (
 	"net/http"
 	"resumeai/services"
+	"resumeai/utils"
 
 	"github.com/gin-gonic/gin"
 )
@@ -30,7 +31,7 @@ type SummaryOptimizationResponse struct {
 func OptimizeEducation(c *gin.Context) {
 	var req EducationOptimizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		utils.ValidationError(c, err)
 		return
 	}
 
@@ -40,7 +41,7 @@ func OptimizeEducation(c *gin.Context) {
 	// Call AI service to generate optimized education
 	optimizedEducation, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		utils.InternalServerError(c, "Failed to optimize education", err)
 		return
 	}
 
@@ -52,7 +53,7 @@ func OptimizeEducation(c *gin.Context) {
 		Message:            "Education optimized successfully.",
 	}
 
-	c.JSON(http.StatusOK, response)
+	utils.SuccessResponse(c, http.StatusOK, "Education optimized successfully", response)
 }
 
 func OptimizeSummary(c *gin.Context) {
