@@ -7,9 +7,56 @@ on:
     branches: [ main ]
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.24'
+        
+    - name: Install dependencies
+      working-directory: ./back
+      run: |
+        go mod download
+        go get -u github.com/stretchr/testify/assert
+        
+    - name: Run tests
+      working-directory: ./back
+      run: |
+        echo "🧪 Running all tests..."
+        go test -v ./...
+        
+    - name: Run tests with coverage
+      working-directory: ./back
+      run: |
+        echo "📊 Running tests with coverage..."
+        go test -coverprofile=coverage.out ./...
+        go tool cover -func=coverage.out
+        
+    - name: Check coverage threshold
+      working-directory: ./back
+      run: |
+        echo "📈 Checking coverage threshold..."
+        coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+        echo "Total coverage: $coverage%"
+        if (( $(echo "$coverage < 10" | bc -l) )); then
+          echo "⚠️ Warning: Coverage is below 10%"
+        fi
+        
+    - name: Run linting
+      uses: golangci/golangci-lint-action@v4
+      with:
+        version: latest
+        working-directory: ./back
+
   deploy-backend:
     runs-on: ubuntu-latest
     environment: prod
+    needs: test  # Only deploy if tests pass
     
     steps:
     - name: Checkout code
@@ -164,15 +211,20 @@ jobs:
           docker system prune -f 
           
           # Final health check and smoke tests
-          echo "🧪 Running final health check and API tests..."
-          sleep 10
+          echo "🧪 Running comprehensive post-deployment tests..."
+          sleep 15
           
           # Test health endpoint
           echo "Testing health endpoint..."
-          curl -f https://hihired.org/api/health || echo "Health check failed"
+          if curl -f https://hihired.org/api/health; then
+            echo "✅ Health check passed"
+          else
+            echo "❌ Health check failed"
+            exit 1
+          fi
           
-          # Test key API endpoints
-          echo "Testing key API endpoints..."
+          # Test CORS headers
+          echo "Testing CORS headers..."
           for EP in \
             "/api/auth/register" \
             "/api/auth/login" \
@@ -180,10 +232,40 @@ jobs:
             "/api/resume/generate" \
             "/api/ai/summary"; do
             echo "Testing OPTIONS $EP"
-            curl -sS -i -X OPTIONS \
+            if curl -sS -i -X OPTIONS \
               -H "Origin: https://www.hihired.org" \
               -H "Access-Control-Request-Method: POST" \
-              https://hihired.org$EP | grep -i "Access-Control-Allow-Origin" || true
+              https://hihired.org$EP | grep -i "Access-Control-Allow-Origin"; then
+              echo "✅ CORS working for $EP"
+            else
+              echo "⚠️ CORS may not be working for $EP"
+            fi
           done
+          
+          # Test API validation (should return proper error responses)
+          echo "Testing API validation..."
+          
+          # Test invalid JSON should return 400
+          echo "Testing invalid JSON handling..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"invalid": json}' \
+            https://hihired.org/api/experience/optimize)
+          if [ "$response" = "400" ]; then
+            echo "✅ Invalid JSON properly rejected"
+          else
+            echo "⚠️ Invalid JSON handling may not be working (got $response)"
+          fi
+          
+          # Test missing content-type should return 400
+          echo "Testing content-type validation..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+            -d '{"test": "data"}' \
+            https://hihired.org/api/experience/optimize)
+          if [ "$response" = "400" ]; then
+            echo "✅ Content-Type validation working"
+          else
+            echo "⚠️ Content-Type validation may not be working (got $response)"
+          fi
           
           echo "✅ Deployment verification completed!"
