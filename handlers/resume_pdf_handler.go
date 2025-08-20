@@ -15,7 +15,7 @@ import (
 )
 
 // GeneratePDFResumeHandler handles PDF generation with database integration
-func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHistoryModel, userModel *models.UserModel) gin.HandlerFunc {
+func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHistoryModel, userModel *models.UserModel, resumeModel *models.ResumeModel) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fmt.Println("GeneratePDFResumeHandler called")
 
@@ -41,6 +41,13 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'html' file field"})
 			return
 		}
+		
+		// Get contact info from form data
+		contactName := c.PostForm("name")
+		contactEmail := c.PostForm("email")
+		contactPhone := c.PostForm("phone")
+		
+		fmt.Printf("DEBUG: Contact info received - Name: %s, Email: %s, Phone: %s\n", contactName, contactEmail, contactPhone)
 
 		// Ensure output dirs exist
 		saveDir := "./static"
@@ -71,6 +78,22 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 			return
 		}
 
+		// Create a new resume entry with contact info if we have it
+		var resumeID int
+		if userIDInt > 0 && resumeModel != nil && (contactName != "" || contactEmail != "" || contactPhone != "") {
+			fmt.Printf("Creating new resume entry for user %d\n", userIDInt)
+			resumeName := fmt.Sprintf("Resume %s", time.Now().Format("2006-01-02 15:04"))
+			
+			newResume, err := resumeModel.CreateWithContactInfo(userIDInt, resumeName, contactName, contactEmail, contactPhone)
+			if err != nil {
+				fmt.Printf("Warning: Failed to create resume entry: %v\n", err)
+				// Continue even if this fails
+			} else {
+				resumeID = newResume.ID
+				fmt.Printf("Successfully created resume entry ID %d - Name: %s, Email: %s, Phone: %s\n", resumeID, contactName, contactEmail, contactPhone)
+			}
+		}
+		
 		// Upload to S3
 		s3svc, s3err := services.NewS3Service()
 		if s3err != nil {
@@ -78,12 +101,22 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 			// Continue without S3 - file is still available locally
 			downloadURL := fmt.Sprintf("/static/%s", pdfFilename)
 			
-			// Save to resume history if we have user ID
+			// Save to resume history if we have user ID and resume ID
 			if userIDInt > 0 && resumeHistoryModel != nil {
 				resumeName := fmt.Sprintf("Resume %s", time.Now().Format("2006-01-02 15:04"))
 				s3Path := downloadURL // Use local path if S3 unavailable
 				
-				history, err := resumeHistoryModel.Create(userIDInt, resumeName, s3Path)
+				var history *models.ResumeHistory
+				var err error
+				
+				if resumeID > 0 {
+					// Link to specific resume
+					history, err = resumeHistoryModel.CreateWithResumeID(userIDInt, resumeID, resumeName, s3Path)
+				} else {
+					// Fallback to regular create
+					history, err = resumeHistoryModel.Create(userIDInt, resumeName, s3Path)
+				}
+				
 				if err != nil {
 					fmt.Printf("Failed to save resume history: %v\n", err)
 				} else {
@@ -113,11 +146,21 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		if userIDInt > 0 && resumeHistoryModel != nil {
 			resumeName := fmt.Sprintf("Resume %s", time.Now().Format("2006-01-02 15:04"))
 			
-			history, err := resumeHistoryModel.Create(userIDInt, resumeName, key)
+			var history *models.ResumeHistory
+			var err error
+			
+			if resumeID > 0 {
+				// Link to specific resume
+				history, err = resumeHistoryModel.CreateWithResumeID(userIDInt, resumeID, resumeName, key)
+			} else {
+				// Fallback to regular create
+				history, err = resumeHistoryModel.Create(userIDInt, resumeName, key)
+			}
+			
 			if err != nil {
 				fmt.Printf("Failed to save resume history: %v\n", err)
 			} else {
-				fmt.Printf("Successfully saved resume history ID %d for user %d\n", history.ID, userIDInt)
+				fmt.Printf("Successfully saved resume history ID %d for user %d with resume %d\n", history.ID, userIDInt, resumeID)
 				
 				// Clean up old resumes (keep only last 10)
 				if cleanupErr := resumeHistoryModel.CleanupOldResumes(userIDInt, 10); cleanupErr != nil {

@@ -57,12 +57,27 @@ func (s *S3Service) UploadFile(filePath, fileName string) (string, error) {
 		return "", fmt.Errorf("failed to read file: %v", err)
 	}
 
+	// Determine content type based on file extension
+	contentType := "application/octet-stream"
+	if len(fileName) > 4 {
+		switch fileName[len(fileName)-4:] {
+		case ".pdf":
+			contentType = "application/pdf"
+		case ".png":
+			contentType = "image/png"
+		case ".jpg", "jpeg":
+			contentType = "image/jpeg"
+		case ".gif":
+			contentType = "image/gif"
+		}
+	}
+
 	// Create S3 upload input
 	input := &s3.PutObjectInput{
 		Bucket:      aws.String(s.bucket),
 		Key:         aws.String(fileName),
 		Body:        bytes.NewReader(fileContent),
-		ContentType: aws.String("application/pdf"),
+		ContentType: aws.String(contentType),
 		// Note: ACL is removed as the bucket doesn't support ACLs
 		// The bucket should be configured for public read access
 	}

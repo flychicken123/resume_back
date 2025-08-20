@@ -44,6 +44,40 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 	})
 }
 
+// SaveResumeContactInfo creates a new resume entry with the extracted contact info from parsed resume
+func (c *UserController) SaveResumeContactInfo(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var req struct {
+		Name       string `json:"name"`
+		Email      string `json:"email"`
+		Phone      string `json:"phone"`
+		ResumeName string `json:"resume_name"` // Optional resume name
+	}
+
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+		return
+	}
+
+	// Create a new resume entry with contact info
+	resume, err := c.resumeModel.CreateWithContactInfo(userID.(int), req.ResumeName, req.Name, req.Email, req.Phone)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save contact info"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":   true,
+		"message":   "Contact info saved successfully",
+		"resume_id": resume.ID,
+	})
+}
+
 func (c *UserController) UpdateProfile(ctx *gin.Context) {
 	userID, exists := ctx.Get("user_id")
 	if !exists {
@@ -143,7 +177,7 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 		return
 	}
 
-	resume, err := c.resumeModel.GetByUserID(userID.(int))
+	resume, err := c.resumeModel.GetLatestByUserID(userID.(int))
 	if err != nil {
 		// If no resume found, return empty data
 		ctx.JSON(http.StatusOK, gin.H{

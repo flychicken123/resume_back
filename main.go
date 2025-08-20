@@ -54,7 +54,9 @@ func main() {
 	jwtService := services.NewJWTService(config.GetAppConfig().JWTSecret)
 	s3Service, err := services.NewS3Service()
 	if err != nil {
-		log.Fatal("Error initializing S3 service:", err)
+		log.Printf("Warning: S3 service not available (running without S3): %v", err)
+		// Create a nil S3 service - some features may not work
+		s3Service = nil
 	}
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 
@@ -62,6 +64,8 @@ func main() {
 	authController := controllers.NewAuthController(userModel, jwtService)
 	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
 	userController := controllers.NewUserController(userModel, resumeModel)
+	jobApplicationController := controllers.NewJobApplicationController(db)
+	screenshotController := controllers.NewScreenshotController()
 
 	r := gin.Default()
 	
@@ -206,6 +210,10 @@ func main() {
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/parse", handlers.ParseResume)
 		
+		// Screenshot access (public - uses pre-signed S3 URLs)
+		public.GET("/screenshots/*key", screenshotController.GetScreenshot)
+		public.GET("/screenshot-url", screenshotController.GetScreenshotURL)
+		
 		// Job automation endpoints removed - feature in development
 	}
 
@@ -218,6 +226,7 @@ func main() {
 		protected.GET("/user/profile", userController.GetProfile)
 		protected.PUT("/user/profile", userController.UpdateProfile)
 		protected.POST("/user/change-password", userController.ChangePassword)
+		protected.POST("/user/save-contact-info", userController.SaveResumeContactInfo)
 		protected.POST("/user/save", userController.SaveUserData)
 		protected.GET("/user/load", userController.LoadUserData)
 
@@ -227,9 +236,29 @@ func main() {
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
 		
 		// Protected resume generation (saves to history)
-		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
+		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel, resumeModel))
 		
-		// Job automation routes removed - feature in development
+		// Job Application routes
+		protected.POST("/job/apply", jobApplicationController.CreateApplication)
+		protected.GET("/job/applications", jobApplicationController.GetUserApplications)
+		protected.GET("/job/applications/:id", jobApplicationController.GetApplication)
+		protected.GET("/job/applications/:id/status", jobApplicationController.GetApplicationStatus)
+		protected.PUT("/job/applications/:id/status", jobApplicationController.UpdateApplicationStatus)
+		protected.DELETE("/job/applications/:id", jobApplicationController.DeleteApplication)
+		protected.POST("/job/continue/:code", jobApplicationController.ContinueApplication)
+		protected.GET("/job/recent-resumes", jobApplicationController.GetUserRecentResumes)
+		
+		// Job Profile routes
+		protected.GET("/job/profile", jobApplicationController.GetJobProfile)
+		protected.POST("/job/profile", jobApplicationController.SaveJobProfile)
+		
+		// Screenshot access (authenticated)
+		
+		// Job Automation routes
+		protected.POST("/job/preferences", jobApplicationController.SaveUserPreferences)
+		protected.GET("/job/preferences", jobApplicationController.GetUserPreferences)
+		protected.GET("/job/applications/:id/automation", jobApplicationController.GetAutomationStatus)
+		protected.POST("/job/applications/:id/retry", jobApplicationController.RetryAutomation)
 	}
 
 	log.Println("Server starting on port 8081")
