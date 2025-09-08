@@ -41,6 +41,10 @@ func (e *UserProfileExtractor) ExtractUserProfileWithResume(userID int, resumeHi
 		return nil, err
 	}
 	
+	// Set the user ID and resume history ID
+	profile.UserID = userID
+	profile.ResumeHistoryID = resumeHistoryID
+	
 	// First try to get contact info from the specific resume_history entry
 	historyQuery := `
 		SELECT COALESCE(contact_name, ''), COALESCE(contact_email, ''), COALESCE(contact_phone, '')

@@ -190,7 +190,7 @@ func (c *JobApplicationController) CreateApplication(ctx *gin.Context) {
 	// Start browser automation
 	
 	// Initialize browser automation service (using V2 - refactored version)
-	automationService, err := services.NewBrowserAutomationServiceV2()
+	automationService, err := services.NewBrowserAutomationServiceV2(c.JobApplicationModel.DB)
 	if err != nil {
 		fmt.Printf("Failed to initialize browser automation: %v\n", err)
 		ctx.JSON(http.StatusInternalServerError, gin.H{
@@ -907,7 +907,7 @@ func (c *JobApplicationController) ContinueApplication(ctx *gin.Context) {
 
 	// Resume automation with the updated profile
 	// Using V2 service
-	automationService, err := services.NewBrowserAutomationServiceV2()
+	automationService, err := services.NewBrowserAutomationServiceV2(c.JobApplicationModel.DB)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to initialize automation service"})
 		return

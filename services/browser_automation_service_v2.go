@@ -1,6 +1,7 @@
 package services
 
 import (
+	"database/sql"
 	"fmt"
 	"log"
 	"os"
@@ -14,13 +15,15 @@ import (
 type BrowserAutomationServiceV2 struct {
 	playwright         *playwright.Playwright
 	browser            playwright.Browser
+	context            playwright.BrowserContext  // Shared context for all tabs
 	formFiller         *FormFillerService
 	screenshotService  *ScreenshotService
 	submissionChecker  *SubmissionCheckerService
+	formDataService    *FormDataService  // New service for form data mapping
 }
 
 // NewBrowserAutomationServiceV2 creates a new instance of the refactored service
-func NewBrowserAutomationServiceV2() (*BrowserAutomationServiceV2, error) {
+func NewBrowserAutomationServiceV2(db *sql.DB) (*BrowserAutomationServiceV2, error) {
 	pw, err := playwright.Run()
 	if err != nil {
 		return nil, fmt.Errorf("could not start playwright: %v", err)
@@ -40,17 +43,41 @@ func NewBrowserAutomationServiceV2() (*BrowserAutomationServiceV2, error) {
 		return nil, fmt.Errorf("could not launch browser: %v", err)
 	}
 	
+	// Create a persistent browser context that will be shared across all tabs
+	context, err := browser.NewContext(playwright.BrowserNewContextOptions{
+		Viewport: &playwright.Size{
+			Width:  1920,
+			Height: 1080,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("could not create browser context: %v", err)
+	}
+	
+	// Initialize form data service with database connection
+	var formDataService *FormDataService
+	if db != nil {
+		formDataService = NewFormDataService(db)
+	}
+	
 	return &BrowserAutomationServiceV2{
 		playwright:        pw,
 		browser:           browser,
+		context:           context,
 		formFiller:        &FormFillerService{},
 		screenshotService: NewScreenshotService(),
 		submissionChecker: &SubmissionCheckerService{},
+		formDataService:   formDataService,
 	}, nil
 }
 
 // Close cleanly shuts down the browser and playwright
 func (s *BrowserAutomationServiceV2) Close() error {
+	if s.context != nil {
+		if err := s.context.Close(); err != nil {
+			log.Printf("Error closing context: %v", err)
+		}
+	}
 	if s.browser != nil {
 		if err := s.browser.Close(); err != nil {
 			log.Printf("Error closing browser: %v", err)
@@ -73,20 +100,9 @@ func (s *BrowserAutomationServiceV2) SubmitJobApplication(jobURL string, userDat
 		FilledFields: make(map[string]string),
 	}
 	
-	// Create browser context with viewport
-	context, err := s.browser.NewContext(playwright.BrowserNewContextOptions{
-		Viewport: &playwright.Size{
-			Width:  1920,
-			Height: 1080,
-		},
-	})
-	if err != nil {
-		return result, fmt.Errorf("could not create context: %v", err)
-	}
-	defer context.Close()
-	
-	// Create page
-	page, err := context.NewPage()
+	// Use the shared context to create a new tab instead of a new browser window
+	log.Println("Opening job application in a new tab...")
+	page, err := s.context.NewPage()
 	if err != nil {
 		return result, fmt.Errorf("could not create page: %v", err)
 	}
@@ -140,6 +156,15 @@ func (s *BrowserAutomationServiceV2) handleGeneric(page playwright.Page, userDat
 		}
 	}
 	
+	// For Greenhouse sites, don't navigate to iframe URL due to reCAPTCHA
+	// Just use the iframe directly through the parent page
+	currentURL = page.URL()
+	log.Printf("Current URL: %s", currentURL)
+	if strings.Contains(currentURL, "greenhouse.io") {
+		log.Println("Detected Greenhouse job board page - will fill form through iframe")
+		// Don't navigate away, just continue to handle as iframe form
+	}
+	
 	// Now check for the actual form
 	// Check for iframe (common in embedded forms)
 	iframeCount, _ := page.Locator("iframe").Count()
@@ -174,23 +199,49 @@ func (s *BrowserAutomationServiceV2) handleGeneric(page playwright.Page, userDat
 		return result, nil
 	}
 	
-	// Submit the form
-	if s.submissionChecker.FindAndClickSubmitButton(page) {
-		// Continue immediately
-		
-		// Check for success
-		if s.submissionChecker.CheckForSuccess(page) {
-			result.Success = true
-			result.Status = "submitted"
-			result.Message = "Application submitted successfully"
-			
-			// Take confirmation screenshot
-			confirmURL, _ := s.screenshotService.SaveScreenshotToResult(page, "confirmation", result)
-			if confirmURL != "" {
-				result.ConfirmationScreenshotKey = confirmURL
-			}
-		}
+	// DON'T submit - let user review and submit manually
+	log.Println("")
+	log.Println("============================================")
+	log.Println("=== FORM READY FOR MANUAL COMPLETION ===")
+	log.Println("============================================")
+	log.Println("Form has been filled with all available information.")
+	log.Println("The browser will remain open for you to:")
+	log.Println("  1. Review all filled information")
+	log.Println("  2. Complete any missing fields")
+	log.Println("  3. Submit the application manually")
+	log.Println("============================================")
+	
+	// Check for reCAPTCHA
+	recaptchaFound := false
+	if count, _ := page.Locator(".g-recaptcha, iframe[src*='recaptcha'], div[class*='recaptcha']").Count(); count > 0 {
+		recaptchaFound = true
+		log.Println("⚠️ reCAPTCHA detected on this form")
 	}
+	
+	// Add instructions for the user
+	log.Println("")
+	log.Println("============================================")
+	log.Println("IMPORTANT: Browser will remain open")
+	log.Println("Please manually:")
+	log.Println("  1. Review all fields")
+	log.Println("  2. Complete any missing information")
+	if recaptchaFound {
+		log.Println("  3. Complete the reCAPTCHA verification")
+		log.Println("  4. Click the submit button")
+		log.Println("  5. Close the browser when done")
+	} else {
+		log.Println("  3. Click the submit button")
+		log.Println("  4. Close the browser when done")
+	}
+	log.Println("============================================")
+	log.Println("")
+	
+	result.Success = true
+	result.Status = "filled_for_manual_submission"
+	result.Message = "Form filled successfully. Browser remains open for manual review and submission."
+	
+	// Browser will remain open
+	log.Println("Browser will remain open until you close it manually.")
 	
 	return result, nil
 }
@@ -199,42 +250,204 @@ func (s *BrowserAutomationServiceV2) handleGeneric(page playwright.Page, userDat
 func (s *BrowserAutomationServiceV2) handleIframeForm(page playwright.Page, userData *UserProfileData, resumeFilePath string, result *AutomationResult) (*AutomationResult, error) {
 	log.Println("=== Handling iframe form ===")
 	
-	// Check if iframe exists
-	iframeCount, _ := page.Locator("iframe").Count()
-	log.Printf("Found %d iframes on page", iframeCount)
+	// Check if iframe exists - wait for it to appear
+	var iframeCount int
+	for waitAttempt := 0; waitAttempt < 5; waitAttempt++ {
+		iframeCount, _ = page.Locator("iframe").Count()
+		if iframeCount > 0 {
+			log.Printf("Found %d iframes on page after %d attempts", iframeCount, waitAttempt+1)
+			break
+		}
+		log.Printf("Waiting for iframes to appear, attempt %d...", waitAttempt+1)
+		time.Sleep(2 * time.Second)
+	}
 	
 	if iframeCount == 0 {
-		log.Println("ERROR: No iframe found on page!")
+		log.Println("ERROR: No iframe found on page after waiting!")
 		result.Status = "no_iframe"
 		result.Message = "No iframe found on page"
 		return result, nil
+	}
+	
+	// For Greenhouse, wait longer for the iframe to load
+	currentURL := page.URL()
+	if strings.Contains(currentURL, "greenhouse.io") {
+		log.Println("Greenhouse site detected - waiting for iframe content to load...")
+		
+		// Try multiple selectors for the Apply button
+		applySelectors := []string{
+			"a:has-text('Apply for this job')",
+			"button:has-text('Apply for this job')",
+			"a:has-text('Apply')",
+			"button:has-text('Apply')",
+			".postings-btn",
+			"a[href*='/application']",
+		}
+		
+		applyClicked := false
+		for _, selector := range applySelectors {
+			if count, _ := page.Locator(selector).Count(); count > 0 {
+				if err := page.Locator(selector).First().Click(); err == nil {
+					log.Printf("Clicked Apply button using selector: %s", selector)
+					applyClicked = true
+					time.Sleep(5 * time.Second) // Give more time for iframe to load
+					break
+				}
+			}
+		}
+		
+		if !applyClicked {
+			log.Println("Could not find Apply button to click")
+		}
+		
+		// Scroll down to make sure iframe is in view
+		page.Evaluate(`() => {
+			window.scrollTo(0, document.body.scrollHeight / 2);
+			const iframe = document.querySelector('#grnhse_iframe');
+			if (iframe) {
+				iframe.scrollIntoView({ behavior: 'smooth', block: 'center' });
+			}
+		}`)
+		time.Sleep(1 * time.Second)
+		
+		// Wait for the Greenhouse iframe to actually have content
+		log.Println("Waiting for Greenhouse iframe content to load...")
+		for attempts := 0; attempts < 10; attempts++ {
+			greenhouseIframe := page.FrameLocator("iframe#grnhse_iframe")
+			if inputCount, _ := greenhouseIframe.Locator("input").Count(); inputCount > 0 {
+				log.Printf("Greenhouse iframe loaded with %d inputs after %d attempts", inputCount, attempts+1)
+				break
+			}
+			log.Printf("Attempt %d: Waiting for iframe content...", attempts+1)
+			time.Sleep(2 * time.Second)
+		}
 	}
 	
 	// Try each iframe to find one with form content
 	var formIframe playwright.FrameLocator
 	foundFormIframe := false
 	
-	for i := 0; i < iframeCount; i++ {
-		iframe := page.FrameLocator("iframe").Nth(i)
-		
-		// Check if this iframe has form content
-		inputCount, _ := iframe.Locator("input").Count()
-		selectCount, _ := iframe.Locator("select").Count()
-		buttonCount, _ := iframe.Locator("button").Count()
-		
-		log.Printf("Iframe %d: inputs=%d, selects=%d, buttons=%d", i, inputCount, selectCount, buttonCount)
-		
-		if inputCount > 0 || selectCount > 0 {
-			log.Printf("Found form content in iframe %d - using this iframe", i)
-			formIframe = iframe
-			foundFormIframe = true
-			break
+	// First try to find Greenhouse iframe specifically
+	greenhouseIframe := page.FrameLocator("iframe#grnhse_iframe")
+	// Wait a bit more and check again
+	time.Sleep(2 * time.Second)
+	inputCount, _ := greenhouseIframe.Locator("input[type='text'], input[type='email'], input[type='tel']").Count()
+	if inputCount > 0 {
+		log.Printf("Found Greenhouse iframe with %d text/email/tel inputs", inputCount)
+		// Also check for file inputs (resume upload)
+		fileInputCount, _ := greenhouseIframe.Locator("input[type='file']").Count()
+		log.Printf("Found %d file inputs in Greenhouse iframe", fileInputCount)
+		formIframe = greenhouseIframe
+		foundFormIframe = true
+	} else {
+		log.Println("Greenhouse iframe has no inputs yet, checking all iframes...")
+		// Fall back to checking each iframe
+		for i := 0; i < iframeCount; i++ {
+			// Get iframe attributes
+			iframeLocator := page.Locator("iframe").Nth(i)
+			iframeSrc, _ := iframeLocator.GetAttribute("src")
+			iframeID, _ := iframeLocator.GetAttribute("id")
+			
+			// Skip reCAPTCHA iframes
+			if strings.Contains(iframeSrc, "recaptcha") {
+				log.Printf("Iframe %d is reCAPTCHA - skipping (src: %s)", i, iframeSrc)
+				continue
+			}
+			
+			log.Printf("Checking iframe %d (id: '%s', src: '%s')", i, iframeID, iframeSrc)
+			
+			// Special handling for Greenhouse iframe
+			if iframeID == "grnhse_iframe" {
+				log.Println("Found Greenhouse iframe by ID, waiting for content...")
+				iframe := page.FrameLocator("#grnhse_iframe")
+				
+				// Wait specifically for this iframe to load
+				for waitAttempt := 0; waitAttempt < 5; waitAttempt++ {
+					inputCount, _ := iframe.Locator("input").Count()
+					if inputCount > 0 {
+						log.Printf("Greenhouse iframe loaded with %d inputs", inputCount)
+						formIframe = iframe
+						foundFormIframe = true
+						break
+					}
+					log.Printf("Waiting for Greenhouse iframe content, attempt %d...", waitAttempt+1)
+					time.Sleep(2 * time.Second)
+				}
+				if foundFormIframe {
+					break
+				}
+			}
+			
+			iframe := page.FrameLocator("iframe").Nth(i)
+			
+			// Check if this iframe has form content
+			inputCount, _ := iframe.Locator("input").Count()
+			selectCount, _ := iframe.Locator("select").Count()
+			buttonCount, _ := iframe.Locator("button").Count()
+			
+			log.Printf("Iframe %d: inputs=%d, selects=%d, buttons=%d", i, inputCount, selectCount, buttonCount)
+			
+			if inputCount > 0 || selectCount > 0 {
+				log.Printf("Found form content in iframe %d - using this iframe", i)
+				formIframe = iframe
+				foundFormIframe = true
+				break
+			}
 		}
 	}
 	
 	if !foundFormIframe {
-		log.Println("No iframe contains form content - using first iframe")
-		formIframe = page.FrameLocator("iframe").First()
+		log.Println("ERROR: Could not find form iframe with actual content")
+		
+		// Try alternative approach for Greenhouse - navigate directly to the application form
+		if strings.Contains(currentURL, "greenhouse.io") && strings.Contains(currentURL, "/jobs/") {
+			log.Println("Attempting alternative approach - navigating directly to Greenhouse application form...")
+			
+			// Parse the URL to extract company and job ID
+			// Format: https://job-boards.greenhouse.io/thetradedesk/jobs/4787185007
+			urlParts := strings.Split(currentURL, "greenhouse.io/")
+			if len(urlParts) > 1 {
+				pathParts := strings.Split(urlParts[1], "/")
+				if len(pathParts) >= 3 && pathParts[1] == "jobs" {
+					companyName := pathParts[0]
+					jobID := strings.Split(pathParts[2], "?")[0]
+					
+					// Construct the direct application URL
+					directURL := fmt.Sprintf("https://boards.greenhouse.io/%s/jobs/%s/application", companyName, jobID)
+					log.Printf("Trying direct application URL: %s", directURL)
+					
+					if _, err := page.Goto(directURL, playwright.PageGotoOptions{
+						WaitUntil: playwright.WaitUntilStateNetworkidle,
+					}); err == nil {
+						time.Sleep(3 * time.Second)
+						// Try to fill the form directly (no iframe)
+						return s.fillDirectGreenhouseForm(page, userData, resumeFilePath, result)
+					}
+				}
+			}
+		}
+		
+		result.Status = "form_not_accessible"
+		result.Message = "The job application form could not be accessed. It may require manual interaction or have additional security measures."
+		result.Success = false
+		
+		// Take a screenshot of the current page state
+		screenshotURL, _ := s.screenshotService.SaveScreenshotToResult(page, "form_not_found", result)
+		if screenshotURL != "" {
+			result.ApplicationScreenshotKey = screenshotURL
+		}
+		
+		// Keep browser open for manual interaction
+		log.Println("")
+		log.Println("============================================")
+		log.Println("=== MANUAL INTERACTION REQUIRED ===")
+		log.Println("============================================")
+		log.Println("The form could not be accessed automatically.")
+		log.Println("Please fill the application manually.")
+		log.Println("The browser will remain open.")
+		log.Println("============================================")
+		
+		return result, nil
 	}
 	
 	iframe := formIframe
@@ -275,85 +488,240 @@ func (s *BrowserAutomationServiceV2) handleIframeForm(page playwright.Page, user
 		return result, err
 	}
 	
+	// Check if we actually filled any fields
+	if filledCount == 0 {
+		log.Println("WARNING: No fields were filled - form may not be accessible")
+		result.Status = "no_fields_filled"
+		result.Message = "Could not access form fields. The form may be protected or require manual filling."
+		result.Success = false
+		return result, nil
+	}
+	
 	// Fields filled
 	result.FilledFields["iframe_fields"] = fmt.Sprintf("%d", filledCount)
 	
 	// Take a screenshot BEFORE submitting to show the filled form
-	log.Println("Taking pre-submit screenshot of filled form...")
-	preSubmitURL, _ := s.screenshotService.SaveScreenshotToResult(page, "pre_submit", result)
-	if preSubmitURL != "" {
-		result.ApplicationScreenshotKey = preSubmitURL
-		log.Printf("Pre-submit screenshot saved: %s", preSubmitURL)
+	log.Println("Taking screenshot of filled form before submitting...")
+	beforeSubmitURL, err := s.screenshotService.SaveScreenshotToResult(page, "before_submit", result)
+	if err != nil {
+		log.Printf("ERROR: Failed to take screenshot: %v", err)
+	} else if beforeSubmitURL != "" {
+		log.Printf("Screenshot taken successfully before submit: %s", beforeSubmitURL)
+		result.ApplicationScreenshotKey = beforeSubmitURL
+	} else {
+		log.Println("Screenshot URL is empty but no error occurred")
 	}
 	
-	// Expand iframe to show all content before screenshot
+	// Small delay to ensure screenshot is complete
+	log.Println("Waiting 2 seconds to ensure screenshot is saved...")
+	time.Sleep(2 * time.Second)
+	
+	// DON'T submit automatically - let user review and submit manually
+	log.Println("")
+	log.Println("============================================")
+	log.Println("=== FORM READY FOR MANUAL COMPLETION ===")
+	log.Println("============================================")
+	log.Println("Form has been filled with all available information.")
+	log.Println("The browser will remain open for you to:")
+	log.Println("  1. Review all filled information")
+	log.Println("  2. Complete any missing fields")
+	log.Println("  3. Submit the application manually")
+	log.Println("============================================")
+	
+	// Try to scroll to submit button area (best effort, may fail for cross-origin)
+	log.Println("Attempting to scroll to bottom of form...")
 	page.Evaluate(`
-		const iframe = document.querySelector('iframe');
-		if (iframe) {
-			// Remove any height restrictions
-			iframe.style.height = 'auto';
-			iframe.style.minHeight = '3000px';
-			iframe.style.maxHeight = 'none';
-			iframe.style.overflow = 'visible';
-			
-			// Also expand parent containers
-			let parent = iframe.parentElement;
-			while (parent) {
-				parent.style.height = 'auto';
-				parent.style.minHeight = '3000px';
-				parent.style.maxHeight = 'none';
-				parent.style.overflow = 'visible';
-				parent = parent.parentElement;
+		() => {
+			const iframe = document.querySelector('#grnhse_iframe') || document.querySelector('iframe');
+			if (iframe) {
+				try {
+					if (iframe.contentWindow && iframe.contentWindow.document) {
+						const doc = iframe.contentWindow.document;
+						const scrollHeight = doc.body.scrollHeight;
+						iframe.contentWindow.scrollTo(0, scrollHeight);
+						
+						// Try to highlight submit button if accessible
+						const submitBtn = doc.querySelector('button[type="submit"], .application--submit button, .btn--pill');
+						if (submitBtn) {
+							submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+							submitBtn.style.border = '3px solid #4CAF50';
+							submitBtn.style.boxShadow = '0 0 10px #4CAF50';
+							console.log('Submit button highlighted');
+						}
+					}
+				} catch (e) {
+					// Cross-origin iframe - can't access content
+					console.log('Cross-origin iframe - cannot scroll or highlight submit button');
+				}
 			}
-			
-			// Scroll to top to ensure everything is visible
-			window.scrollTo(0, 0);
 		}
 	`)
-	// Content should adjust immediately
+	
+	// Check for reCAPTCHA in iframe forms
+	recaptchaFound := false
+	recaptchaSelectors := []string{
+		".g-recaptcha",
+		"iframe[src*='recaptcha']",
+		"div[class*='recaptcha']",
+		"div[id*='recaptcha']",
+	}
+	for _, selector := range recaptchaSelectors {
+		if count, _ := page.Locator(selector).Count(); count > 0 {
+			recaptchaFound = true
+			log.Println("⚠️ reCAPTCHA detected on this form")
+			break
+		}
+	}
+	
+	result.Success = true
+	result.Status = "filled_for_manual_submission"
+	result.Message = "Application form filled successfully. Browser remains open for manual review and submission."
+	
+	// Add instructions for the user
+	log.Println("")
+	log.Println("============================================")
+	log.Println("IMPORTANT: Browser will remain open")
+	log.Println("Please manually:")
+	log.Println("  1. Review all fields")
+	log.Println("  2. Complete any missing information")
+	if recaptchaFound {
+		log.Println("  3. Complete the reCAPTCHA verification")
+		log.Println("  4. Click the submit button")
+		log.Println("  5. Close the browser when done")
+	} else {
+		log.Println("  3. Click the submit button")
+		log.Println("  4. Close the browser when done")
+	}
+	log.Println("============================================")
+	log.Println("")
+	
+	// Browser will remain open until user closes it manually
+	log.Println("Browser will remain open until you close it manually.")
+	
+	return result, nil
+}
+
+// fillDirectGreenhouseForm fills a Greenhouse form after navigating directly to it
+func (s *BrowserAutomationServiceV2) fillDirectGreenhouseForm(page playwright.Page, userData *UserProfileData, resumeFilePath string, result *AutomationResult) (*AutomationResult, error) {
+	log.Println("=== Filling Greenhouse form directly (no iframe) ===")
+	
+	// Wait for form to be ready
+	log.Println("Waiting for form elements to be ready...")
+	page.WaitForSelector("input", playwright.PageWaitForSelectorOptions{
+		Timeout: playwright.Float(10000),
+	})
+	
+	// Fill all text inputs
+	inputs, _ := page.Locator("input[type='text'], input[type='email'], input[type='tel'], input:not([type='hidden'])").All()
+	log.Printf("Found %d input fields", len(inputs))
+	
+	filledCount := 0
+	for _, input := range inputs {
+		// Get field name/label
+		name, _ := input.GetAttribute("name")
+		placeholder, _ := input.GetAttribute("placeholder")
+		ariaLabel, _ := input.GetAttribute("aria-label")
+		
+		fieldIdentifier := name
+		if fieldIdentifier == "" {
+			fieldIdentifier = placeholder
+		}
+		if fieldIdentifier == "" {
+			fieldIdentifier = ariaLabel
+		}
+		
+		if fieldIdentifier == "" {
+			continue
+		}
+		
+		log.Printf("Processing field: %s", fieldIdentifier)
+		
+		// Map field to user data
+		fieldValue := ""
+		fieldLower := strings.ToLower(fieldIdentifier)
+		
+		if strings.Contains(fieldLower, "first") && strings.Contains(fieldLower, "name") {
+			fieldValue = userData.FirstName
+		} else if strings.Contains(fieldLower, "last") && strings.Contains(fieldLower, "name") {
+			fieldValue = userData.LastName
+		} else if strings.Contains(fieldLower, "email") {
+			fieldValue = userData.Email
+		} else if strings.Contains(fieldLower, "phone") {
+			fieldValue = userData.Phone
+		} else if strings.Contains(fieldLower, "linkedin") {
+			fieldValue = userData.LinkedIn
+		} else if strings.Contains(fieldLower, "city") {
+			fieldValue = userData.City
+		} else if strings.Contains(fieldLower, "state") {
+			fieldValue = userData.State
+		} else if strings.Contains(fieldLower, "zip") || strings.Contains(fieldLower, "postal") {
+			fieldValue = userData.ZipCode
+		}
+		
+		if fieldValue != "" {
+			input.Fill(fieldValue)
+			filledCount++
+			log.Printf("  ✓ Filled %s with %s", fieldIdentifier, fieldValue)
+		}
+	}
+	
+	// Handle file upload for resume
+	if resumeFilePath != "" {
+		fileInputs, _ := page.Locator("input[type='file']").All()
+		for _, fileInput := range fileInputs {
+			name, _ := fileInput.GetAttribute("name")
+			if strings.Contains(strings.ToLower(name), "resume") || strings.Contains(strings.ToLower(name), "cv") {
+				fileInput.SetInputFiles(resumeFilePath)
+				log.Printf("  ✓ Uploaded resume file")
+				filledCount++
+				break
+			}
+		}
+	}
+	
+	// Handle dropdowns
+	selects, _ := page.Locator("select:visible").All()
+	log.Printf("Found %d select dropdowns", len(selects))
+	
+	result.FilledFields["total_fields"] = fmt.Sprintf("%d", filledCount)
 	
 	// Take screenshot
-	screenshotURL, _ := s.screenshotService.SaveScreenshotToResult(page, "after_fill", result)
+	log.Println("Taking screenshot of filled form...")
+	screenshotURL, _ := s.screenshotService.SaveScreenshotToResult(page, "filled_form", result)
 	if screenshotURL != "" {
 		result.ApplicationScreenshotKey = screenshotURL
 	}
 	
-	// Validations should complete immediately
-	
-	// Take screenshot BEFORE clicking submit to see the filled form
-	beforeSubmitURL, _ := s.screenshotService.SaveScreenshotToResult(page, "before_submit", result)
-	if beforeSubmitURL != "" {
-		log.Printf("Screenshot taken before submit: %s", beforeSubmitURL)
-		result.ApplicationScreenshotKey = beforeSubmitURL
+	// Check for reCAPTCHA
+	recaptchaFound := false
+	if count, _ := page.Locator(".g-recaptcha, iframe[src*='recaptcha'], div[class*='recaptcha']").Count(); count > 0 {
+		recaptchaFound = true
+		log.Println("⚠️ reCAPTCHA detected on this form")
 	}
 	
-	// Submit iframe form - the submit button is INSIDE the Greenhouse iframe
-	log.Println("Looking for submit button INSIDE iframe...")
-	
-	// Try inside iframe
-	if s.submitIframeFormSimple(iframe, page) {
-		log.Println("Submit button clicked successfully!")
-		result.Success = true
-		result.Status = "submitted"
-		result.Message = "Application submitted via iframe"
-		
-		// Take confirmation screenshot after submission
-		confirmURL, _ := s.screenshotService.SaveScreenshotToResult(page, "confirmation", result)
-		if confirmURL != "" {
-			result.ConfirmationScreenshotKey = confirmURL
-		}
+	// Don't submit - let user review
+	log.Println("")
+	log.Println("============================================")
+	log.Println("=== FORM READY FOR MANUAL COMPLETION ===")
+	log.Println("============================================")
+	log.Println("Form has been filled with all available information.")
+	log.Println("The browser will remain open for you to:")
+	log.Println("  1. Review all filled information")
+	log.Println("  2. Complete any missing fields")
+	if recaptchaFound {
+		log.Println("  3. Complete the reCAPTCHA verification")
+		log.Println("  4. Submit the application manually")
 	} else {
-		log.Printf("WARNING: Could not find submit button")
-		result.Status = "submit_button_not_found"
-		result.Message = "Application filled successfully but submit button could not be found. Please review and submit manually."
-		result.Success = false
-		
-		// Still take a screenshot to show the filled form
-		finalScreenshot, _ := s.screenshotService.SaveScreenshotToResult(page, "filled_form", result)
-		if finalScreenshot != "" {
-			result.ApplicationScreenshotKey = finalScreenshot
-		}
+		log.Println("  3. Submit the application manually")
 	}
+	log.Println("============================================")
+	
+	result.Success = true
+	result.Status = "filled_for_manual_submission"
+	result.Message = "Greenhouse form filled successfully. Browser remains open for manual review and submission."
+	
+	// Browser will remain open
+	log.Println("Browser will remain open until you close it manually.")
 	
 	return result, nil
 }
@@ -365,10 +733,79 @@ func (s *BrowserAutomationServiceV2) fillIframeFieldsSimple(iframe playwright.Fr
 	
 	log.Println("=== Starting to fill iframe fields ===")
 	
+	// Fetch form data from database if FormDataService is available
+	var formData *FormData
+	if s.formDataService != nil && userData.UserID > 0 {
+		log.Printf("Fetching form data for user %d with resume %d", userData.UserID, userData.ResumeHistoryID)
+		var err error
+		formData, err = s.formDataService.GetFormDataForUser(userData.UserID, userData.ResumeHistoryID)
+		if err != nil {
+			log.Printf("Warning: Could not fetch form data from database: %v", err)
+			// Continue with just userData
+		} else {
+			log.Printf("Successfully fetched form data with %d profile fields, %d resume fields, and %d extra Q&A entries",
+				len(formData.ProfileData), len(formData.ResumeData), len(formData.ExtraQA))
+		}
+	}
+	
 	// Fill text inputs
 	inputs, _ := iframe.Locator("input[type='text']:visible, input[type='email']:visible, input[type='tel']:visible").All()
 	log.Printf("Found %d text/email/tel inputs", len(inputs))
 	for _, input := range inputs {
+		// More comprehensive check if this input is actually part of a dropdown/combobox
+		dropdownType, _ := input.Evaluate(`el => {
+			// Check the input itself first
+			const role = el.getAttribute('role');
+			if (role === 'combobox' || role === 'listbox') return 'is-combobox';
+			if (el.hasAttribute('aria-autocomplete')) return 'is-autocomplete';
+			if (el.hasAttribute('aria-haspopup')) return 'has-popup';
+			if (el.classList.contains('select') || el.classList.contains('dropdown')) return 'has-dropdown-class';
+			
+			// Check parent containers up to 3 levels
+			let parent = el.parentElement;
+			let depth = 0;
+			while (parent && depth < 3) {
+				// Check if parent has select element
+				if (parent.querySelector('select')) return 'parent-has-select';
+				
+				// Check for dropdown/combobox indicators
+				if (parent.querySelector('[role="combobox"], [role="listbox"]')) return 'parent-has-combobox';
+				if (parent.classList.contains('dropdown') || parent.classList.contains('select') || 
+				    parent.classList.contains('combobox') || parent.classList.contains('multiselect')) {
+					return 'parent-is-dropdown';
+				}
+				
+				// Check for dropdown-related attributes
+				const parentRole = parent.getAttribute('role');
+				if (parentRole === 'combobox' || parentRole === 'listbox') return 'parent-role-dropdown';
+				
+				// Check for React Select or similar components
+				if (parent.className && (parent.className.includes('react-select') || 
+				    parent.className.includes('Select') || parent.className.includes('dropdown'))) {
+					return 'react-select-component';
+				}
+				
+				parent = parent.parentElement;
+				depth++;
+			}
+			
+			// Check if there's a listbox or dropdown menu nearby
+			const field = el.closest('.field, .form-field, .form-group');
+			if (field) {
+				if (field.querySelector('.dropdown-menu, .dropdown-list, [role="listbox"], ul.options')) {
+					return 'field-has-dropdown-menu';
+				}
+			}
+			
+			return 'normal';
+		}`, nil)
+		
+		// Skip if this is part of a dropdown/select field
+		if dropdownType != "normal" && dropdownType != nil {
+			log.Printf("  Skipping input - detected as dropdown/combobox (type: %v)", dropdownType)
+			continue
+		}
+		
 		name, _ := input.GetAttribute("name")
 		placeholder, _ := input.GetAttribute("placeholder")
 		ariaLabel, _ := input.GetAttribute("aria-label")
@@ -403,11 +840,22 @@ func (s *BrowserAutomationServiceV2) fillIframeFieldsSimple(iframe playwright.Fr
 		fieldInfo := strings.ToLower(labelStr + " " + name + " " + placeholder + " " + ariaLabel)
 		
 		var value string
-		fieldInfoLower := strings.ToLower(fieldInfo)
 		
-		// Basic personal info
-		if strings.Contains(fieldInfoLower, "first") && strings.Contains(fieldInfoLower, "name") {
-			value = userData.FirstName
+		// First try to get value from FormDataService if available
+		if formData != nil {
+			if mappedValue, found := s.formDataService.GetAnswerForQuestion(fieldInfo, formData); found {
+				value = mappedValue
+				log.Printf("  Using mapped value for '%s': %s", fieldInfo, value)
+			}
+		}
+		
+		// Fallback to hardcoded mapping if no value from FormDataService
+		if value == "" {
+			fieldInfoLower := strings.ToLower(fieldInfo)
+			
+			// Basic personal info
+			if strings.Contains(fieldInfoLower, "first") && strings.Contains(fieldInfoLower, "name") {
+				value = userData.FirstName
 		} else if strings.Contains(fieldInfoLower, "last") && strings.Contains(fieldInfoLower, "name") {
 			value = userData.LastName
 		} else if strings.Contains(fieldInfoLower, "email") {
@@ -541,6 +989,7 @@ func (s *BrowserAutomationServiceV2) fillIframeFieldsSimple(iframe playwright.Fr
 				log.Printf("  Using field of study from resume: %s", value)
 			}
 		}
+		} // End of fallback mapping when FormDataService doesn't have a value
 		
 		if value != "" {
 			log.Printf("  Filling input '%s' with value: %s", fieldInfo, value)
@@ -899,7 +1348,10 @@ func (s *BrowserAutomationServiceV2) fillIframeFieldsSimple(iframe playwright.Fr
 
 // submitIframeFormSimple finds and clicks submit button in iframe
 func (s *BrowserAutomationServiceV2) submitIframeFormSimple(iframe playwright.FrameLocator, page playwright.Page) bool {
-	log.Println("=== Looking for submit button in iframe ===")
+	log.Println("")
+	log.Println("============================================")
+	log.Println("=== STARTING SUBMIT BUTTON SEARCH ===")
+	log.Println("============================================")
 	
 	// Add a maximum time limit to prevent hanging forever
 	maxAttempts := 3
@@ -934,6 +1386,10 @@ func (s *BrowserAutomationServiceV2) submitIframeFormSimple(iframe playwright.Fr
 		
 		// Check if button exists and try to click it
 		if s.tryClickSubmitButton(iframe, page) {
+			log.Println("============================================")
+			log.Println("=== SUBMIT BUTTON CLICKED SUCCESSFULLY ===")
+			log.Println("============================================")
+			log.Println("")
 			return true
 		}
 		
@@ -1233,26 +1689,113 @@ func (s *BrowserAutomationServiceV2) handleStripeSpecificFields(iframe playwrigh
 		log.Printf("Field %d: %s", i+1, questionText)
 		
 		// Handle country selection (dropdown)
-		if strings.Contains(questionLower, "country where you currently reside") {
+		if strings.Contains(questionLower, "country where you currently reside") || 
+		   strings.Contains(questionLower, "select the country") {
 			// Look for dropdown/select in this field
 			selectElem := field.Locator("select").First()
 			if count, _ := selectElem.Count(); count > 0 {
 				// Try to select United States
-				selectElem.SelectOption(playwright.SelectOptionValues{
+				_, err := selectElem.SelectOption(playwright.SelectOptionValues{
 					Values: &[]string{"United States"},
 				})
+				if err != nil {
+					// Try with label
+					_, _ = selectElem.SelectOption(playwright.SelectOptionValues{
+						Labels: &[]string{"United States"},
+					})
+				}
 				log.Printf("  ✓ Selected United States for country of residence")
 			} else {
-				// Might be a custom dropdown - try clicking and selecting
-				dropdown := field.Locator("div[role='combobox'], div[class*='select']").First()
-				if count, _ := dropdown.Count(); count > 0 {
-					dropdown.Click()
-					time.Sleep(500 * time.Millisecond)
-					// Try to click United States option
-					option := iframe.Locator("div:has-text('United States'):visible").First()
-					if count, _ := option.Count(); count > 0 {
-						option.Click()
-						log.Printf("  ✓ Selected United States via custom dropdown")
+				// Check if it's a text input with autocomplete (combobox)
+				textInput := field.Locator("input[type='text']").First()
+				if count, _ := textInput.Count(); count > 0 {
+					log.Printf("  Country field is a combobox/autocomplete, handling specially...")
+					
+					// Click to focus
+					textInput.Click()
+					time.Sleep(200 * time.Millisecond)
+					
+					// Clear any existing value
+					textInput.Press("Control+a")
+					textInput.Press("Delete")
+					
+					// Type "United States" slowly to trigger autocomplete
+					textInput.Type("United States", playwright.LocatorTypeOptions{
+						Delay: playwright.Float(100),
+					})
+					
+					// Wait for dropdown to appear
+					time.Sleep(1000 * time.Millisecond)
+					
+					// Look for and click the United States option
+					optionFound := false
+					optionSelectors := []string{
+						"div[role='option']:has-text('United States')",
+						"li[role='option']:has-text('United States')",
+						"div[role='listbox'] div:has-text('United States')",
+						"ul[role='listbox'] li:has-text('United States')",
+						"div.Select-option:has-text('United States')",
+						"div[class*='option']:has-text('United States')",
+					}
+					
+					for _, selector := range optionSelectors {
+						option := iframe.Locator(selector).First()
+						if isVisible, _ := option.IsVisible(); isVisible {
+							if box, err := option.BoundingBox(); err == nil && box != nil {
+								// Make sure it's a reasonable size (dropdown option, not random text)
+								if box.Height > 5 && box.Height < 100 && box.Width > 50 {
+									log.Printf("  Found United States option, clicking it...")
+									if err := option.Click(); err == nil {
+										log.Printf("  ✓ Selected United States from dropdown")
+										optionFound = true
+										break
+									}
+								}
+							}
+						}
+					}
+					
+					if !optionFound {
+						// Try arrow down + enter as fallback
+						log.Printf("  Could not find option to click, trying arrow down + enter...")
+						textInput.Press("ArrowDown")
+						time.Sleep(200 * time.Millisecond)
+						textInput.Press("Enter")
+						log.Printf("  ✓ Selected first dropdown option (should be United States)")
+					}
+				} else {
+					// Try other dropdown selectors
+					dropdownSelectors := []string{
+						"div[role='combobox']",
+						"div[class*='select']",
+						"div[class*='dropdown']",
+					}
+					
+					for _, selector := range dropdownSelectors {
+						dropdown := field.Locator(selector).First()
+						if count, _ := dropdown.Count(); count > 0 {
+							// Click to open dropdown
+							dropdown.Click()
+							time.Sleep(500 * time.Millisecond)
+							
+							// Try various ways to select United States
+							optionSelectors := []string{
+								"div:has-text('United States'):visible",
+								"li:has-text('United States'):visible",
+								"option:has-text('United States'):visible",
+								"[role='option']:has-text('United States'):visible",
+							}
+							
+							for _, optSel := range optionSelectors {
+								option := iframe.Locator(optSel).First()
+								if count, _ := option.Count(); count > 0 {
+									option.Click()
+									log.Printf("  ✓ Selected United States via custom dropdown")
+									break
+								}
+							}
+							break
+						}
 					}
 				}
 			}
@@ -1641,79 +2184,78 @@ func (s *BrowserAutomationServiceV2) handleSpecificIframeForm(page playwright.Pa
 	result.FilledFields["iframe_fields"] = fmt.Sprintf("%d", filledCount)
 	
 	// Take screenshot before submit
-	screenshotURL, _ := s.screenshotService.SaveScreenshotToResult(page, "before_submit", result)
-	if screenshotURL != "" {
-		log.Printf("Screenshot taken before submit: %s", screenshotURL)
+	log.Println("Taking screenshot of filled form before submitting...")
+	screenshotURL, err := s.screenshotService.SaveScreenshotToResult(page, "before_submit", result)
+	if err != nil {
+		log.Printf("ERROR: Failed to take screenshot: %v", err)
+	} else if screenshotURL != "" {
+		log.Printf("Screenshot taken successfully before submit: %s", screenshotURL)
 		result.ApplicationScreenshotKey = screenshotURL
-	}
-	
-	// Submit form - submit button is INSIDE the iframe
-	log.Println("Looking for submit button INSIDE iframe...")
-	
-	// Try inside iframe
-	if s.submitIframeFormSimple(iframe, page) {
-		log.Println("Submit button clicked - verifying submission...")
-		
-		// Wait a moment to see if the form actually submits
-		time.Sleep(3 * time.Second)
-		
-		// Check if we're still on the same page (form didn't submit)
-		stillHasForm := s.checkIfFormStillPresent(page, iframe)
-		
-		if stillHasForm {
-			// Form is still there - check for validation errors
-			log.Println("Form is still present after clicking submit - checking for validation errors...")
-			
-			validationErrors := s.getValidationErrors(page, iframe)
-			if len(validationErrors) > 0 {
-				log.Printf("VALIDATION ERRORS FOUND: %v", validationErrors)
-				result.Status = "validation_errors"
-				result.Message = fmt.Sprintf("Form has validation errors: %v", validationErrors)
-				result.Success = false
-				
-				// Take screenshot showing validation errors
-				errorScreenshot, _ := s.screenshotService.SaveScreenshotToResult(page, "validation_errors", result)
-				if errorScreenshot != "" {
-					result.ApplicationScreenshotKey = errorScreenshot
-				}
-			} else {
-				// No obvious validation errors but form didn't submit
-				log.Println("Form didn't submit but no validation errors detected")
-				result.Status = "submit_failed"
-				result.Message = "Submit button was clicked but form did not submit. Please review and submit manually."
-				result.Success = false
-				
-				// Take screenshot of the unsubmitted form
-				failedScreenshot, _ := s.screenshotService.SaveScreenshotToResult(page, "submit_failed", result)
-				if failedScreenshot != "" {
-					result.ApplicationScreenshotKey = failedScreenshot
-				}
-			}
-		} else {
-			// Form seems to have submitted successfully
-			log.Println("Form appears to have submitted successfully!")
-			result.Success = true
-			result.Status = "submitted"
-			result.Message = "Application submitted via iframe"
-			
-			// Take confirmation screenshot
-			confirmURL, _ := s.screenshotService.SaveScreenshotToResult(page, "confirmation", result)
-			if confirmURL != "" {
-				result.ConfirmationScreenshotKey = confirmURL
-			}
-		}
 	} else {
-		log.Printf("WARNING: Could not find submit button")
-		result.Status = "submit_button_not_found"
-		result.Message = "Application filled successfully but submit button could not be found. Please review and submit manually."
-		result.Success = false
-		
-		// Still take a screenshot to show the filled form
-		finalScreenshot, _ := s.screenshotService.SaveScreenshotToResult(page, "filled_form", result)
-		if finalScreenshot != "" {
-			result.ApplicationScreenshotKey = finalScreenshot
-		}
+		log.Println("Screenshot URL is empty but no error occurred")
 	}
+	
+	// Small delay to ensure screenshot is complete
+	log.Println("Waiting 2 seconds to ensure screenshot is saved...")
+	time.Sleep(2 * time.Second)
+	
+	// DON'T submit automatically - let user review and submit manually
+	log.Println("")
+	log.Println("============================================")
+	log.Println("=== FORM READY FOR MANUAL COMPLETION ===")
+	log.Println("============================================")
+	log.Println("Form has been filled with all available information.")
+	log.Println("The browser will remain open for you to:")
+	log.Println("  1. Review all filled information")
+	log.Println("  2. Complete any missing fields")
+	log.Println("  3. Submit the application manually")
+	log.Println("============================================")
+	
+	// Scroll to the bottom to show submit button area
+	log.Println("Scrolling to bottom of form to show submit button...")
+	page.Evaluate(`
+		() => {
+			const iframe = document.querySelector('#grnhse_iframe') || document.querySelector('iframe');
+			if (iframe && iframe.contentWindow) {
+				try {
+					const doc = iframe.contentWindow.document;
+					const scrollHeight = doc.body.scrollHeight;
+					iframe.contentWindow.scrollTo(0, scrollHeight);
+					
+					// Try to highlight the submit button
+					const submitBtn = doc.querySelector('button[type="submit"], .application--submit button, .btn--pill');
+					if (submitBtn) {
+						submitBtn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+						// Add visual highlight to submit button
+						submitBtn.style.border = '3px solid #4CAF50';
+						submitBtn.style.boxShadow = '0 0 10px #4CAF50';
+						console.log('Submit button highlighted for user');
+					}
+				} catch (e) {
+					console.log('Could not access iframe content:', e.message);
+				}
+			}
+		}
+	`)
+	
+	result.Success = true
+	result.Status = "filled_for_manual_submission"
+	result.Message = "Application form filled successfully. Browser remains open for manual review and submission."
+	
+	// Add instructions for the user
+	log.Println("")
+	log.Println("============================================")
+	log.Println("IMPORTANT: Browser will remain open")
+	log.Println("Please manually:")
+	log.Println("  1. Review all fields")
+	log.Println("  2. Complete any missing information")
+	log.Println("  3. Click the submit button (highlighted in green)")
+	log.Println("  4. Close the browser when done")
+	log.Println("============================================")
+	log.Println("")
+	
+	// Browser will remain open until user closes it manually
+	log.Println("Browser will remain open until you close it manually.")
 	
 	return result, nil
 }

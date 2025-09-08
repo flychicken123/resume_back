@@ -973,50 +973,154 @@ func fillCombobox(iframe playwright.FrameLocator, combo playwright.Locator, answ
 		combo.Press("Delete")
 	}
 	
-	// Type the answer
-	log.Printf("    Typing answer: %s", answer)
-	if err := combo.Type(answer, playwright.LocatorTypeOptions{
-		Delay: playwright.Float(50), // Small delay between keystrokes
+	// For country fields, type abbreviated form first
+	typeValue := answer
+	answerLower := strings.ToLower(answer)
+	if answerLower == "united states" {
+		// Type "US" to filter the dropdown to US-related options
+		typeValue = "US"
+	}
+	
+	// Type the answer slowly to trigger autocomplete
+	log.Printf("    Typing answer: %s", typeValue)
+	if err := combo.Type(typeValue, playwright.LocatorTypeOptions{
+		Delay: playwright.Float(100), // Increased delay between keystrokes
 	}); err != nil {
 		log.Printf("    ERROR: Could not type in combobox: %v", err)
 		return false
 	}
 	
-	// Wait a moment for autocomplete to appear
-	time.Sleep(500 * time.Millisecond)
+	// Wait longer for autocomplete to appear
+	time.Sleep(1500 * time.Millisecond)
 	
-	// Try to select the first matching option
-	// Look for dropdown options that appeared
-	optionSelectors := []string{
-		fmt.Sprintf("div[role='option']:has-text('%s'):visible", answer),
-		fmt.Sprintf("li:has-text('%s'):visible", answer),
-		fmt.Sprintf("*[role='option']:has-text('%s'):visible", answer),
-		fmt.Sprintf("div:has-text('%s'):visible", answer),
+	// For country fields, try various country name formats
+	answerVariants := []string{answer}
+	if answerLower == "united states" {
+		// Order matters - US is often the abbreviated form in dropdowns
+		answerVariants = []string{"US", "United States", "USA", "United States of America", "U.S.", "U.S.A."}
 	}
 	
-	for _, selector := range optionSelectors {
-		opt := iframe.Locator(selector).First()
-		if count, _ := opt.Count(); count > 0 {
-			// Check if it's a reasonable size (not the whole page)
-			if box, err := opt.BoundingBox(); err == nil && box != nil {
-				if box.Height < 100 && box.Height > 10 {
-					log.Printf("    Found autocomplete option, clicking it")
-					if err := opt.Click(); err == nil {
-						log.Printf("    ✓ Selected option from autocomplete")
-						return true
+	// First strategy: Look for visible dropdown container and find options within it
+	log.Printf("    Looking for dropdown container...")
+	dropdownContainers := []string{
+		"div[role='listbox']",
+		"ul[role='listbox']",
+		"div.Select-menu-outer",
+		"div[class*='dropdown-menu']",
+		"ul[class*='dropdown-menu']",
+		"div[class*='react-select']",
+		"div[class*='options-container']",
+		"div[class*='autocomplete']",
+	}
+	
+	for _, containerSelector := range dropdownContainers {
+		container := iframe.Locator(containerSelector).First()
+		if isVisible, _ := container.IsVisible(); isVisible {
+			log.Printf("    Found visible dropdown container: %s", containerSelector)
+			
+			// Wait a bit more for options to render
+			time.Sleep(300 * time.Millisecond)
+			
+			// Look for options within this container
+			for _, variant := range answerVariants {
+				// Try different option selectors within the container
+				optionSelectors := []string{
+					fmt.Sprintf("*[role='option']:text-is('%s')", variant), // Exact text match first
+					fmt.Sprintf("div[role='option']:has-text('%s')", variant),
+					fmt.Sprintf("li[role='option']:has-text('%s')", variant),
+					fmt.Sprintf("div:text-is('%s')", variant),
+					fmt.Sprintf("li:text-is('%s')", variant),
+					fmt.Sprintf("*:has-text('%s'):not([role='listbox'])", variant), // Any element with text except container
+				}
+				
+				for _, optSel := range optionSelectors {
+					options, err := container.Locator(optSel).All()
+					if err == nil && len(options) > 0 {
+						for _, option := range options {
+							if optVisible, _ := option.IsVisible(); optVisible {
+								// Verify it's a reasonable size
+								if box, err := option.BoundingBox(); err == nil && box != nil {
+									if box.Height > 5 && box.Height < 100 {
+										log.Printf("    Found option '%s' in container with selector %s, clicking it", variant, optSel)
+										if err := option.Click(); err == nil {
+											log.Printf("    ✓ Successfully selected option from dropdown")
+											time.Sleep(200 * time.Millisecond) // Small wait after selection
+											return true
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			
+			// If we found the container but no exact match, log what options are available
+			allOptions, err := container.Locator("*[role='option']").All()
+			if err == nil && len(allOptions) > 0 {
+				log.Printf("    Warning: Could not find exact match. Available options in dropdown:")
+				for i, opt := range allOptions {
+					if i >= 5 { // Only log first 5 options
+						break
+					}
+					if text, err := opt.TextContent(); err == nil {
+						log.Printf("      - Option %d: %s", i, strings.TrimSpace(text))
 					}
 				}
 			}
 		}
 	}
 	
-	// If no dropdown appeared, try pressing Enter to accept the typed value
-	log.Printf("    No autocomplete found, pressing Enter to accept typed value")
+	// Second strategy: Look for any visible options directly
+	log.Printf("    Looking for visible options directly...")
+	for _, variant := range answerVariants {
+		optionSelectors := []string{
+			fmt.Sprintf("div[role='option']:has-text('%s')", variant),
+			fmt.Sprintf("li[role='option']:has-text('%s')", variant),
+			fmt.Sprintf("div.Select-option:has-text('%s')", variant),
+			fmt.Sprintf("li[class*='option']:has-text('%s')", variant),
+			fmt.Sprintf("div[class*='option']:has-text('%s')", variant),
+		}
+		
+		for _, selector := range optionSelectors {
+			options, err := iframe.Locator(selector).All()
+			if err == nil {
+				for _, opt := range options {
+					if isVisible, _ := opt.IsVisible(); isVisible {
+						// Verify it's a dropdown option (not random text on page)
+						if box, err := opt.BoundingBox(); err == nil && box != nil {
+							if box.Height > 5 && box.Height < 100 && box.Width > 50 && box.Width < 1000 {
+								log.Printf("    Found visible option '%s', clicking it", variant)
+								if err := opt.Click(); err == nil {
+									log.Printf("    ✓ Successfully selected option")
+									time.Sleep(200 * time.Millisecond)
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	
+	// Third strategy: Try pressing arrow down to highlight first option, then Enter
+	log.Printf("    No visible options found, trying arrow down + enter...")
+	if err := combo.Press("ArrowDown"); err == nil {
+		time.Sleep(200 * time.Millisecond)
+		if err := combo.Press("Enter"); err == nil {
+			log.Printf("    ✓ Selected first dropdown option with arrow down + enter")
+			return true
+		}
+	}
+	
+	// Last resort: Just press Enter to accept typed value
+	log.Printf("    Last resort - pressing Enter to accept typed value")
 	if err := combo.Press("Enter"); err != nil {
 		log.Printf("    ERROR: Could not press Enter: %v", err)
 	}
 	
-	// Also try Tab to move to next field (some forms accept on Tab)
+	// Also try Tab to move to next field
 	if err := combo.Press("Tab"); err != nil {
 		log.Printf("    ERROR: Could not press Tab: %v", err)
 	}

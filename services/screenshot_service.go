@@ -40,27 +40,107 @@ func (s *ScreenshotService) CaptureAndUpload(page playwright.Page, screenshotTyp
 		return "", nil
 	}
 	
-	// Ensure page is fully expanded before screenshot
-	page.Evaluate(`
-		// Expand all containers to show full content
-		document.querySelectorAll('*').forEach(el => {
-			if (el.style) {
-				const computed = window.getComputedStyle(el);
-				if (computed.overflow === 'hidden' || computed.overflow === 'auto') {
-					el.style.overflow = 'visible';
-				}
-				if (computed.maxHeight && computed.maxHeight !== 'none') {
-					el.style.maxHeight = 'none';
-				}
+	log.Printf("Expanding page for full screenshot...")
+	
+	// First, get the actual content height of the iframe
+	_, err := page.Evaluate(`
+		() => {
+			const iframe = document.querySelector('#grnhse_iframe') || document.querySelector('iframe');
+			if (!iframe) {
+				return { found: false, height: 0 };
 			}
-		});
-		
-		// Scroll to load any lazy content
-		window.scrollTo(0, document.body.scrollHeight);
-		window.scrollTo(0, 0);
+			
+			// Try to get the actual content height from the iframe
+			let contentHeight = 3000; // Default height
+			try {
+				if (iframe.contentDocument && iframe.contentDocument.body) {
+					// We can access the iframe content (same origin)
+					const doc = iframe.contentDocument;
+					const body = doc.body;
+					const html = doc.documentElement;
+					
+					// Get the maximum height from various measurements
+					contentHeight = Math.max(
+						body.scrollHeight,
+						body.offsetHeight,
+						html.clientHeight,
+						html.scrollHeight,
+						html.offsetHeight
+					);
+					
+					// Add some padding for safety
+					contentHeight += 500;
+					console.log('Detected iframe content height:', contentHeight);
+				}
+			} catch (e) {
+				// Cross-origin iframe, use a large default
+				contentHeight = 5000;
+				console.log('Cross-origin iframe, using default height:', contentHeight);
+			}
+			
+			return { found: true, height: contentHeight };
+		}
 	`)
 	
-	// Take screenshot
+	if err != nil {
+		log.Printf("Warning: Could not detect iframe height: %v", err)
+	}
+	
+	// Now expand the iframe to the detected height
+	_, err = page.Evaluate(`
+		(height) => {
+			// Find and expand iframe if present
+			const iframe = document.querySelector('#grnhse_iframe') || document.querySelector('iframe');
+			if (iframe) {
+				// Set the calculated height for the iframe
+				const finalHeight = height + 'px';
+				iframe.style.height = finalHeight;
+				iframe.style.minHeight = finalHeight;
+				iframe.style.maxHeight = 'none';
+				iframe.style.width = '100%';
+				iframe.style.border = 'none';
+				
+				// Make sure iframe container can expand
+				if (iframe.parentElement) {
+					iframe.parentElement.style.height = 'auto';
+					iframe.parentElement.style.minHeight = finalHeight;
+					iframe.parentElement.style.maxHeight = 'none';
+					iframe.parentElement.style.overflow = 'visible';
+				}
+			}
+			
+			// Expand body and html to accommodate the iframe
+			const expandedHeight = (height + 1000) + 'px';
+			document.body.style.minHeight = expandedHeight;
+			document.body.style.height = 'auto';
+			document.documentElement.style.minHeight = expandedHeight;
+			document.documentElement.style.height = 'auto';
+			
+			// Remove any overflow hidden that might clip the content
+			document.body.style.overflow = 'visible';
+			document.documentElement.style.overflow = 'visible';
+			
+			// Remove any max-height restrictions
+			document.body.style.maxHeight = 'none';
+			document.documentElement.style.maxHeight = 'none';
+			
+			// Scroll to top before screenshot
+			window.scrollTo(0, 0);
+			
+			return true;
+		}
+	`, 5000)
+	
+	if err != nil {
+		log.Printf("Warning: Could not expand page: %v", err)
+	}
+	
+	// Wait a bit longer for content to render after expansion
+	time.Sleep(1000 * time.Millisecond)
+	
+	log.Printf("Taking full page screenshot...")
+	
+	// Take screenshot of the current page
 	screenshotBytes, err := page.Screenshot(playwright.PageScreenshotOptions{
 		FullPage: playwright.Bool(true),
 	})
@@ -91,7 +171,7 @@ func (s *ScreenshotService) CaptureAndUpload(page playwright.Page, screenshotTyp
 		return "", fmt.Errorf("failed to upload screenshot: %v", err)
 	}
 	
-	log.Printf("Screenshot uploaded to S3 with key: %s", filename)
+	log.Printf("Screenshot uploaded successfully: %s", filename)
 	return url, nil
 }
 

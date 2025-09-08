@@ -40,6 +40,8 @@ type SubmissionResult struct {
 }
 
 type UserProfileData struct {
+	UserID                int    `json:"user_id"`
+	ResumeHistoryID       int    `json:"resume_history_id"`
 	FullName              string `json:"full_name"`
 	FirstName             string `json:"first_name"`
 	LastName              string `json:"last_name"`
