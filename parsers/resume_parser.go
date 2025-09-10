@@ -15,6 +15,7 @@ type ResumeData struct {
 	Summary    string              `json:"summary"`
 	Experience []ExperienceEntry   `json:"experience"`
 	Education  []EducationEntry    `json:"education"`
+	Projects   []ProjectEntry      `json:"projects"`
 	Skills     []string            `json:"skills"`
 	RawText    string              `json:"raw_text,omitempty"`
 	Sections   map[string]string   `json:"sections,omitempty"`
@@ -37,6 +38,15 @@ type EducationEntry struct {
 	Field     string `json:"field"`
 	StartDate string `json:"startDate"`
 	EndDate   string `json:"endDate"`
+}
+
+// ProjectEntry represents a project entry
+type ProjectEntry struct {
+	Name         string   `json:"name"`
+	Description  string   `json:"description"`
+	Technologies []string `json:"technologies"`
+	URL          string   `json:"url"`
+	Bullets      []string `json:"bullets"`
 }
 
 // ResumeParser handles resume text parsing and data extraction
@@ -78,6 +88,7 @@ func (p *ResumeParser) Parse(rawText string) (*ResumeData, error) {
 	// Extract structured data from sections
 	p.extractExperience(resume, sections)
 	p.extractEducation(resume, sections)
+	p.extractProjects(resume, sections)
 	p.extractSkills(resume, sections)
 	p.extractSummary(resume, sections)
 
@@ -372,6 +383,172 @@ func (p *ResumeParser) parseEducationLine(edu *EducationEntry, line string) {
 	} else {
 		edu.Degree = line
 	}
+}
+
+// extractProjects parses projects from sections
+func (p *ResumeParser) extractProjects(resume *ResumeData, sections map[string]string) {
+	// Try different section names for projects
+	projectSectionNames := []string{"projects", "project", "academic projects", "personal projects", 
+		"technical projects", "key projects", "relevant projects", "portfolio"}
+	
+	var projectText string
+	for _, sectionName := range projectSectionNames {
+		if text, exists := sections[sectionName]; exists {
+			projectText = text
+			break
+		}
+	}
+	
+	if projectText == "" {
+		return
+	}
+	
+	lines := strings.Split(projectText, "\n")
+	var currentProject *ProjectEntry
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		// Check if this looks like a project header
+		if p.looksLikeProjectHeader(line) {
+			// Save previous project if exists
+			if currentProject != nil && currentProject.Name != "" {
+				resume.Projects = append(resume.Projects, *currentProject)
+			}
+			
+			// Start new project
+			currentProject = &ProjectEntry{}
+			p.parseProjectHeader(currentProject, line)
+		} else if currentProject != nil {
+			// Check for technologies line
+			if strings.HasPrefix(strings.ToLower(line), "technologies:") || 
+			   strings.HasPrefix(strings.ToLower(line), "tech:") ||
+			   strings.HasPrefix(strings.ToLower(line), "tech stack:") ||
+			   strings.HasPrefix(strings.ToLower(line), "built with:") {
+				techLine := line[strings.Index(line, ":")+1:]
+				currentProject.Technologies = p.parseTechnologies(techLine)
+			} else if strings.HasPrefix(strings.ToLower(line), "link:") || 
+			          strings.HasPrefix(strings.ToLower(line), "url:") ||
+			          strings.HasPrefix(strings.ToLower(line), "github:") {
+				currentProject.URL = strings.TrimSpace(line[strings.Index(line, ":")+1:])
+			} else if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || 
+			          strings.HasPrefix(line, "*") || strings.HasPrefix(line, "▪") {
+				// Bullet point
+				bullet := strings.TrimLeft(line, "•-*▪ ")
+				currentProject.Bullets = append(currentProject.Bullets, bullet)
+			} else if currentProject.Description == "" {
+				// First non-bullet line becomes description
+				currentProject.Description = line
+			} else {
+				// Additional lines are added as bullets
+				currentProject.Bullets = append(currentProject.Bullets, line)
+			}
+		}
+	}
+	
+	// Add last project if exists
+	if currentProject != nil && currentProject.Name != "" {
+		resume.Projects = append(resume.Projects, *currentProject)
+	}
+}
+
+// looksLikeProjectHeader checks if a line appears to be a project header
+func (p *ResumeParser) looksLikeProjectHeader(line string) bool {
+	// Project headers often have:
+	// - Title case or all caps
+	// - May include dates in parentheses
+	// - May include a separator like | or -
+	// - Usually doesn't start with a bullet point
+	
+	if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || 
+	   strings.HasPrefix(line, "*") || strings.HasPrefix(line, "▪") {
+		return false
+	}
+	
+	// Check if it contains common project keywords followed by a name
+	lowerLine := strings.ToLower(line)
+	projectIndicators := []string{
+		"project:", "title:", "name:",
+	}
+	
+	for _, indicator := range projectIndicators {
+		if strings.HasPrefix(lowerLine, indicator) {
+			return true
+		}
+	}
+	
+	// Check if line has dates (common in project headers)
+	if p.dateRegex.MatchString(line) {
+		return true
+	}
+	
+	// Check if it's in title case or all caps (common for project names)
+	words := strings.Fields(line)
+	if len(words) > 0 && len(words) <= 6 { // Project names are usually short
+		titleCase := true
+		for _, word := range words {
+			if len(word) > 3 && word[0] >= 'a' && word[0] <= 'z' {
+				titleCase = false
+				break
+			}
+		}
+		if titleCase {
+			return true
+		}
+	}
+	
+	return false
+}
+
+// parseProjectHeader extracts project name and dates from header line
+func (p *ResumeParser) parseProjectHeader(proj *ProjectEntry, line string) {
+	// Remove common prefixes
+	line = strings.TrimPrefix(strings.ToLower(line), "project:")
+	line = strings.TrimPrefix(line, "title:")
+	line = strings.TrimPrefix(line, "name:")
+	line = strings.TrimSpace(line)
+	
+	// Check for dates and remove them from the line (we no longer store dates for projects)
+	dates := p.dateRegex.FindAllString(line, -1)
+	// Remove dates from line to get clean project name
+	for _, date := range dates {
+		line = strings.ReplaceAll(line, date, "")
+	}
+	
+	// Clean up separators and extra spaces
+	line = strings.ReplaceAll(line, "|", "")
+	line = strings.ReplaceAll(line, "-", " ")
+	line = strings.ReplaceAll(line, "()", "")
+	line = strings.ReplaceAll(line, "[]", "")
+	line = strings.TrimSpace(line)
+	
+	// What remains is the project name
+	proj.Name = line
+}
+
+// parseTechnologies extracts technologies from a comma or pipe separated string
+func (p *ResumeParser) parseTechnologies(techString string) []string {
+	var technologies []string
+	
+	// Replace common separators with comma
+	techString = strings.ReplaceAll(techString, "|", ",")
+	techString = strings.ReplaceAll(techString, ";", ",")
+	techString = strings.ReplaceAll(techString, " and ", ",")
+	techString = strings.ReplaceAll(techString, " & ", ",")
+	
+	// Split by comma and clean each technology
+	techs := strings.Split(techString, ",")
+	for _, tech := range techs {
+		tech = strings.TrimSpace(tech)
+		if tech != "" {
+			technologies = append(technologies, tech)
+		}
+	}
+	
+	return technologies
 }
 
 // extractSkills parses skills from sections

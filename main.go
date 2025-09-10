@@ -49,6 +49,7 @@ func main() {
 	userModel := models.NewUserModel(db)
 	resumeHistoryModel := models.NewResumeHistoryModel(db)
 	resumeModel := models.NewResumeModel(db)
+	projectModel := models.NewProjectModel(db)
 
 	// Initialize services
 	jwtService := services.NewJWTService(config.GetAppConfig().JWTSecret)
@@ -62,6 +63,7 @@ func main() {
 	authController := controllers.NewAuthController(userModel, jwtService)
 	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
 	userController := controllers.NewUserController(userModel, resumeModel)
+	projectController := controllers.NewProjectController(projectModel)
 
 	r := gin.Default()
 	
@@ -228,6 +230,12 @@ func main() {
 		
 		// Protected resume generation (saves to history)
 		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
+		
+		// Project routes
+		protected.GET("/projects/resume/:resumeId", projectController.GetProjectsByResumeID)
+		protected.POST("/projects", projectController.CreateProject)
+		protected.PUT("/projects/:id", projectController.UpdateProject)
+		protected.DELETE("/projects/:id", projectController.DeleteProject)
 		
 		// Job automation routes removed - feature in development
 	}
