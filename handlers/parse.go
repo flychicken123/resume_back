@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"resumeai/parsers"
@@ -122,33 +123,23 @@ func ParseResume(c *gin.Context) {
 			"method":   "go_parser",
 		}
 	}
-	// Method 3: Use our Go parser for structured extraction (primary method)
-	fmt.Printf("[parse] Attempting Go-based structured parsing...\n")
+	// Skip the complex Go parser and go straight to AI for better accuracy
+	fmt.Printf("[parse] Using AI for resume extraction...\n")
 	
-	goParser := parsers.NewResumeParser()
-	structuredData, parseErr := goParser.Parse(rawText)
+	// Extract basic contact info if available
+	email := ""
+	phone := ""
 	
-	if parseErr == nil && structuredData != nil {
-		fmt.Printf("[parse] Go parsing successful!\n")
-		// Clean up temp file
-		_ = os.Remove(tempFile)
-		
-		c.JSON(200, gin.H{
-			"structured": structuredData,
-			"extracted":  extracted,
-			"method":     "go_primary",
-		})
-		return
+	// Try to extract email and phone with simple regex
+	emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+	if match := emailRegex.FindString(rawText); match != "" {
+		email = match
 	}
 	
-	fmt.Printf("[parse] Go parsing failed: %v, falling back to AI...\n", parseErr)
-	
-	// Extract basic contact info for AI fallback
-	email, _ := extracted["email"].(string)
-	phone, _ := extracted["phone"].(string)
-
-	// Method 4: Fallback to AI parsing
-	fmt.Printf("[parse] Using AI as final fallback...\n")
+	phoneRegex := regexp.MustCompile(`\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}`)
+	if match := phoneRegex.FindString(rawText); match != "" {
+		phone = match
+	}
 	schema := `{
       "name": string | null,
       "email": string | null,
@@ -163,21 +154,59 @@ func ParseResume(c *gin.Context) {
       "skills": string[]
     }`
 
-	prompt := fmt.Sprintf(`Extract resume information from the following text and return ONLY strict JSON matching this schema (no markdown, no extra text). Do not invent data. Unknown fields must be null.
+	prompt := fmt.Sprintf(`Extract resume information from the following text and return ONLY valid JSON matching this schema. No markdown formatting, no code blocks, no explanations - just the JSON object.
 
 Schema:
 %s
 
-Text:
+Important extraction rules:
+1. For experience entries:
+   - company: The company name (e.g., "TikTok", "eBay, Inc", "T-Mobile, Inc")
+   - role: The job title (e.g., "Software Engineering Tech Lead", "Senior Software Engineer")
+   - location: The city and state (e.g., "Seattle, WA", "Austin, TX")
+   - startDate: Start date in original format (e.g., "Nov 2022", "May 2022")
+   - endDate: End date or "Present" if current (e.g., "Dec 2024", "Present")
+   - bullets: Array of bullet points describing responsibilities (each point as separate string)
+
+2. For education entries:
+   - school: University/college name (e.g., "Texas Tech University")
+   - degree: Degree type (e.g., "B.S", "Bachelor of Science", "M.S")
+   - field: Field of study (e.g., "Electronic Engineering", "Computer Science")
+   - startDate: Start year or date (e.g., "Aug 2011", "2011")
+   - endDate: Graduation year or date (e.g., "May 2014", "2014")
+
+3. For skills: Extract as array of individual skills
+
+4. If a field is not found, use null, not empty string
+
+Resume text:
 %s
 
-Hints:
-- If a value is already known, keep it. Known email: %s; known phone: %s.
-- Dates can be in formats like "Nov 2022 - Present".`, schema, rawText, email, phone)
+Known contact info - use these if found:
+Email: %s
+Phone: %s`, schema, rawText, email, phone)
 
+	fmt.Printf("[parse] Calling Gemini AI for extraction...\n")
 	aiResp, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {
-		// Graceful fallback: build a minimal structured object from deterministic extraction
+		fmt.Printf("[parse] AI extraction failed: %v\n", err)
+		fmt.Printf("[parse] Using simple fallback parser instead...\n")
+		
+		// Simple fallback parser - better than nothing
+		structured := parseResumeSimple(rawText, email, phone)
+		
+		// Clean up temp file
+		_ = os.Remove(tempFile)
+		
+		c.JSON(200, gin.H{
+			"structured": structured,
+			"extracted":  extracted,
+			"method":     "simple_fallback",
+			"aiError":    "AI quota exceeded - using simple parser",
+		})
+		return
+		
+		// Old complex fallback code below (not used)
 		sections, _ := extracted["sections"].(map[string]interface{})
 		getSection := func(key string) string {
 			if sections == nil {
@@ -243,7 +272,7 @@ Hints:
 			})
 		}
 
-		structured := map[string]interface{}{
+		structuredFallback := map[string]interface{}{
 			"name":       nil,
 			"email":      email,
 			"phone":      phone,
@@ -254,13 +283,15 @@ Hints:
 		}
 
 		c.JSON(200, gin.H{
-			"structured": structured,
+			"structured": structuredFallback,
 			"extracted":  extracted,
 			"aiError":    err.Error(),
 		})
 		return
 	}
 
+	fmt.Printf("[parse] AI extraction successful, response length: %d\n", len(aiResp))
+	
 	cleaned := strings.TrimSpace(aiResp)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
@@ -269,10 +300,13 @@ Hints:
 
 	var structured map[string]interface{}
 	if err := json.Unmarshal([]byte(cleaned), &structured); err != nil {
+		fmt.Printf("[parse] Failed to parse AI JSON response: %v\n", err)
+		fmt.Printf("[parse] Raw AI response: %s\n", aiResp)
 		c.JSON(500, gin.H{"error": "AI output was not valid JSON", "raw": aiResp})
 		return
 	}
 
+	fmt.Printf("[parse] Successfully parsed AI response into structured data\n")
 	// Clean up temp file
 	_ = os.Remove(tempFile)
 
@@ -324,4 +358,159 @@ func fallbackToPython(tempFile string) map[string]interface{} {
 
 	fmt.Printf("[parse] Python extraction successful\n")
 	return extracted
+}
+
+// parseResumeSimple is a simple fallback parser when AI is not available
+func parseResumeSimple(text string, email string, phone string) map[string]interface{} {
+	lines := strings.Split(text, "\n")
+	
+	// Extract name (usually first non-empty line)
+	name := ""
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.Contains(line, "@") && !strings.Contains(line, "Resume") {
+			// Likely the name
+			name = line
+			break
+		}
+	}
+	
+	// Initialize result structure
+	result := map[string]interface{}{
+		"name":       name,
+		"email":      email,
+		"phone":      phone,
+		"summary":    nil,
+		"experience": []map[string]interface{}{},
+		"education":  []map[string]interface{}{},
+		"skills":     []string{},
+	}
+	
+	// Simple section detection
+	currentSection := ""
+	var currentExperience map[string]interface{}
+	var currentEducation map[string]interface{}
+	var bullets []string
+	
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		lineLower := strings.ToLower(line)
+		
+		// Detect sections
+		if strings.Contains(lineLower, "experience") || strings.Contains(lineLower, "employment") {
+			currentSection = "experience"
+			continue
+		} else if strings.Contains(lineLower, "education") {
+			currentSection = "education"
+			continue
+		} else if strings.Contains(lineLower, "skill") {
+			currentSection = "skills"
+			continue
+		} else if strings.Contains(lineLower, "summary") || strings.Contains(lineLower, "objective") {
+			currentSection = "summary"
+			continue
+		}
+		
+		// Process content based on current section
+		switch currentSection {
+		case "experience":
+			// Look for company names (often have Inc, LLC, etc)
+			if strings.Contains(line, "Inc") || strings.Contains(line, "LLC") || 
+			   strings.Contains(line, "Corp") || strings.Contains(line, "Company") ||
+			   (len(line) < 50 && i < len(lines)-1 && !strings.HasPrefix(line, "•")) {
+				// Save previous experience if exists
+				if currentExperience != nil {
+					if len(bullets) > 0 {
+						currentExperience["bullets"] = bullets
+					}
+					result["experience"] = append(result["experience"].([]map[string]interface{}), currentExperience)
+					bullets = []string{}
+				}
+				
+				// Start new experience
+				currentExperience = map[string]interface{}{
+					"company":   line,
+					"role":      nil,
+					"location":  nil,
+					"startDate": nil,
+					"endDate":   nil,
+				}
+			} else if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") {
+				// Bullet point
+				bullet := strings.TrimPrefix(strings.TrimPrefix(line, "•"), "-")
+				bullet = strings.TrimSpace(bullet)
+				bullets = append(bullets, bullet)
+			} else if currentExperience != nil && currentExperience["role"] == nil {
+				// Likely the job title
+				currentExperience["role"] = line
+			}
+			
+		case "education":
+			// Look for university/college
+			if strings.Contains(lineLower, "university") || strings.Contains(lineLower, "college") ||
+			   strings.Contains(lineLower, "institute") || strings.Contains(lineLower, "school") {
+				// Save previous education if exists
+				if currentEducation != nil {
+					result["education"] = append(result["education"].([]map[string]interface{}), currentEducation)
+				}
+				
+				// Start new education
+				currentEducation = map[string]interface{}{
+					"school":    line,
+					"degree":    nil,
+					"field":     nil,
+					"startDate": nil,
+					"endDate":   nil,
+				}
+			} else if currentEducation != nil && currentEducation["degree"] == nil {
+				// Likely the degree
+				if strings.Contains(lineLower, "bachelor") || strings.Contains(lineLower, "master") ||
+				   strings.Contains(lineLower, "b.s") || strings.Contains(lineLower, "m.s") ||
+				   strings.Contains(lineLower, "ph.d") || strings.Contains(lineLower, "degree") {
+					currentEducation["degree"] = line
+				}
+			}
+			
+		case "skills":
+			// Add to skills - split by comma if present
+			if strings.Contains(line, ",") {
+				skills := strings.Split(line, ",")
+				for _, skill := range skills {
+					skill = strings.TrimSpace(skill)
+					if skill != "" && !strings.HasPrefix(skill, "•") {
+						result["skills"] = append(result["skills"].([]string), skill)
+					}
+				}
+			} else if !strings.HasPrefix(line, "•") {
+				result["skills"] = append(result["skills"].([]string), line)
+			}
+			
+		case "summary":
+			// Add to summary
+			if result["summary"] == nil {
+				result["summary"] = line
+			} else {
+				result["summary"] = result["summary"].(string) + " " + line
+			}
+		}
+	}
+	
+	// Save last experience if exists
+	if currentExperience != nil {
+		if len(bullets) > 0 {
+			currentExperience["bullets"] = bullets
+		}
+		result["experience"] = append(result["experience"].([]map[string]interface{}), currentExperience)
+	}
+	
+	// Save last education if exists
+	if currentEducation != nil {
+		result["education"] = append(result["education"].([]map[string]interface{}), currentEducation)
+	}
+	
+	return result
 }

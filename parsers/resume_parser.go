@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode"
 )
 
 // ResumeData represents the structured resume information
@@ -73,6 +74,8 @@ func (p *ResumeParser) Parse(rawText string) (*ResumeData, error) {
 		return nil, fmt.Errorf("empty resume text")
 	}
 
+	fmt.Printf("[ResumeParser] Starting parse of %d characters\n", len(rawText))
+	
 	resume := &ResumeData{
 		RawText:  rawText,
 		Sections: make(map[string]string),
@@ -80,13 +83,24 @@ func (p *ResumeParser) Parse(rawText string) (*ResumeData, error) {
 
 	// Extract basic contact information
 	p.extractContactInfo(resume, rawText)
+	fmt.Printf("[ResumeParser] Contact: Name=%s, Email=%s, Phone=%s\n", resume.Name, resume.Email, resume.Phone)
 
 	// Split text into sections
 	sections := p.extractSections(rawText)
 	resume.Sections = sections
+	fmt.Printf("[ResumeParser] Found %d sections\n", len(sections))
+	for key := range sections {
+		fmt.Printf("  - Section: %s\n", key)
+	}
 
 	// Extract structured data from sections
 	p.extractExperience(resume, sections)
+	fmt.Printf("[ResumeParser] Extracted %d experiences\n", len(resume.Experience))
+	for i, exp := range resume.Experience {
+		fmt.Printf("  Exp %d: Role='%s', Company='%s', Location='%s', Dates='%s-%s'\n", 
+			i+1, exp.Role, exp.Company, exp.Location, exp.StartDate, exp.EndDate)
+	}
+	
 	p.extractEducation(resume, sections)
 	p.extractProjects(resume, sections)
 	p.extractSkills(resume, sections)
@@ -142,12 +156,12 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 	sections := make(map[string]string)
 	lines := strings.Split(text, "\n")
 
-	// Common section headers
+	// Common section headers - order matters for overlapping keywords
 	sectionHeaders := map[string][]string{
-		"experience": {"experience", "work experience", "employment", "professional experience", "career history"},
+		"experience": {"working experience", "work experience", "professional experience", "employment history", "career history", "experience"},
 		"education":  {"education", "academic background", "qualifications", "degrees"},
-		"skills":     {"skills", "technical skills", "competencies", "expertise", "technologies"},
-		"summary":    {"summary", "profile", "objective", "about", "professional summary", "career summary"},
+		"skills":     {"technical skills", "core skills", "skills & expertise", "skills", "competencies"},
+		"summary":    {"professional summary", "career summary", "summary", "profile", "objective", "about"},
 		"projects":   {"projects", "portfolio", "personal projects"},
 		"awards":     {"awards", "honors", "achievements", "recognition"},
 	}
@@ -155,24 +169,60 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 	currentSection := ""
 	currentContent := []string{}
 
-	for _, line := range lines {
+	for i, line := range lines {
+		originalLine := line
 		line = strings.TrimSpace(line)
-		if line == "" {
+		
+		// Keep empty lines within sections to preserve structure
+		if line == "" && currentSection != "" {
+			currentContent = append(currentContent, "")
+			continue
+		} else if line == "" {
 			continue
 		}
 
 		// Check if this line is a section header
 		isHeader := false
+		// Normalize the line for comparison (remove extra spaces)
+		lineLower := strings.ToLower(strings.Join(strings.Fields(line), " "))
+		
+		// Skip lines that are too long to be headers (likely content)
+		if len(line) > 50 {
+			if currentSection != "" {
+				currentContent = append(currentContent, originalLine)
+			}
+			continue
+		}
+		
+		// Check each section type
 		for sectionKey, headers := range sectionHeaders {
 			for _, header := range headers {
-				if strings.Contains(strings.ToLower(line), header) && len(line) < 50 {
+				// Normalize the header too
+				headerNorm := strings.ToLower(strings.Join(strings.Fields(header), " "))
+				
+				// More flexible matching for section headers
+				// Must be a standalone header or very short line
+				// Avoid false positives like "Tech Stack" matching "skills"
+				if (lineLower == headerNorm || 
+				    lineLower == headerNorm + ":" || 
+				    lineLower == headerNorm + " :" ||
+				    strings.HasPrefix(lineLower, "• " + headerNorm) ||
+				    strings.HasPrefix(lineLower, "- " + headerNorm) ||
+				    strings.HasPrefix(lineLower, headerNorm + " ") && len(lineLower) < len(headerNorm) + 10) &&
+				   !strings.Contains(lineLower, "tech stack") &&
+				   !strings.Contains(lineLower, "skill set") &&
+				   !strings.Contains(lineLower, "years of experience") {
+					
 					// Save previous section
 					if currentSection != "" && len(currentContent) > 0 {
 						sections[currentSection] = strings.Join(currentContent, "\n")
+						fmt.Printf("[Section] Saved %s section with %d lines\n", currentSection, len(currentContent))
 					}
+					
 					currentSection = sectionKey
 					currentContent = []string{}
 					isHeader = true
+					fmt.Printf("[Section] Found %s header at line %d: %s\n", sectionKey, i, line)
 					break
 				}
 			}
@@ -181,8 +231,14 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 			}
 		}
 
+		// Add line to current section if not a header
 		if !isHeader && currentSection != "" {
-			currentContent = append(currentContent, line)
+			currentContent = append(currentContent, originalLine)
+		} else if !isHeader && currentSection == "" {
+			// Before first section - might be contact info
+			if i < 10 {
+				// Keep for contact extraction
+			}
 		}
 	}
 
@@ -204,51 +260,360 @@ func (p *ResumeParser) extractExperience(resume *ResumeData, sections map[string
 	lines := strings.Split(expText, "\n")
 	var experiences []ExperienceEntry
 	var currentExp *ExperienceEntry
+	
+	fmt.Printf("[ExtractExperience] Processing %d lines from experience section\n", len(lines))
+	
+	// Debug: show all lines we're processing
+	if len(lines) < 100 {
+		fmt.Println("[ExtractExperience] All lines in section:")
+		for idx, l := range lines {
+			fmt.Printf("  %3d: %s\n", idx, l)
+		}
+	}
 
-	for _, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		
+		// Clean up PDF artifacts
+		line = strings.ReplaceAll(line, "| Company", "")
+		line = strings.ReplaceAll(line, "|Company", "")
 		line = strings.TrimSpace(line)
-		if line == "" {
+		
+		if line == "" || line == "Company" {
 			continue
 		}
 
-		// Check if this looks like a job title/company line
-		if p.looksLikeJobHeader(line) {
-			// Save previous experience
+		// Debug output
+		fmt.Printf("  Line %d: %s\n", i, line)
+		
+		// Skip work type indicators early
+		lineLower := strings.ToLower(strings.TrimSpace(line))
+		if lineLower == "remote" || lineLower == "hybrid" || lineLower == "on-site" || 
+		   lineLower == "onsite" || lineLower == "contract" || lineLower == "freelance" {
+			// This is a work location/type, not a company
+			if currentExp != nil && currentExp.Location == "" {
+				currentExp.Location = line
+				fmt.Printf("    -> Work type/location: %s\n", line)
+			}
+			continue
+		}
+		
+		// Skip if this is clearly a date line (not a company)
+		if p.dateRegex.MatchString(line) && strings.Contains(line, "-") && len(strings.Fields(line)) <= 3 {
+			// This is just a date range, not a company
 			if currentExp != nil {
+				fmt.Printf("    -> Detected as DATE line\n")
+				p.extractDatesFromLine(currentExp, line)
+			}
+			continue
+		}
+		
+		// Check context to determine if this is likely a company name
+		// Look at surrounding lines for clues
+		isLikelyCompany := false
+		
+		// First check: does it look like a company based on patterns?
+		if p.looksLikeCompany(line) {
+			isLikelyCompany = true
+		} else if len(line) < 50 && !strings.HasPrefix(line, "•") && !strings.HasPrefix(line, "-") && 
+		         !p.dateRegex.MatchString(line) {  // Make sure it's not a date
+			// Check if next non-empty line looks like a role
+			for j := i+1; j < len(lines) && j < i+3; j++ {
+				nextLine := strings.TrimSpace(lines[j])
+				if nextLine != "" {
+					if p.looksLikeRole(nextLine) {
+						isLikelyCompany = true
+						fmt.Printf("    -> Could be company (next line is role)\n")
+					}
+					break
+				}
+			}
+			
+			// Third check: is this a new company after a complete experience?
+			if !isLikelyCompany && len(strings.Fields(line)) <= 4 && len(line) > 0 && unicode.IsUpper(rune(line[0])) {
+				// If we have a previous complete experience, this might be a new company
+				if currentExp != nil && currentExp.Role != "" && len(currentExp.Bullets) > 0 {
+					isLikelyCompany = true
+					fmt.Printf("    -> Could be company (after complete experience)\n")
+				} else if currentExp == nil && !p.looksLikeRole(line) {
+					// Or if we don't have any current experience yet (first company)
+					isLikelyCompany = true
+					fmt.Printf("    -> Could be company (first in list)\n")
+				}
+			}
+		}
+		
+		// Check if this is a company name (often comes first)
+		if isLikelyCompany {
+			fmt.Printf("    -> Detected as COMPANY\n")
+			// Save previous experience if it has content
+			if currentExp != nil && (currentExp.Role != "" || len(currentExp.Bullets) > 0) {
 				experiences = append(experiences, *currentExp)
 			}
-
-			// Parse new experience
-			currentExp = &ExperienceEntry{}
-			p.parseJobHeader(currentExp, line)
+			
+			// Start new experience with company
+			currentExp = &ExperienceEntry{
+				Company: line,
+			}
+			
+			// Look ahead for role (usually next non-empty line)
+			foundRole := false
+			for j := i + 1; j < len(lines) && j < i + 5; j++ {
+				nextLine := strings.TrimSpace(lines[j])
+				nextLine = strings.ReplaceAll(nextLine, "| Company", "")
+				nextLine = strings.ReplaceAll(nextLine, "|Company", "")
+				nextLine = strings.TrimSpace(nextLine)
+				
+				if nextLine == "" || nextLine == "Company" {
+					continue
+				}
+				
+				// Check if this is a role or contains role keywords
+				if p.looksLikeRole(nextLine) || strings.Contains(nextLine, ",") {
+					fmt.Printf("    -> Next line is ROLE: %s\n", nextLine)
+					currentExp.Role = nextLine
+					// Extract dates from role line
+					p.extractDatesFromLine(currentExp, nextLine)
+					// Clean role after extracting dates
+					currentExp.Role = p.cleanRoleText(currentExp.Role)
+					i = j // Skip the role line
+					foundRole = true
+					break
+				} else if p.dateRegex.MatchString(nextLine) && strings.Contains(nextLine, "-") {
+					// This might be a date line, look for role before it
+					continue
+				} else {
+					// Not a role, stop looking
+					break
+				}
+			}
+			
+			// If we didn't find a role but this is a known company, keep it
+			if !foundRole && currentExp != nil && currentExp.Company != "" {
+				fmt.Printf("    -> Company without immediate role found\n")
+			}
+		} else if p.looksLikeRole(line) && (currentExp == nil || currentExp.Role == "") {
+			fmt.Printf("    -> Detected as ROLE\n")
+			// This might be a role without company or role for current company
+			if currentExp == nil {
+				currentExp = &ExperienceEntry{}
+			}
+			currentExp.Role = line
+			p.extractDatesFromLine(currentExp, line)
+			currentExp.Role = p.cleanRoleText(currentExp.Role)
+		} else if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") {
+			// This is a bullet point
+			if currentExp != nil {
+				bullet := strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(line, "•"), "-"), "*")
+				bullet = strings.TrimSpace(bullet)
+				if bullet != "" {
+					fmt.Printf("    -> Added as BULLET\n")
+					currentExp.Bullets = append(currentExp.Bullets, bullet)
+				}
+			}
 		} else if currentExp != nil {
-			// This is likely a bullet point or description
-			if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") {
-				currentExp.Bullets = append(currentExp.Bullets, strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(line, "•"), "-"), "*"))
+			// Check if this line has dates (might be a standalone date line)
+			if p.dateRegex.MatchString(line) && strings.Contains(line, "-") {
+				fmt.Printf("    -> Detected as DATE line\n")
+				p.extractDatesFromLine(currentExp, line)
+			} else if strings.ToLower(line) == "remote" || strings.ToLower(line) == "hybrid" || 
+					  strings.Contains(strings.ToLower(line), "on-site") || strings.Contains(strings.ToLower(line), "onsite") {
+				// This is a work location/type indicator, add to location
+				fmt.Printf("    -> Detected as LOCATION/TYPE\n")
+				if currentExp.Location == "" {
+					currentExp.Location = line
+				}
 			} else {
-				currentExp.Bullets = append(currentExp.Bullets, line)
+				// This is probably a bullet point without marker or continuation
+				if len(line) > 20 { // Skip very short lines that might be fragments
+					fmt.Printf("    -> Added as BULLET (no marker)\n")
+					currentExp.Bullets = append(currentExp.Bullets, line)
+				} else if len(line) > 0 && !p.dateRegex.MatchString(line) {
+					// Short line that's not a date - might be a continuation
+					fmt.Printf("    -> Short line, might be continuation: %s\n", line)
+				}
+			}
+		} else {
+			// No current experience - this might be the start of a new one
+			// Check if it's not just a fragment
+			if len(line) > 10 && !p.dateRegex.MatchString(line) {
+				fmt.Printf("    -> Orphan line (no current exp): %s\n", line)
 			}
 		}
 	}
 
 	// Save last experience
-	if currentExp != nil {
+	if currentExp != nil && (currentExp.Role != "" || currentExp.Company != "" || len(currentExp.Bullets) > 0) {
 		experiences = append(experiences, *currentExp)
 	}
 
-	resume.Experience = experiences
+	// Post-process: Try to merge experiences and fix date associations
+	var mergedExperiences []ExperienceEntry
+	for i := 0; i < len(experiences); i++ {
+		exp := experiences[i]
+		
+		// If this entry has only a company and the next has only a role, merge them
+		if exp.Company != "" && exp.Role == "" && i+1 < len(experiences) {
+			nextExp := experiences[i+1]
+			if nextExp.Role != "" && nextExp.Company == "" {
+				// Merge
+				exp.Role = nextExp.Role
+				exp.StartDate = nextExp.StartDate
+				exp.EndDate = nextExp.EndDate
+				exp.Location = nextExp.Location
+				exp.Bullets = append(exp.Bullets, nextExp.Bullets...)
+				mergedExperiences = append(mergedExperiences, exp)
+				i++ // Skip the next entry since we merged it
+				continue
+			}
+		}
+		
+		// If this experience has no dates but the next one only has dates, merge them
+		if exp.StartDate == "" && exp.EndDate == "" && i+1 < len(experiences) {
+			nextExp := experiences[i+1]
+			if nextExp.StartDate != "" || nextExp.EndDate != "" {
+				if nextExp.Company == "" && nextExp.Role == "" && len(nextExp.Bullets) == 0 {
+					// Next entry is just dates, merge them
+					exp.StartDate = nextExp.StartDate
+					exp.EndDate = nextExp.EndDate
+					if nextExp.Location != "" {
+						exp.Location = nextExp.Location
+					}
+					mergedExperiences = append(mergedExperiences, exp)
+					i++ // Skip the next entry
+					continue
+				}
+			}
+		}
+		
+		// Don't add entries that are just location indicators or dates
+		if (exp.Company == "Remote" || p.dateRegex.MatchString(exp.Company)) && 
+		   exp.Role == "" && len(exp.Bullets) == 0 {
+			// This is just a location indicator, skip it
+			// Transfer dates to previous experience if available
+			if len(mergedExperiences) > 0 && (exp.StartDate != "" || exp.EndDate != "") {
+				lastExp := &mergedExperiences[len(mergedExperiences)-1]
+				if lastExp.StartDate == "" {
+					lastExp.StartDate = exp.StartDate
+				}
+				if lastExp.EndDate == "" {
+					lastExp.EndDate = exp.EndDate
+				}
+			}
+			continue
+		}
+		
+		// Add as-is if no merge needed
+		mergedExperiences = append(mergedExperiences, exp)
+	}
+
+	resume.Experience = mergedExperiences
+	
+	fmt.Printf("[ExtractExperience] Final count: %d experiences\n", len(resume.Experience))
+}
+
+// looksLikeCompany checks if a line looks like a company name based on patterns and context
+func (p *ResumeParser) looksLikeCompany(line string) bool {
+	// Skip if too long (probably a description)
+	if len(line) > 100 {
+		return false
+	}
+	
+	// Skip if it's a bullet point or description
+	if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") {
+		return false
+	}
+	
+	// Skip common location/work type indicators
+	lineLower := strings.ToLower(line)
+	skipWords := []string{"remote", "hybrid", "on-site", "onsite", "contract", "freelance", "part-time", "full-time", "internship", "temporary"}
+	for _, word := range skipWords {
+		if lineLower == word {
+			return false
+		}
+	}
+	
+	// Company suffix patterns (Inc, LLC, etc.)
+	companyPatterns := []string{
+		`\bInc\b\.?`, `\bLLC\b`, `\bLtd\b\.?`, `\bCorp\b\.?`, 
+		`\bCorporation\b`, `\bCompany\b`, `\bCo\b\.`, 
+		`\bTechnologies\b`, `\bSolutions\b`, `\bServices\b`, 
+		`\bGroup\b`, `\bPartners\b`, `\bLabs?\b`, `\bStudios?\b`,
+		`\bEnterprise\b`, `\bSystems\b`, `\bNetworks?\b`,
+	}
+	
+	for _, pattern := range companyPatterns {
+		if regexp.MustCompile(`(?i)`+pattern).MatchString(line) {
+			return true
+		}
+	}
+	
+	// Don't treat single common words as companies
+	if len(strings.Fields(line)) == 1 && len(line) < 15 {
+		return false
+	}
+	
+	return false
+}
+
+// looksLikeRole checks if a line looks like a job role/title
+func (p *ResumeParser) looksLikeRole(line string) bool {
+	// Role keywords
+	roleKeywords := []string{
+		"Engineer", "Developer", "Manager", "Lead", "Architect",
+		"Analyst", "Designer", "Consultant", "Director", "Specialist",
+		"Coordinator", "Administrator", "Officer", "Executive", "Associate",
+		"Senior", "Junior", "Staff", "Principal", "Tech", "Software", "Data",
+		"Technical", "Product", "Project", "Program", "Systems", "Solutions",
+		"Infrastructure", "DevOps", "Backend", "Frontend", "Full Stack",
+	}
+	
+	for _, keyword := range roleKeywords {
+		if strings.Contains(line, keyword) {
+			return true
+		}
+	}
+	
+	// Check if line ends with a comma and date (common pattern: "Software Engineer, May 2022 - Nov 2022")
+	if strings.Contains(line, ",") && p.dateRegex.MatchString(line) {
+		return true
+	}
+	
+	return false
 }
 
 // looksLikeJobHeader determines if a line looks like a job title/company
 func (p *ResumeParser) looksLikeJobHeader(line string) bool {
-	// Look for patterns like:
-	// "Software Engineer at Google"
-	// "Marketing Manager | Adobe"
-	// "Data Scientist - Facebook, 2020-2022"
+	// Skip location-only lines (e.g., "Seattle, WA")
+	locationPattern := regexp.MustCompile(`^[A-Z][a-z]+,?\s*[A-Z]{2}$`)
+	if locationPattern.MatchString(strings.TrimSpace(line)) {
+		return false
+	}
 	
-	keywords := []string{"at", "with", "|", "-", "•"}
-	for _, keyword := range keywords {
-		if strings.Contains(line, keyword) {
+	// Look for job title keywords
+	jobKeywords := []string{"engineer", "developer", "manager", "lead", "architect", 
+		"analyst", "designer", "consultant", "director", "specialist", "coordinator",
+		"senior", "junior", "staff", "principal", "tech", "software", "data"}
+	
+	lineLower := strings.ToLower(line)
+	for _, keyword := range jobKeywords {
+		if strings.Contains(lineLower, keyword) {
+			return true
+		}
+	}
+	
+	// Look for company name patterns
+	companyKeywords := []string{"inc", "corp", "llc", "ltd", "company", "technologies", "solutions"}
+	for _, keyword := range companyKeywords {
+		if strings.Contains(lineLower, keyword) {
+			return true
+		}
+	}
+	
+	// Look for separator patterns
+	separators := []string{" at ", " with ", " | ", " - ", " • "}
+	for _, sep := range separators {
+		if strings.Contains(line, sep) {
 			return true
 		}
 	}
@@ -258,16 +623,58 @@ func (p *ResumeParser) looksLikeJobHeader(line string) bool {
 		return true
 	}
 
-	// If it's a short line (likely a title)
-	if len(strings.Fields(line)) <= 6 && len(line) > 10 {
+	// If it's a short-to-medium line (likely a title or company)
+	// but not too short (avoid single words)
+	wordCount := len(strings.Fields(line))
+	if wordCount >= 2 && wordCount <= 8 && len(line) > 15 {
 		return true
 	}
 
 	return false
 }
 
+// extractDatesFromLine extracts dates from a line and updates the experience entry
+func (p *ResumeParser) extractDatesFromLine(exp *ExperienceEntry, line string) {
+	dates := p.dateRegex.FindAllString(line, -1)
+	if len(dates) >= 2 {
+		exp.StartDate = dates[0]
+		exp.EndDate = dates[len(dates)-1]
+	} else if len(dates) == 1 {
+		if strings.Contains(strings.ToLower(line), "present") ||
+		   strings.Contains(strings.ToLower(line), "current") {
+			exp.EndDate = "Present"
+			exp.StartDate = dates[0]
+		} else {
+			exp.StartDate = dates[0]
+		}
+	}
+}
+
+// cleanRoleText removes dates and cleans up role text
+func (p *ResumeParser) cleanRoleText(role string) string {
+	// Remove dates
+	dates := p.dateRegex.FindAllString(role, -1)
+	for _, date := range dates {
+		role = strings.Replace(role, date, "", 1)
+	}
+	
+	// Clean up
+	role = strings.TrimSpace(role)
+	role = strings.TrimSuffix(role, ",")
+	role = strings.TrimSuffix(role, "-")
+	role = strings.TrimSpace(role)
+	role = regexp.MustCompile(`\s+`).ReplaceAllString(role, " ")
+	
+	return role
+}
+
 // parseJobHeader extracts role, company, and dates from a job header line
 func (p *ResumeParser) parseJobHeader(exp *ExperienceEntry, line string) {
+	// Clean up any artifacts from PDF extraction
+	line = strings.ReplaceAll(line, "| Company", "")
+	line = strings.ReplaceAll(line, "|Company", "")
+	line = strings.ReplaceAll(line, "Company", "")
+	
 	// Extract dates first
 	dates := p.dateRegex.FindAllString(line, -1)
 	if len(dates) >= 2 {
@@ -291,20 +698,64 @@ func (p *ResumeParser) parseJobHeader(exp *ExperienceEntry, line string) {
 	line = strings.TrimSpace(line)
 	line = regexp.MustCompile(`\s+`).ReplaceAllString(line, " ")
 
-	// Try to split role and company
-	separators := []string{" at ", " with ", " | ", " - ", " • "}
+	// Try to split role and company with more specific patterns
+	// First try comma-based separation (common format: "Role, Company")
+	if strings.Contains(line, ",") && !strings.Contains(line, " at ") {
+		parts := strings.SplitN(line, ",", 2)
+		if len(parts) == 2 {
+			// Check if first part looks like a role (usually longer)
+			part1 := strings.TrimSpace(parts[0])
+			part2 := strings.TrimSpace(parts[1])
+			
+			// Remove location if present (e.g., "Seattle, WA")
+			locationPattern := regexp.MustCompile(`\b[A-Z][a-z]+,?\s+[A-Z]{2}\b`)
+			part2 = locationPattern.ReplaceAllString(part2, "")
+			part2 = strings.TrimSpace(part2)
+			
+			if part2 != "" {
+				exp.Role = part1
+				exp.Company = part2
+				return
+			}
+		}
+	}
+	
+	// Try standard separators
+	separators := []string{" at ", " with ", " | ", " - ", " • ", " – "}
 	for _, sep := range separators {
 		if strings.Contains(line, sep) {
 			parts := strings.Split(line, sep)
 			if len(parts) >= 2 {
 				exp.Role = strings.TrimSpace(parts[0])
 				exp.Company = strings.TrimSpace(parts[1])
+				
+				// Clean up company name
+				exp.Company = strings.TrimSuffix(exp.Company, ".")
+				exp.Company = strings.TrimSpace(exp.Company)
 				return
 			}
 		}
 	}
 
-	// If no separator found, assume the whole line is the role
+	// If no separator found, try to identify known company names
+	knownCompanies := []string{"Amazon", "Google", "Microsoft", "Meta", "Apple", "Netflix", 
+		"Facebook", "Twitter", "LinkedIn", "Adobe", "Oracle", "IBM", "Intel", "Cisco",
+		"Salesforce", "Uber", "Airbnb", "Tesla", "SpaceX", "Twillio", "Twilio"}
+	
+	lineLower := strings.ToLower(line)
+	for _, company := range knownCompanies {
+		if strings.Contains(lineLower, strings.ToLower(company)) {
+			// Found a known company name
+			idx := strings.Index(lineLower, strings.ToLower(company))
+			if idx > 0 {
+				exp.Role = strings.TrimSpace(line[:idx])
+				exp.Company = strings.TrimSpace(line[idx:])
+				return
+			}
+		}
+	}
+	
+	// If still no company found, assume the whole line is the role
 	exp.Role = line
 }
 
@@ -315,18 +766,22 @@ func (p *ResumeParser) extractEducation(resume *ResumeData, sections map[string]
 		return
 	}
 
+	fmt.Printf("[ExtractEducation] Processing education section\n")
 	lines := strings.Split(eduText, "\n")
 	var education []EducationEntry
 	var currentEdu *EducationEntry
 
-	for _, line := range lines {
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
 
-		// Check for degree patterns
-		degreeKeywords := []string{"bachelor", "master", "phd", "doctorate", "associate", "b.s.", "b.a.", "m.s.", "m.a.", "mba"}
+		fmt.Printf("  Edu Line %d: %s\n", i, line)
+
+		// Check for degree patterns - expanded list
+		degreeKeywords := []string{"bachelor", "master", "phd", "doctorate", "associate", 
+			"b.s.", "b.a.", "m.s.", "m.a.", "mba", "degree", "diploma", "b.s", "b.a", "m.s", "m.a"}
 		hasDegree := false
 		for _, keyword := range degreeKeywords {
 			if strings.Contains(strings.ToLower(line), keyword) {
@@ -335,26 +790,110 @@ func (p *ResumeParser) extractEducation(resume *ResumeData, sections map[string]
 			}
 		}
 
-		if hasDegree || p.dateRegex.MatchString(line) {
+		// Check for university patterns - expanded list
+		universityKeywords := []string{"university", "college", "institute", "school", "academy", "tech"}
+		hasUniversity := false
+		for _, keyword := range universityKeywords {
+			if strings.Contains(strings.ToLower(line), keyword) {
+				hasUniversity = true
+				break
+			}
+		}
+		
+		// Check for field of study keywords
+		fieldKeywords := []string{"engineering", "science", "business", "arts", "medicine", 
+			"law", "computer", "electrical", "mechanical", "chemical", "civil", "software",
+			"mathematics", "math", "physics", "chemistry", "biology", "economics", "psychology",
+			"electronic", "electronics"}
+		hasField := false
+		for _, keyword := range fieldKeywords {
+			if strings.Contains(strings.ToLower(line), keyword) {
+				hasField = true
+				break
+			}
+		}
+
+		// Start new education entry if we see school+dates or degree line
+		if (hasUniversity && p.dateRegex.MatchString(line)) || 
+		   (hasDegree && (currentEdu == nil || currentEdu.Degree == "")) {
 			// Save previous education
-			if currentEdu != nil {
+			if currentEdu != nil && (currentEdu.School != "" || currentEdu.Degree != "") {
 				education = append(education, *currentEdu)
+				fmt.Printf("    -> Saved education: %s, %s, %s\n", currentEdu.School, currentEdu.Degree, currentEdu.Field)
 			}
 
 			currentEdu = &EducationEntry{}
+			fmt.Printf("    -> Starting new education entry\n")
+			
+			// Parse the entire line for all components
 			p.parseEducationLine(currentEdu, line)
-		} else if currentEdu != nil && currentEdu.School == "" {
-			// This might be the school name
-			currentEdu.School = line
+		} else if currentEdu != nil {
+			// Add to current education entry
+			if hasDegree && currentEdu.Degree == "" {
+				// Parse this line for degree info
+				p.parseEducationLine(currentEdu, line)
+				fmt.Printf("    -> Parsed as DEGREE line\n")
+			} else if hasUniversity && currentEdu.School == "" {
+				// Extract school name, removing dates
+				dates := p.dateRegex.FindAllString(line, -1)
+				schoolLine := line
+				for _, date := range dates {
+					schoolLine = strings.Replace(schoolLine, date, "", 1)
+				}
+				currentEdu.School = strings.TrimSpace(schoolLine)
+				// Also capture dates
+				if len(dates) >= 2 {
+					currentEdu.StartDate = dates[0]
+					currentEdu.EndDate = dates[len(dates)-1]
+				} else if len(dates) == 1 {
+					currentEdu.EndDate = dates[0]
+				}
+				fmt.Printf("    -> Set as SCHOOL: %s\n", currentEdu.School)
+			} else if (hasField || strings.Contains(line, "Minor")) && currentEdu.Field == "" {
+				// This is the field of study
+				// Check if this line also contains degree info (like "B.S in Electronic Engineering")
+				if strings.Contains(strings.ToLower(line), " in ") {
+					p.parseEducationLine(currentEdu, line)
+					fmt.Printf("    -> Parsed as DEGREE with FIELD\n")
+				} else {
+					currentEdu.Field = strings.TrimSpace(line)
+					fmt.Printf("    -> Set as FIELD: %s\n", currentEdu.Field)
+				}
+			} else if currentEdu.School == "" && !p.dateRegex.MatchString(line) {
+				// Fallback: might be school (but not if it's just dates)
+				currentEdu.School = strings.TrimSpace(line)
+				fmt.Printf("    -> Set as SCHOOL (fallback)\n")
+			} else if currentEdu.Degree == "" && !p.dateRegex.MatchString(line) {
+				// Fallback: might be degree (but not if it's just dates)
+				currentEdu.Degree = strings.TrimSpace(line)
+				fmt.Printf("    -> Set as DEGREE (fallback)\n")
+			} else if currentEdu.Field == "" && len(line) < 100 && !p.dateRegex.MatchString(line) {
+				// Fallback: might be field (but not if it's just dates)
+				currentEdu.Field = strings.TrimSpace(line)
+				fmt.Printf("    -> Set as FIELD (fallback)\n")
+			} else if p.dateRegex.MatchString(line) && currentEdu.StartDate == "" && currentEdu.EndDate == "" {
+				// This line contains dates - extract them but don't overwrite other fields
+				dates := p.dateRegex.FindAllString(line, -1)
+				if len(dates) >= 2 {
+					currentEdu.StartDate = dates[0]
+					currentEdu.EndDate = dates[len(dates)-1]
+					fmt.Printf("    -> Extracted dates: %s - %s\n", currentEdu.StartDate, currentEdu.EndDate)
+				} else if len(dates) == 1 {
+					currentEdu.EndDate = dates[0]
+					fmt.Printf("    -> Extracted end date: %s\n", currentEdu.EndDate)
+				}
+			}
 		}
 	}
 
 	// Save last education
-	if currentEdu != nil {
+	if currentEdu != nil && (currentEdu.School != "" || currentEdu.Degree != "") {
 		education = append(education, *currentEdu)
+		fmt.Printf("    -> Saved final education: %s, %s\n", currentEdu.Degree, currentEdu.School)
 	}
 
 	resume.Education = education
+	fmt.Printf("[ExtractEducation] Extracted %d education entries\n", len(education))
 }
 
 // parseEducationLine extracts degree and school information
@@ -375,13 +914,93 @@ func (p *ResumeParser) parseEducationLine(edu *EducationEntry, line string) {
 
 	line = strings.TrimSpace(line)
 
-	// Try to identify degree and field
-	parts := strings.Split(line, ",")
-	if len(parts) >= 2 {
-		edu.Degree = strings.TrimSpace(parts[0])
-		edu.Field = strings.TrimSpace(parts[1])
+	// Look for common degree patterns
+	degreePatterns := []string{
+		"B.S.", "B.A.", "BS", "BA", "Bachelor", "Bachelors",
+		"M.S.", "M.A.", "MS", "MA", "Master", "Masters",
+		"Ph.D.", "PhD", "Ph.D", "Doctorate",
+		"M.B.A.", "MBA",
+		"Associate", "A.S.", "A.A.", "AS", "AA",
+	}
+	
+	lowerLine := strings.ToLower(line)
+	
+	// Check if line contains "in" which often separates degree from field
+	if strings.Contains(lowerLine, " in ") {
+		parts := strings.Split(line, " in ")
+		if len(parts) >= 2 {
+			edu.Degree = strings.TrimSpace(parts[0])
+			// Everything after "in" is the field
+			remainingParts := strings.Join(parts[1:], " in ")
+			
+			// Check if school name is also in this line (often after comma)
+			if strings.Contains(remainingParts, ",") {
+				fieldParts := strings.Split(remainingParts, ",")
+				edu.Field = strings.TrimSpace(fieldParts[0])
+				if len(fieldParts) > 1 && edu.School == "" {
+					edu.School = strings.TrimSpace(fieldParts[1])
+				}
+			} else {
+				edu.Field = strings.TrimSpace(remainingParts)
+			}
+			return
+		}
+	}
+	
+	// Check for pattern: "Bachelor of Science, Computer Science"
+	if strings.Contains(line, ",") {
+		parts := strings.Split(line, ",")
+		firstPart := strings.TrimSpace(parts[0])
+		
+		// Check if first part is a degree
+		hasDegree := false
+		for _, pattern := range degreePatterns {
+			if strings.Contains(strings.ToLower(firstPart), strings.ToLower(pattern)) {
+				hasDegree = true
+				break
+			}
+		}
+		
+		if hasDegree {
+			edu.Degree = firstPart
+			if len(parts) > 1 {
+				// Check if second part is field or school
+				secondPart := strings.TrimSpace(parts[1])
+				// If it looks like a field (shorter, no "University" etc), use as field
+				if !strings.Contains(strings.ToLower(secondPart), "university") && 
+				   !strings.Contains(strings.ToLower(secondPart), "college") &&
+				   !strings.Contains(strings.ToLower(secondPart), "institute") &&
+				   len(secondPart) < 50 {
+					edu.Field = secondPart
+					if len(parts) > 2 {
+						edu.School = strings.TrimSpace(parts[2])
+					}
+				} else {
+					edu.School = secondPart
+				}
+			}
+		} else {
+			// First part might be the school
+			if edu.School == "" {
+				edu.School = firstPart
+			}
+			if len(parts) > 1 {
+				edu.Degree = strings.TrimSpace(parts[1])
+			}
+		}
 	} else {
-		edu.Degree = line
+		// No comma, try to extract what we can
+		for _, pattern := range degreePatterns {
+			if strings.Contains(strings.ToLower(line), strings.ToLower(pattern)) {
+				edu.Degree = line
+				return
+			}
+		}
+		
+		// If no degree pattern found, assume it's the school
+		if edu.School == "" {
+			edu.School = line
+		}
 	}
 }
 

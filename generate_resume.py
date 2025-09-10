@@ -84,8 +84,8 @@ def generate_pdf_resume(template_name, user_data, output_path):
             '--zoom', '1.0',
             '--dpi', '96',
             '--disable-smart-shrinking',
-            # Add custom CSS for page break controls and Skills section
-            '--user-style-sheet', 'data:text/css,.experience-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.education-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.preview .section-header{page-break-after:avoid!important;break-after:avoid!important;orphans:3!important;widows:3!important;}.preview .skills-section-header{page-break-before:always!important;break-before:page!important;page-break-after:avoid!important;break-after:avoid!important;margin-top:0!important;}.preview .skills-content{page-break-before:avoid!important;page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}',
+            # Add custom CSS for page break controls - removed forced page break for Skills section
+            '--user-style-sheet', 'data:text/css,.experience-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.education-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.project-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.preview .section-header{page-break-after:avoid!important;break-after:avoid!important;orphans:3!important;widows:3!important;}.preview .skills-section-header{page-break-after:avoid!important;break-after:avoid!important;margin-top:10px!important;}.preview .skills-content{page-break-before:avoid!important;page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}',
             html_path,
             output_path
         ]

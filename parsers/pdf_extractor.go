@@ -48,8 +48,10 @@ func (e *PDFExtractor) extractWithPdfToText(filePath string) (string, error) {
 	tempFile := filePath + ".txt"
 	defer os.Remove(tempFile)
 
-	// Run pdftotext
-	cmd := exec.Command("pdftotext", "-layout", filePath, tempFile)
+	// Run pdftotext with better formatting options
+	// -layout: Maintain layout and spacing (better for structured resumes)
+	// -nopgbrk: Don't insert page breaks
+	cmd := exec.Command("pdftotext", "-layout", "-nopgbrk", filePath, tempFile)
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("pdftotext failed: %v", err)
 	}
@@ -60,7 +62,11 @@ func (e *PDFExtractor) extractWithPdfToText(filePath string) (string, error) {
 		return "", fmt.Errorf("failed to read extracted text: %v", err)
 	}
 
-	return string(content), nil
+	// Clean up text
+	text := string(content)
+	text = e.cleanupText(text)
+	
+	return text, nil
 }
 
 // extractWithPython uses the existing Python script
@@ -140,6 +146,56 @@ func (e *PDFExtractor) ExtractFromDocx(filePath string) (string, error) {
 	}
 
 	return "", fmt.Errorf("no DOCX extraction tools available (tried docx2txt, pandoc)")
+}
+
+// cleanupText fixes common PDF extraction issues
+func (e *PDFExtractor) cleanupText(text string) string {
+	// Fix words with spaces between letters (e.g., "M a n a g e m e n t" -> "Management")
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		// Only apply to lines that look like they have this issue
+		if strings.Count(line, " ") > len(line)/3 && len(line) > 10 {
+			// Check if line has pattern of single chars with spaces
+			words := strings.Fields(line)
+			hasSpacedWords := false
+			singleCharCount := 0
+			
+			for _, word := range words {
+				if len(word) == 1 && word != "•" && word != "-" && word != "|" && word != "&" {
+					singleCharCount++
+					if singleCharCount > 3 {
+						hasSpacedWords = true
+						break
+					}
+				}
+			}
+			
+			if hasSpacedWords {
+				// Rebuild the line by combining single characters
+				var fixedWords []string
+				var currentWord []string
+				
+				for _, word := range words {
+					if len(word) == 1 && word != "•" && word != "-" && word != "|" && word != "," && word != "." && word != "&" {
+						currentWord = append(currentWord, word)
+					} else {
+						if len(currentWord) > 0 {
+							fixedWords = append(fixedWords, strings.Join(currentWord, ""))
+							currentWord = []string{}
+						}
+						fixedWords = append(fixedWords, word)
+					}
+				}
+				if len(currentWord) > 0 {
+					fixedWords = append(fixedWords, strings.Join(currentWord, ""))
+				}
+				
+				lines[i] = strings.Join(fixedWords, " ")
+			}
+		}
+	}
+	
+	return strings.Join(lines, "\n")
 }
 
 // ExtractFromFile determines file type and extracts text accordingly
