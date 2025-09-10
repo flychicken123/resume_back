@@ -343,8 +343,26 @@ func (p *ResumeParser) extractExperience(resume *ResumeData, sections map[string
 			}
 		}
 		
-		// Check if this is a company name (often comes first)
-		if isLikelyCompany {
+		// Check if this is "Role at Company" format first
+		if strings.Contains(line, " at ") && (p.looksLikeRole(line) || strings.Contains(strings.ToLower(line), "developer") || 
+		   strings.Contains(strings.ToLower(line), "engineer")) {
+			fmt.Printf("    -> Detected as ROLE at COMPANY format\n")
+			// Save previous experience if it has content
+			if currentExp != nil && (currentExp.Role != "" || len(currentExp.Bullets) > 0) {
+				experiences = append(experiences, *currentExp)
+			}
+			
+			// Parse "Role at Company"
+			parts := strings.SplitN(line, " at ", 2)
+			currentExp = &ExperienceEntry{
+				Role: strings.TrimSpace(parts[0]),
+			}
+			if len(parts) > 1 {
+				currentExp.Company = strings.TrimSpace(parts[1])
+			}
+			fmt.Printf("    -> Extracted Role: %s, Company: %s\n", currentExp.Role, currentExp.Company)
+			continue // Skip to next line
+		} else if isLikelyCompany {
 			fmt.Printf("    -> Detected as COMPANY\n")
 			// Save previous experience if it has content
 			if currentExp != nil && (currentExp.Role != "" || len(currentExp.Bullets) > 0) {
@@ -398,7 +416,19 @@ func (p *ResumeParser) extractExperience(resume *ResumeData, sections map[string
 			if currentExp == nil {
 				currentExp = &ExperienceEntry{}
 			}
-			currentExp.Role = line
+			
+			// Check if this is "Role at Company" format
+			if strings.Contains(line, " at ") {
+				parts := strings.SplitN(line, " at ", 2)
+				currentExp.Role = strings.TrimSpace(parts[0])
+				if len(parts) > 1 {
+					currentExp.Company = strings.TrimSpace(parts[1])
+					fmt.Printf("    -> Extracted Role: %s, Company: %s\n", currentExp.Role, currentExp.Company)
+				}
+			} else {
+				currentExp.Role = line
+			}
+			
 			p.extractDatesFromLine(currentExp, line)
 			currentExp.Role = p.cleanRoleText(currentExp.Role)
 		} else if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") {
