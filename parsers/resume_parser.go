@@ -234,11 +234,9 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 		// Add line to current section if not a header
 		if !isHeader && currentSection != "" {
 			currentContent = append(currentContent, originalLine)
-		} else if !isHeader && currentSection == "" {
-			// Before first section - might be contact info
-			// Lines before the first section are usually contact info,
-			// which is already extracted by extractContactInfo
 		}
+		// Note: Lines before the first section (when !isHeader && currentSection == "")
+		// are typically contact info, which is already extracted by extractContactInfo
 	}
 
 	// Save last section
