@@ -1,7 +1,6 @@
--- AI Resume Builder Database Schema
--- PostgreSQL
-
--- Comments for Google OAuth fields
+-- Migration: 001_initial_schema.sql
+-- Description: Initial database schema for AI Resume Builder
+-- Date: 2025-01-10
 
 -- Users table
 CREATE TABLE users (
@@ -61,23 +60,6 @@ CREATE TABLE education (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Projects table (added in migration 002)
-CREATE TABLE IF NOT EXISTS projects (
-    id SERIAL PRIMARY KEY,
-    resume_id INTEGER REFERENCES resumes(id) ON DELETE CASCADE,
-    project_name VARCHAR(255) NOT NULL,
-    description TEXT,
-    technologies TEXT,
-    project_url VARCHAR(500),
-    role VARCHAR(255),
-    start_date DATE,
-    end_date DATE,
-    is_current BOOLEAN DEFAULT FALSE,
-    display_order INTEGER DEFAULT 0,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 -- Resume History table
 CREATE TABLE resume_history (
     id SERIAL PRIMARY KEY,
@@ -95,7 +77,6 @@ CREATE INDEX idx_users_auth_provider ON users(auth_provider);
 CREATE INDEX idx_resumes_user_id ON resumes(user_id);
 CREATE INDEX idx_experiences_resume_id ON experiences(resume_id);
 CREATE INDEX idx_education_resume_id ON education(resume_id);
-CREATE INDEX idx_projects_resume_id ON projects(resume_id);
 CREATE INDEX idx_resume_history_user_id ON resume_history(user_id);
 CREATE INDEX idx_resume_history_generated_at ON resume_history(generated_at DESC);
 
@@ -118,4 +99,4 @@ CREATE TRIGGER update_experiences_updated_at BEFORE UPDATE ON experiences
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_education_updated_at BEFORE UPDATE ON education
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column(); 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
