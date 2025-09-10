@@ -177,7 +177,9 @@ Important extraction rules:
 
 3. For skills: Extract as array of individual skills
 
-4. If a field is not found, use null, not empty string
+4. For summary: ONLY extract if explicitly present in the resume. Do NOT generate or create a summary. If no summary section exists, use null
+
+5. If a field is not found, use null, not empty string
 
 Resume text:
 %s
