@@ -236,9 +236,8 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 			currentContent = append(currentContent, originalLine)
 		} else if !isHeader && currentSection == "" {
 			// Before first section - might be contact info
-			if i < 10 {
-				// Keep for contact extraction
-			}
+			// Lines before the first section are usually contact info,
+			// which is already extracted by extractContactInfo
 		}
 	}
 
@@ -612,57 +611,6 @@ func (p *ResumeParser) looksLikeRole(line string) bool {
 	return false
 }
 
-// looksLikeJobHeader determines if a line looks like a job title/company
-func (p *ResumeParser) looksLikeJobHeader(line string) bool {
-	// Skip location-only lines (e.g., "Seattle, WA")
-	locationPattern := regexp.MustCompile(`^[A-Z][a-z]+,?\s*[A-Z]{2}$`)
-	if locationPattern.MatchString(strings.TrimSpace(line)) {
-		return false
-	}
-	
-	// Look for job title keywords
-	jobKeywords := []string{"engineer", "developer", "manager", "lead", "architect", 
-		"analyst", "designer", "consultant", "director", "specialist", "coordinator",
-		"senior", "junior", "staff", "principal", "tech", "software", "data"}
-	
-	lineLower := strings.ToLower(line)
-	for _, keyword := range jobKeywords {
-		if strings.Contains(lineLower, keyword) {
-			return true
-		}
-	}
-	
-	// Look for company name patterns
-	companyKeywords := []string{"inc", "corp", "llc", "ltd", "company", "technologies", "solutions"}
-	for _, keyword := range companyKeywords {
-		if strings.Contains(lineLower, keyword) {
-			return true
-		}
-	}
-	
-	// Look for separator patterns
-	separators := []string{" at ", " with ", " | ", " - ", " • "}
-	for _, sep := range separators {
-		if strings.Contains(line, sep) {
-			return true
-		}
-	}
-
-	// Check if line contains date patterns
-	if p.dateRegex.MatchString(line) {
-		return true
-	}
-
-	// If it's a short-to-medium line (likely a title or company)
-	// but not too short (avoid single words)
-	wordCount := len(strings.Fields(line))
-	if wordCount >= 2 && wordCount <= 8 && len(line) > 15 {
-		return true
-	}
-
-	return false
-}
-
 // extractDatesFromLine extracts dates from a line and updates the experience entry
 func (p *ResumeParser) extractDatesFromLine(exp *ExperienceEntry, line string) {
 	dates := p.dateRegex.FindAllString(line, -1)
@@ -696,97 +644,6 @@ func (p *ResumeParser) cleanRoleText(role string) string {
 	role = regexp.MustCompile(`\s+`).ReplaceAllString(role, " ")
 	
 	return role
-}
-
-// parseJobHeader extracts role, company, and dates from a job header line
-func (p *ResumeParser) parseJobHeader(exp *ExperienceEntry, line string) {
-	// Clean up any artifacts from PDF extraction
-	line = strings.ReplaceAll(line, "| Company", "")
-	line = strings.ReplaceAll(line, "|Company", "")
-	line = strings.ReplaceAll(line, "Company", "")
-	
-	// Extract dates first
-	dates := p.dateRegex.FindAllString(line, -1)
-	if len(dates) >= 2 {
-		exp.StartDate = dates[0]
-		exp.EndDate = dates[len(dates)-1]
-		// Remove dates from line for further parsing
-		for _, date := range dates {
-			line = strings.Replace(line, date, "", 1)
-		}
-	} else if len(dates) == 1 {
-		if strings.Contains(strings.ToLower(dates[0]), "present") ||
-		   strings.Contains(strings.ToLower(dates[0]), "current") ||
-		   strings.Contains(strings.ToLower(dates[0]), "now") {
-			exp.EndDate = "Present"
-		} else {
-			exp.StartDate = dates[0]
-		}
-	}
-
-	// Clean up the line
-	line = strings.TrimSpace(line)
-	line = regexp.MustCompile(`\s+`).ReplaceAllString(line, " ")
-
-	// Try to split role and company with more specific patterns
-	// First try comma-based separation (common format: "Role, Company")
-	if strings.Contains(line, ",") && !strings.Contains(line, " at ") {
-		parts := strings.SplitN(line, ",", 2)
-		if len(parts) == 2 {
-			// Check if first part looks like a role (usually longer)
-			part1 := strings.TrimSpace(parts[0])
-			part2 := strings.TrimSpace(parts[1])
-			
-			// Remove location if present (e.g., "Seattle, WA")
-			locationPattern := regexp.MustCompile(`\b[A-Z][a-z]+,?\s+[A-Z]{2}\b`)
-			part2 = locationPattern.ReplaceAllString(part2, "")
-			part2 = strings.TrimSpace(part2)
-			
-			if part2 != "" {
-				exp.Role = part1
-				exp.Company = part2
-				return
-			}
-		}
-	}
-	
-	// Try standard separators
-	separators := []string{" at ", " with ", " | ", " - ", " • ", " – "}
-	for _, sep := range separators {
-		if strings.Contains(line, sep) {
-			parts := strings.Split(line, sep)
-			if len(parts) >= 2 {
-				exp.Role = strings.TrimSpace(parts[0])
-				exp.Company = strings.TrimSpace(parts[1])
-				
-				// Clean up company name
-				exp.Company = strings.TrimSuffix(exp.Company, ".")
-				exp.Company = strings.TrimSpace(exp.Company)
-				return
-			}
-		}
-	}
-
-	// If no separator found, try to identify known company names
-	knownCompanies := []string{"Amazon", "Google", "Microsoft", "Meta", "Apple", "Netflix", 
-		"Facebook", "Twitter", "LinkedIn", "Adobe", "Oracle", "IBM", "Intel", "Cisco",
-		"Salesforce", "Uber", "Airbnb", "Tesla", "SpaceX", "Twillio", "Twilio"}
-	
-	lineLower := strings.ToLower(line)
-	for _, company := range knownCompanies {
-		if strings.Contains(lineLower, strings.ToLower(company)) {
-			// Found a known company name
-			idx := strings.Index(lineLower, strings.ToLower(company))
-			if idx > 0 {
-				exp.Role = strings.TrimSpace(line[:idx])
-				exp.Company = strings.TrimSpace(line[idx:])
-				return
-			}
-		}
-	}
-	
-	// If still no company found, assume the whole line is the role
-	exp.Role = line
 }
 
 // extractEducation parses education information
