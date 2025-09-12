@@ -418,8 +418,8 @@ Please improve this text by:
 
 ENHANCE with these types of metrics:
 - Technical scale (X users, X requests/second, X GB data)
-- Performance improvements (X% faster, X ms latency)
-- Code quality metrics (X% test coverage, X% reduction in bugs)
+- Performance improvements (X%% faster, X ms latency)
+- Code quality metrics (X%% test coverage, X%% reduction in bugs)
 - User impact (X downloads, X active users, X rating)
 - Technical complexity (X microservices, X APIs, X integrations)
 
