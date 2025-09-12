@@ -151,6 +151,9 @@ func ParseResume(c *gin.Context) {
       "education": [
         {"school": string | null, "degree": string | null, "field": string | null, "startDate": string | null, "endDate": string | null}
       ],
+      "projects": [
+        {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null, "bullets": string[] | null}
+      ],
       "skills": string[]
     }`
 
@@ -175,11 +178,22 @@ Important extraction rules:
    - startDate: Start year or date (e.g., "Aug 2011", "2011")
    - endDate: Graduation year or date (e.g., "May 2014", "2014")
 
-3. For skills: Extract as array of individual skills
+3. For projects (IMPORTANT: These are NOT work experiences):
+   - projectName: Name of the project
+   - description: Brief description of what the project does
+   - technologies: Technologies/tools used (as a single string, e.g., "React, Node.js, MongoDB")
+   - projectUrl: URL/link to the project if provided (GitHub, website, etc.)
+   - bullets: Array of bullet points describing project details
+   - Projects are personal/academic/side projects, NOT professional work experience
+   - Look for sections titled "Projects", "Personal Projects", "Academic Projects", "Portfolio"
 
-4. For summary: ONLY extract if explicitly present in the resume. Do NOT generate or create a summary. If no summary section exists, use null
+4. For skills: Extract as array of individual skills
 
-5. If a field is not found, use null, not empty string
+5. For summary: ONLY extract if explicitly present in the resume. Do NOT generate or create a summary. If no summary section exists, use null
+
+6. If a field is not found, use null, not empty string
+
+CRITICAL: Distinguish between work experience (jobs at companies) and projects (personal/academic work). Do not mix them.
 
 Resume text:
 %s
@@ -302,6 +316,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 		"summary":    nil,
 		"experience": []map[string]interface{}{},
 		"education":  []map[string]interface{}{},
+		"projects":   []map[string]interface{}{},
 		"skills":     []string{},
 	}
 	
@@ -309,6 +324,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 	currentSection := ""
 	var currentExperience map[string]interface{}
 	var currentEducation map[string]interface{}
+	var currentProject map[string]interface{}
 	var bullets []string
 	
 	for i, line := range lines {
@@ -325,6 +341,9 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			continue
 		} else if strings.Contains(lineLower, "education") {
 			currentSection = "education"
+			continue
+		} else if strings.Contains(lineLower, "project") && !strings.Contains(lineLower, "projecturl") {
+			currentSection = "projects"
 			continue
 		} else if strings.Contains(lineLower, "skill") {
 			currentSection = "skills"
@@ -415,6 +434,41 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			} else {
 				result["summary"] = result["summary"].(string) + " " + line
 			}
+			
+		case "projects":
+			// Look for project names (often capitalized or followed by a colon)
+			if !strings.HasPrefix(line, "•") && !strings.HasPrefix(line, "-") && 
+			   (strings.Contains(line, ":") || (len(line) < 60 && i < len(lines)-1)) {
+				// Save previous project if exists
+				if currentProject != nil {
+					if len(bullets) > 0 {
+						currentProject["bullets"] = bullets
+					}
+					result["projects"] = append(result["projects"].([]map[string]interface{}), currentProject)
+					bullets = []string{}
+				}
+				
+				// Start new project
+				projectName := line
+				if idx := strings.Index(line, ":"); idx > 0 {
+					projectName = strings.TrimSpace(line[:idx])
+				}
+				
+				currentProject = map[string]interface{}{
+					"projectName":  projectName,
+					"description":  nil,
+					"technologies": nil,
+					"projectUrl":   nil,
+				}
+			} else if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") {
+				// Bullet point for project
+				bullet := strings.TrimPrefix(strings.TrimPrefix(line, "•"), "-")
+				bullet = strings.TrimSpace(bullet)
+				bullets = append(bullets, bullet)
+			} else if currentProject != nil && currentProject["description"] == nil {
+				// Likely the project description
+				currentProject["description"] = line
+			}
 		}
 	}
 	
@@ -429,6 +483,14 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 	// Save last education if exists
 	if currentEducation != nil {
 		result["education"] = append(result["education"].([]map[string]interface{}), currentEducation)
+	}
+	
+	// Save last project if exists
+	if currentProject != nil {
+		if len(bullets) > 0 {
+			currentProject["bullets"] = bullets
+		}
+		result["projects"] = append(result["projects"].([]map[string]interface{}), currentProject)
 	}
 	
 	return result
