@@ -198,6 +198,8 @@ func main() {
 		// New grammar improvement endpoints
 		public.POST("/experience/improve-grammar", handlers.ImproveExperienceGrammar)
 		public.POST("/summary/improve-grammar", handlers.ImproveSummaryGrammar)
+		public.POST("/project/optimize", handlers.OptimizeProject)
+		public.POST("/project/improve-grammar", handlers.ImproveProjectGrammar)
 		
 		// New final step AI endpoints
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)

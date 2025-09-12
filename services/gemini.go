@@ -370,6 +370,73 @@ Implemented automated testing framework that increased code coverage from 45%% t
 Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, experience)
 }
 
+func BuildProjectOptimizationPrompt(jobDescription string, projectData string) string {
+	return fmt.Sprintf(`You are an expert resume writer who specializes in optimizing project descriptions for job applications.
+
+Your task is to optimize this project description to align with the specific job requirements.
+
+Job Description:
+%s
+
+Current Project Description:
+%s
+
+Please optimize this project by:
+1. Highlighting technologies and skills mentioned in the job description
+2. Emphasizing relevant accomplishments that match job requirements
+3. Using industry-specific keywords from the job posting
+4. Quantifying impact where possible
+5. Aligning the tone with the company culture suggested by the job posting
+6. Focusing on aspects most relevant to the target role
+7. Using action verbs that demonstrate the competencies required
+
+Keep the project authentic and truthful while emphasizing the most relevant aspects for this role.
+
+Return ONLY the improved project description text, with each achievement on a new line.
+Do NOT include project name, dates, or any header information.`, jobDescription, projectData)
+}
+
+func BuildProjectGrammarPrompt(projectData string) string {
+	return fmt.Sprintf(`You are an expert resume writer and editor specializing in technical project descriptions.
+
+Your task is to improve the grammar, clarity, and professional tone of this project description.
+
+Original Project Description:
+%s
+
+Transform this project description using this formula: [ACTION VERB] + [WHAT YOU BUILT/DID] + [TECHNOLOGIES USED] + [IMPACT/OUTCOME]
+
+Please improve this text by:
+1. Correcting any grammatical errors
+2. Improving sentence structure and flow
+3. Using powerful technical action verbs (Built, Developed, Architected, Implemented, Designed, Created, Deployed)
+4. Highlighting technical skills and tools effectively
+5. Adding specific metrics and outcomes where possible (users, performance, scale)
+6. Demonstrating technical complexity and problem-solving
+7. Ensuring consistent tense (past tense for completed projects)
+8. Making it clear what YOU specifically did (not team accomplishments)
+
+ENHANCE with these types of metrics:
+- Technical scale (X users, X requests/second, X GB data)
+- Performance improvements (X% faster, X ms latency)
+- Code quality metrics (X% test coverage, X% reduction in bugs)
+- User impact (X downloads, X active users, X rating)
+- Technical complexity (X microservices, X APIs, X integrations)
+
+AVOID these weak phrases:
+- "Worked on", "Helped with", "Participated in", "Assisted with"
+- "Simple", "Basic", "Easy"
+- Vague descriptions without technical details
+
+IMPORTANT: Return ONLY the improved description text. Do NOT include:
+- Project name or dates
+- Any header information
+- Explanations or additional text
+- Bullet point symbols (• or -)
+
+Format the response as clean text with each achievement on a new line, focusing on technical accomplishments and measurable outcomes.`, projectData)
+}
+
 func BuildSummaryGrammarPrompt(summary string) string {
 	return fmt.Sprintf(`You are an expert resume writer and editor.
 
