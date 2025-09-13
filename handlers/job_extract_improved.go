@@ -53,7 +53,7 @@ func ImprovedExtractJobDescription(c *gin.Context) {
 	for _, site := range protectedSites {
 		if strings.Contains(req.URL, site) {
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error": fmt.Sprintf("This website requires authentication. Please copy and paste the job description directly."),
+				"error": "This website requires authentication. Please copy and paste the job description directly.",
 				"suggestion": "Copy the job description from the website and paste it in the job description field.",
 			})
 			return
@@ -428,84 +428,6 @@ func extractCoreJobDescription(htmlContent string) string {
 	return strings.TrimSpace(finalResult)
 }
 
-// extractGreenhouseJob checks if URL is a Greenhouse-hosted job and fetches via API
-func extractGreenhouseJob(jobURL string) string {
-	// Parse the URL
-	parsedURL, err := url.Parse(jobURL)
-	if err != nil {
-		return ""
-	}
-	
-	// Extract query parameters
-	params := parsedURL.Query()
-	
-	// Look for Greenhouse job ID in various formats
-	var jobID string
-	var boardName string
-	
-	// Check for gh_jid parameter (Greenhouse job ID)
-	if ghJID := params.Get("gh_jid"); ghJID != "" {
-		jobID = ghJID
-	}
-	
-	// Check for board parameter
-	if board := params.Get("board"); board != "" {
-		boardName = board
-	}
-	
-	// Also check if the first parameter is a job ID (like CoreWeave's format)
-	for key := range params {
-		if regexp.MustCompile(`^\d+$`).MatchString(key) {
-			jobID = key
-			break
-		}
-	}
-	
-	// If we don't have both job ID and board name, return empty
-	if jobID == "" || boardName == "" {
-		return ""
-	}
-	
-	// Try to fetch from Greenhouse API
-	apiURL := fmt.Sprintf("https://boards-api.greenhouse.io/v1/boards/%s/jobs/%s", boardName, jobID)
-	
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	
-	// Parse the JSON response
-	var jobData struct {
-		Title       string `json:"title"`
-		Company     string `json:"company_name"`
-		Location    struct {
-			Name string `json:"name"`
-		} `json:"location"`
-		Content string `json:"content"`
-	}
-	
-	if err := json.NewDecoder(resp.Body).Decode(&jobData); err != nil {
-		return ""
-	}
-	
-	// Clean the HTML content and extract just the job description
-	cleanedContent := extractCoreJobDescription(jobData.Content)
-	
-	// Format the response
-	result := fmt.Sprintf("Job Title: %s\nCompany: %s\nLocation: %s\n\n%s",
-		jobData.Title,
-		jobData.Company,
-		jobData.Location.Name,
-		cleanedContent)
-	
-	return result
-}
 
 // extractGreenhouseJobData fetches via Greenhouse API and returns structured fields
 func extractGreenhouseJobData(jobURL string) (description, title, company, location string) {
