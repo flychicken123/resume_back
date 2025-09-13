@@ -182,6 +182,11 @@ func main() {
 		api.POST("/auth/login", authController.Login)
 		api.POST("/auth/google", authController.GoogleLogin)
 		api.POST("/auth/logout", handlers.LogoutUser())
+		
+		// LinkedIn OAuth routes
+		api.GET("/auth/linkedin/url", handlers.GetLinkedInAuthURL)
+		api.POST("/auth/linkedin/token", handlers.ExchangeLinkedInToken(userModel, jwtService))
+		api.GET("/linkedin/resume", handlers.FetchLinkedInResume)
 	}
 
 	// Public routes (no auth required) - keep using handlers for now
