@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type GeminiRequest struct {
@@ -668,4 +669,55 @@ Sincerely,
 %s
 
 IMPORTANT: Return the complete cover letter ready to send. Make it compelling and specific to this opportunity.`, name, experience, skills, summary, companyContext, jobContext, name)
+}
+
+// FetchAndProcessURL fetches content from a URL and processes it with AI
+func FetchAndProcessURL(url string, prompt string) (string, error) {
+	// Create HTTP client with timeout
+	client := &http.Client{
+		Timeout: 30 * time.Second,
+	}
+
+	// Create request
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %v", err)
+	}
+
+	// Set user agent to avoid being blocked
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
+
+	// Fetch the URL
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch URL: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("failed to fetch URL: status code %d", resp.StatusCode)
+	}
+
+	// Read the response body (limit to 1MB to avoid huge pages)
+	limitedReader := io.LimitReader(resp.Body, 1024*1024)
+	bodyBytes, err := io.ReadAll(limitedReader)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response: %v", err)
+	}
+
+	htmlContent := string(bodyBytes)
+
+	// Process with AI to extract job description
+	fullPrompt := fmt.Sprintf(`Given this HTML content from a web page, %s
+
+HTML Content:
+%s`, prompt, htmlContent)
+
+	// Call Gemini to process the content
+	result, err := CallGeminiWithAPIKey(fullPrompt)
+	if err != nil {
+		return "", fmt.Errorf("failed to process content with AI: %v", err)
+	}
+
+	return result, nil
 }

@@ -324,76 +324,108 @@ func extractCoreJobDescription(htmlContent string) string {
 	htmlContent = strings.ReplaceAll(htmlContent, "&quot;", "\"")
 	htmlContent = strings.ReplaceAll(htmlContent, "&#39;", "'")
 	
-	// Split content into sections by headers
-	sections := regexp.MustCompile(`(?i)<h[1-6][^>]*>(.*?)</h[1-6]>`).Split(htmlContent, -1)
-	headers := regexp.MustCompile(`(?i)<h[1-6][^>]*>(.*?)</h[1-6]>`).FindAllStringSubmatch(htmlContent, -1)
+	// Clean the full HTML to text first
+	fullText := cleanHTMLToText(htmlContent)
 	
+	// Find where the job description actually starts (skip company intro)
+	startPhrases := []string{
+		"About this Role:",
+		"About the Role:",
+		"Role Overview:",
+		"Position Overview:",
+		"Job Description:",
+		"The Role:",
+		"We are seeking",
+		"We are looking for",
+		"We're looking for",
+		"We are hiring",
+	}
+	
+	startIndex := 0
+	for _, phrase := range startPhrases {
+		if idx := strings.Index(fullText, phrase); idx >= 0 && (startIndex == 0 || idx < startIndex) {
+			startIndex = idx
+		}
+	}
+	
+	// If we found a start point, use it
+	if startIndex > 0 {
+		fullText = fullText[startIndex:]
+	}
+	
+	// Find where the salary/compensation/benefits section starts and cut there
+	stopPhrases := []string{
+		"The base salary range",
+		"base salary range for this role",
+		"salary range",
+		"What We Offer",
+		"Benefits",
+		"Compensation",
+		"Our Workplace",
+		"Equal Opportunity",
+		"Export Control",
+		"is an equal opportunity",
+		"As part of this commitment",
+	}
+	
+	minIndex := len(fullText)
+	for _, phrase := range stopPhrases {
+		if idx := strings.Index(fullText, phrase); idx > 0 && idx < minIndex {
+			minIndex = idx
+		}
+	}
+	
+	// Cut the text at the stop point
+	if minIndex < len(fullText) {
+		fullText = fullText[:minIndex]
+	}
+	
+	// Also remove any trailing incomplete sentences
+	fullText = strings.TrimSpace(fullText)
+	
+	// Try to extract structured sections
 	var result strings.Builder
-	relevantHeaders := regexp.MustCompile(`(?i)(about|role|position|responsibilities|what you.*do|what you.*bring|requirements|qualifications|who you are|skills|experience|duties)`)
-	stopHeaders := regexp.MustCompile(`(?i)(benefits|offer|perks|compensation|salary|workplace|equal|diversity|compliance|export|privacy|disclaimer)`)
+	lines := strings.Split(fullText, "\n")
+	inRelevantSection := false
+	relevantHeaders := regexp.MustCompile(`(?i)^(about this role|about the role|role overview|position overview|what you.*do|responsibilities|requirements|qualifications|who you are|skills|experience)`)
 	
-	for i, header := range headers {
-		if len(header) > 1 {
-			headerText := cleanHTMLToText(header[1])
-			
-			// Check if this is a section we want to stop at
-			if stopHeaders.MatchString(headerText) {
-				break
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		
+		// Check if this is a relevant header
+		if relevantHeaders.MatchString(line) {
+			inRelevantSection = true
+			if result.Len() > 0 {
+				result.WriteString("\n\n")
 			}
-			
-			// Check if this is a relevant section
-			if relevantHeaders.MatchString(headerText) {
-				if result.Len() > 0 {
-					result.WriteString("\n\n")
-				}
-				result.WriteString(headerText)
-				result.WriteString("\n")
-				
-				// Add the content after this header
-				if i+1 < len(sections) {
-					content := cleanHTMLToText(sections[i+1])
-					if content != "" {
-						result.WriteString(content)
-					}
-				}
+			result.WriteString(line)
+			if !strings.HasSuffix(line, ":") {
+				result.WriteString(":")
 			}
+			result.WriteString("\n")
+		} else if inRelevantSection || result.Len() == 0 {
+			// Include content if we're in a relevant section or haven't found sections yet
+			if result.Len() > 0 && !strings.HasSuffix(result.String(), "\n") {
+				result.WriteString(" ")
+			}
+			result.WriteString(line)
 		}
 	}
 	
-	// If we didn't find structured sections, fall back to extracting the first part
-	if result.Len() == 0 {
-		fullText := cleanHTMLToText(htmlContent)
-		// Find where benefits/compensation section starts and cut there
-		stopWords := []string{
-			"What We Offer",
-			"Benefits",
-			"Compensation",
-			"The base salary",
-			"Our Workplace",
-			"Equal Opportunity",
-			"Export Control",
-		}
-		
-		minIndex := len(fullText)
-		for _, stopWord := range stopWords {
-			if idx := strings.Index(fullText, stopWord); idx > 0 && idx < minIndex {
-				minIndex = idx
-			}
-		}
-		
-		if minIndex < len(fullText) {
-			fullText = fullText[:minIndex]
-		}
-		
-		// Limit to reasonable length for a job description
-		if len(fullText) > 4000 {
-			fullText = fullText[:4000] + "..."
-		}
-		
-		return strings.TrimSpace(fullText)
+	finalResult := result.String()
+	if finalResult == "" {
+		finalResult = fullText
 	}
 	
-	return strings.TrimSpace(result.String())
+	// Limit to reasonable length
+	if len(finalResult) > 3000 {
+		finalResult = finalResult[:3000] + "..."
+	}
+	
+	return strings.TrimSpace(finalResult)
 }
 
 // extractGreenhouseJob checks if URL is a Greenhouse-hosted job and fetches via API

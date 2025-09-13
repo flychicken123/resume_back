@@ -210,6 +210,9 @@ func main() {
 		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		public.POST("/resume/parse", handlers.ParseResume)
 		
+		// Job extraction endpoint
+		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
+		
 		// Job automation endpoints removed - feature in development
 	}
 
