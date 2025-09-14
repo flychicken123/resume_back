@@ -70,22 +70,22 @@ def generate_pdf_resume(template_name, user_data, output_path):
         except Exception as e:
             print(f"Error reading HTML for logging: {e}")
         
-        # Convert HTML to PDF using wkhtmltopdf with balanced margins
+        # Convert HTML to PDF using wkhtmltopdf with minimal margins
         cmd = [
             'wkhtmltopdf',
             '--page-size', 'Letter',
-            # Minimal top margin to reduce white space on first page
-            '--margin-top', '2',   # ~0.03in (minimal top whitespace for first page)
-            '--margin-right', '0',
-            # Minimal bottom margin
-            '--margin-bottom', '2',  # ~0.03in (minimal bottom whitespace)
-            '--margin-left', '0',
+            '--page-height', '11in',  # Standard Letter height
+            # Minimal margins to maximize content space
+            '--margin-top', '5',
+            '--margin-right', '5',
+            '--margin-bottom', '5',
+            '--margin-left', '5',
             '--print-media-type',
-            '--zoom', '1.0',
+            '--zoom', '0.88',  # Smaller zoom to fit more content per page
             '--dpi', '96',
             '--disable-smart-shrinking',
-            # Add custom CSS for page break controls - removed forced page break for Skills section
-            '--user-style-sheet', 'data:text/css,.experience-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.education-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.project-item{page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}.preview .section-header{page-break-after:avoid!important;break-after:avoid!important;orphans:3!important;widows:3!important;}.preview .skills-section-header{page-break-after:avoid!important;break-after:avoid!important;margin-top:10px!important;}.preview .skills-content{page-break-before:avoid!important;page-break-inside:avoid!important;break-inside:avoid!important;orphans:3!important;widows:3!important;}',
+            # Aggressive CSS to compress content and match preview density with page-break control
+            '--user-style-sheet', 'data:text/css,*{margin:0!important;padding:0!important;box-sizing:border-box!important;}body{margin:0!important;padding:0!important;line-height:1.15!important;font-size:95%!important;}p,div,li{margin:0!important;padding:1px 0!important;line-height:1.15!important;page-break-inside:avoid!important;}section{margin:4px 0!important;padding:0!important;page-break-inside:avoid!important;}h1,h2,h3,h4{margin:2px 0!important;padding:0!important;page-break-after:avoid!important;}ul{margin:0!important;padding-left:15px!important;page-break-inside:avoid!important;}li{margin:0!important;padding:0!important;page-break-inside:avoid!important;}.preview{padding:5px!important;}li:has(ul){page-break-inside:avoid!important;}',
             html_path,
             output_path
         ]
