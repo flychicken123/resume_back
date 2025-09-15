@@ -162,7 +162,7 @@ func (p *ResumeParser) extractSections(text string) map[string]string {
 		"education":  {"education", "academic background", "qualifications", "degrees"},
 		"skills":     {"technical skills", "core skills", "skills & expertise", "skills", "competencies"},
 		"summary":    {"professional summary", "career summary", "summary", "profile", "objective", "about"},
-		"projects":   {"projects", "portfolio", "personal projects"},
+		"projects":   {"technical projects", "academic projects", "personal projects", "key projects", "relevant projects", "projects", "portfolio"},
 		"awards":     {"awards", "honors", "achievements", "recognition"},
 	}
 
@@ -253,6 +253,10 @@ func (p *ResumeParser) extractExperience(resume *ResumeData, sections map[string
 	if !exists {
 		return
 	}
+
+	// Check if projects section exists to avoid mixing
+	_, hasProjects := sections["projects"]
+	_ = hasProjects // We'll use this later if needed
 
 	lines := strings.Split(expText, "\n")
 	var experiences []ExperienceEntry
@@ -539,13 +543,51 @@ func (p *ResumeParser) extractExperience(resume *ResumeData, sections map[string
 	fmt.Printf("[ExtractExperience] Final count: %d experiences\n", len(resume.Experience))
 }
 
+// looksLikeProject checks if a line looks like a project name rather than a company
+func (p *ResumeParser) looksLikeProject(line string) bool {
+	lineLower := strings.ToLower(line)
+
+	// Common project indicators
+	projectIndicators := []string{
+		"project", "app", "application", "system", "platform", "tool",
+		"website", "web app", "mobile app", "dashboard", "portal",
+		"api", "service", "bot", "extension", "plugin", "library",
+		"framework", "engine", "simulator", "analyzer", "tracker",
+		"manager", "assistant", "helper", "clone", "game",
+	}
+
+	for _, indicator := range projectIndicators {
+		if strings.Contains(lineLower, indicator) {
+			return true
+		}
+	}
+
+	// Check for common project name patterns (e.g., "TaskManager", "WeatherApp")
+	// Usually compound words or tech-sounding names
+	if regexp.MustCompile(`^[A-Z][a-z]+[A-Z][a-zA-Z]*$`).MatchString(line) {
+		return true
+	}
+
+	// If it contains parentheses with a description, might be a project
+	if strings.Contains(line, "(") && strings.Contains(line, ")") {
+		return true
+	}
+
+	return false
+}
+
 // looksLikeCompany checks if a line looks like a company name based on patterns and context
 func (p *ResumeParser) looksLikeCompany(line string) bool {
+	// First check if it looks like a project
+	if p.looksLikeProject(line) {
+		return false
+	}
+
 	// Skip if too long (probably a description)
 	if len(line) > 100 {
 		return false
 	}
-	
+
 	// Skip if it's a bullet point or description
 	if strings.HasPrefix(line, "•") || strings.HasPrefix(line, "-") || strings.HasPrefix(line, "*") {
 		return false
@@ -783,17 +825,44 @@ func (p *ResumeParser) extractEducation(resume *ResumeData, sections map[string]
 
 // parseEducationLine extracts degree and school information
 func (p *ResumeParser) parseEducationLine(edu *EducationEntry, line string) {
-	// Extract dates
-	dates := p.dateRegex.FindAllString(line, -1)
-	if len(dates) >= 2 {
-		edu.StartDate = dates[0]
-		edu.EndDate = dates[len(dates)-1]
-	} else if len(dates) == 1 {
-		edu.EndDate = dates[0]
+	// Look for date ranges like "2015 - 2019" or "Sep 2015 - May 2019"
+	dateRangeRegex := regexp.MustCompile(`(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+)?(\d{4})\s*[-–—]\s*(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+)?(\d{4}|\bPresent\b)`)
+	if matches := dateRangeRegex.FindStringSubmatch(line); len(matches) > 0 {
+		// Extract start date
+		if matches[1] != "" {
+			edu.StartDate = strings.TrimSpace(matches[1] + matches[2])
+		} else {
+			edu.StartDate = matches[2]
+		}
+		// Extract end date
+		if matches[3] != "" {
+			edu.EndDate = strings.TrimSpace(matches[3] + matches[4])
+		} else {
+			edu.EndDate = matches[4]
+		}
+	} else {
+		// Fall back to extracting individual dates
+		dates := p.dateRegex.FindAllString(line, -1)
+		if len(dates) >= 2 {
+			edu.StartDate = dates[0]
+			edu.EndDate = dates[len(dates)-1]
+		} else if len(dates) == 1 {
+			// Single date is graduation date
+			edu.EndDate = dates[0]
+		}
 	}
 
 	// Remove dates for further parsing
-	for _, date := range dates {
+	if edu.StartDate != "" && edu.EndDate != "" {
+		// Try to find and remove the full date range from the line
+		dateRangeRegex2 := regexp.MustCompile(`\b` + regexp.QuoteMeta(edu.StartDate) + `\s*[-–—]\s*` + regexp.QuoteMeta(edu.EndDate) + `\b`)
+		if match := dateRangeRegex2.FindString(line); match != "" {
+			line = strings.Replace(line, match, "", 1)
+		}
+	}
+	// Also remove individual dates
+	allDates := p.dateRegex.FindAllString(line, -1)
+	for _, date := range allDates {
 		line = strings.Replace(line, date, "", 1)
 	}
 
