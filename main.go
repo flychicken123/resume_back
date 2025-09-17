@@ -231,6 +231,7 @@ func main() {
 		// Resume History routes using new controllers
 		protected.GET("/resume/history", resumeController.GetHistory)
 		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
+		protected.PUT("/resume/history/:id/rename", resumeController.RenameResume)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
 		
 		// Protected resume generation (saves to history)

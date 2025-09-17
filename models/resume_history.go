@@ -83,6 +83,24 @@ func (m *ResumeHistoryModel) DeleteByID(id, userID int) error {
 	return nil
 }
 
+func (m *ResumeHistoryModel) UpdateResumeName(id, userID int, newName string) error {
+	query := `UPDATE resume_history SET resume_name = $1 WHERE id = $2 AND user_id = $3`
+	result, err := m.DB.Exec(query, newName, id, userID)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+
+	if rowsAffected == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 func (m *ResumeHistoryModel) CleanupOldResumes(userID int, keepCount int) error {
 	query := `
 		DELETE FROM resume_history
