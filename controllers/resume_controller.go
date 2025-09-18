@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 
@@ -113,6 +114,52 @@ func (c *ResumeController) DeleteHistory(ctx *gin.Context) {
 	})
 }
 
+func (c *ResumeController) RenameResume(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	historyID := ctx.Param("id")
+	if historyID == "" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "History ID is required"})
+		return
+	}
+
+	// Convert historyID to int
+	var id int
+	if _, err := fmt.Sscanf(historyID, "%d", &id); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid history ID"})
+		return
+	}
+
+	// Parse request body
+	var req struct {
+		ResumeName string `json:"resume_name" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Resume name is required"})
+		return
+	}
+
+	// Update the resume name
+	err := c.resumeHistoryModel.UpdateResumeName(id, userID.(int), req.ResumeName)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			ctx.JSON(http.StatusNotFound, gin.H{"error": "Resume not found or access denied"})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to rename resume"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Resume renamed successfully",
+	})
+}
+
 func (c *ResumeController) DownloadResume(ctx *gin.Context) {
 	filename := ctx.Param("filename")
 	if filename == "" {
@@ -133,13 +180,18 @@ func (c *ResumeController) DownloadResume(ctx *gin.Context) {
 		return
 	}
 
-	// Record download in history
+	// Record download in history (optional, don't fail the download if this fails)
 	err = c.resumeService.RecordDownload(userID.(int), filename, presignedURL)
 	if err != nil {
 		// Log the error but don't fail the download
 		fmt.Printf("Failed to record download: %v\n", err)
 	}
 
-	// Redirect to the presigned URL
-	ctx.Redirect(http.StatusTemporaryRedirect, presignedURL)
+	// Return the presigned URL as JSON instead of redirecting
+	// This avoids CORS issues when the frontend tries to follow the redirect
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"downloadUrl": presignedURL,
+		"filename": filename,
+	})
 }
