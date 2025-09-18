@@ -3,6 +3,7 @@ package controllers
 import (
 	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -166,7 +167,11 @@ func (ac *AdminController) UpdateUserMembership(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start transaction"})
 		return
 	}
-	defer tx.Rollback()
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			fmt.Printf("admin membership rollback failed: %v\n", rbErr)
+		}
+	}()
 
 	result, err := tx.Exec(`
         UPDATE users

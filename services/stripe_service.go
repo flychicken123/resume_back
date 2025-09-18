@@ -214,19 +214,18 @@ func (s *StripeService) handleCheckoutCompleted(session *stripe.CheckoutSession)
 	}
 
 	// Update user with customer ID
-	_, err := s.db.Exec(`
+	if _, err := s.db.Exec(`
 		UPDATE users
 		SET stripe_customer_id = $1,
 		    subscription_plan_id = $2,
 		    subscription_status = 'active'
 		WHERE id = $3
-	`, session.Customer.ID, planID, userID)
-	if err != nil {
+	`, session.Customer.ID, planID, userID); err != nil {
 		return err
 	}
 
 	// Create subscription record
-	_, err = s.db.Exec(`
+	if _, err := s.db.Exec(`
 		INSERT INTO user_subscriptions (
 			user_id, plan_id, stripe_subscription_id, stripe_customer_id,
 			status, current_period_start, current_period_end
@@ -239,9 +238,11 @@ func (s *StripeService) handleCheckoutCompleted(session *stripe.CheckoutSession)
 			current_period_end = $7,
 			updated_at = CURRENT_TIMESTAMP
 	`, userID, planID, session.Subscription.ID, session.Customer.ID,
-		"active", time.Now(), time.Now().AddDate(0, 1, 0))
+		"active", time.Now(), time.Now().AddDate(0, 1, 0)); err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // handleSubscriptionUpdated processes subscription updates
@@ -249,7 +250,7 @@ func (s *StripeService) handleSubscriptionUpdated(sub *stripe.Subscription) erro
 	customerID := sub.Customer.ID
 
 	// Update subscription status
-	_, err := s.db.Exec(`
+	if _, err := s.db.Exec(`
 		UPDATE user_subscriptions
 		SET status = $1,
 		    current_period_start = $2,
@@ -261,16 +262,20 @@ func (s *StripeService) handleSubscriptionUpdated(sub *stripe.Subscription) erro
 		time.Unix(sub.CurrentPeriodStart, 0),
 		time.Unix(sub.CurrentPeriodEnd, 0),
 		sub.CancelAtPeriodEnd,
-		customerID)
+		customerID); err != nil {
+		return err
+	}
 
 	// Update user status
-	_, err = s.db.Exec(`
+	if _, err := s.db.Exec(`
 		UPDATE users
 		SET subscription_status = $1
 		WHERE stripe_customer_id = $2
-	`, sub.Status, customerID)
+	`, sub.Status, customerID); err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // handleSubscriptionCanceled processes subscription cancellation
