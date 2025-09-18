@@ -31,10 +31,10 @@ type GoogleLoginRequest struct {
 }
 
 type AuthResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	User    string `json:"user,omitempty"`
-	Token   string `json:"token,omitempty"`
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	User    interface{} `json:"user,omitempty"`
+	Token   string      `json:"token,omitempty"`
 }
 
 type UserProfile struct {
@@ -44,13 +44,14 @@ type UserProfile struct {
 }
 
 type Claims struct {
-	UserID int    `json:"user_id"`
-	Email  string `json:"email"`
+	UserID  int    `json:"user_id"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
 // GenerateJWT creates a JWT token for the user
-func GenerateJWT(userID int, email string) (string, error) {
+func GenerateJWT(userID int, email string, isAdmin bool) (string, error) {
 	secret := os.Getenv("JWT_SECRET")
 	if secret == "" {
 		secret = "your-secret-key"
@@ -62,8 +63,9 @@ func GenerateJWT(userID int, email string) (string, error) {
 	}
 
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:  userID,
+		Email:   email,
+		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Duration(expirationHours) * time.Hour)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -138,6 +140,7 @@ func AuthMiddleware() gin.HandlerFunc {
 		// Set user information in context
 		c.Set("user_id", claims.UserID)
 		c.Set("user_email", claims.Email)
+		c.Set("is_admin", claims.IsAdmin)
 		c.Next()
 	}
 }
@@ -184,8 +187,9 @@ func RegisterUser(db *sql.DB) gin.HandlerFunc {
 
 		// Insert new user
 		var userID int
-		err = db.QueryRow("INSERT INTO users (email, password, name, created_at) VALUES ($1, $2, $3, $4) RETURNING id",
-			req.Email, string(hashedPassword), req.Name, time.Now()).Scan(&userID)
+		var isAdmin bool
+		err = db.QueryRow("INSERT INTO users (email, password, name, created_at) VALUES ($1, $2, $3, $4) RETURNING id, is_admin",
+			req.Email, string(hashedPassword), req.Name, time.Now()).Scan(&userID, &isAdmin)
 		if err != nil {
 			log.Printf("Database error during user creation: %v", err)
 			c.JSON(http.StatusInternalServerError, AuthResponse{
@@ -196,7 +200,7 @@ func RegisterUser(db *sql.DB) gin.HandlerFunc {
 		}
 
 		// Generate JWT token
-		token, err := GenerateJWT(userID, req.Email)
+		token, err := GenerateJWT(userID, req.Email, isAdmin)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, AuthResponse{
 				Success: false,
@@ -208,8 +212,13 @@ func RegisterUser(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "User registered successfully",
-			User:    req.Email,
-			Token:   token,
+			User: gin.H{
+				"id":       userID,
+				"email":    req.Email,
+				"name":     req.Name,
+				"is_admin": isAdmin,
+			},
+			Token: token,
 		})
 	}
 }
@@ -229,7 +238,8 @@ func LoginUser(db *sql.DB) gin.HandlerFunc {
 		var hashedPassword string
 		var userID int
 		var name string
-		err := db.QueryRow("SELECT id, password, name FROM users WHERE email = $1", req.Email).Scan(&userID, &hashedPassword, &name)
+		var isAdmin bool
+		err := db.QueryRow("SELECT id, password, name, is_admin FROM users WHERE email = $1", req.Email).Scan(&userID, &hashedPassword, &name, &isAdmin)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, AuthResponse{
 				Success: false,
@@ -249,7 +259,7 @@ func LoginUser(db *sql.DB) gin.HandlerFunc {
 		}
 
 		// Generate JWT token
-		token, err := GenerateJWT(userID, req.Email)
+		token, err := GenerateJWT(userID, req.Email, isAdmin)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, AuthResponse{
 				Success: false,
@@ -261,8 +271,13 @@ func LoginUser(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "Login successful",
-			User:    req.Email,
-			Token:   token,
+			User: gin.H{
+				"id":       userID,
+				"email":    req.Email,
+				"name":     name,
+				"is_admin": isAdmin,
+			},
+			Token: token,
 		})
 	}
 }
@@ -283,11 +298,12 @@ func GoogleLogin(db *sql.DB) gin.HandlerFunc {
 		// In a production app, you'd want to verify the Google token
 		var userID int
 		var name string
-		err := db.QueryRow("SELECT id, name FROM users WHERE email = $1", req.Email).Scan(&userID, &name)
+		var isAdmin bool
+		err := db.QueryRow("SELECT id, name, is_admin FROM users WHERE email = $1", req.Email).Scan(&userID, &name, &isAdmin)
 		if err != nil {
 			// User doesn't exist, create them
-			err = db.QueryRow("INSERT INTO users (email, name, password) VALUES ($1, $2, $3) RETURNING id, name",
-				req.Email, req.Email, "google_oauth_user").Scan(&userID, &name)
+			err = db.QueryRow("INSERT INTO users (email, name, password) VALUES ($1, $2, $3) RETURNING id, name, is_admin",
+				req.Email, req.Email, "google_oauth_user").Scan(&userID, &name, &isAdmin)
 			if err != nil {
 				c.JSON(http.StatusInternalServerError, AuthResponse{
 					Success: false,
@@ -298,7 +314,7 @@ func GoogleLogin(db *sql.DB) gin.HandlerFunc {
 		}
 
 		// Generate JWT token
-		token, err := GenerateJWT(userID, req.Email)
+		token, err := GenerateJWT(userID, req.Email, isAdmin)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, AuthResponse{
 				Success: false,
@@ -310,8 +326,13 @@ func GoogleLogin(db *sql.DB) gin.HandlerFunc {
 		c.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "Google login successful",
-			User:    req.Email,
-			Token:   token,
+			User: gin.H{
+				"id":       userID,
+				"email":    req.Email,
+				"name":     name,
+				"is_admin": isAdmin,
+			},
+			Token: token,
 		})
 	}
 }

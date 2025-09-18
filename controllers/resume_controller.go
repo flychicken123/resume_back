@@ -13,12 +13,14 @@ import (
 type ResumeController struct {
 	resumeHistoryModel *models.ResumeHistoryModel
 	resumeService      *services.ResumeService
+	s3Service          *services.S3Service
 }
 
-func NewResumeController(resumeHistoryModel *models.ResumeHistoryModel, resumeService *services.ResumeService) *ResumeController {
+func NewResumeController(resumeHistoryModel *models.ResumeHistoryModel, resumeService *services.ResumeService, s3Service *services.S3Service) *ResumeController {
 	return &ResumeController{
 		resumeHistoryModel: resumeHistoryModel,
 		resumeService:      resumeService,
+		s3Service:          s3Service,
 	}
 }
 
@@ -54,22 +56,60 @@ func (c *ResumeController) DeleteHistory(ctx *gin.Context) {
 		return
 	}
 
-	// Convert historyID to int (you might want to add proper validation)
+	// Convert historyID to int
 	var id int
 	if _, err := fmt.Sscanf(historyID, "%d", &id); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid history ID"})
 		return
 	}
 
-	err := c.resumeHistoryModel.DeleteByID(id, userID.(int))
+	// First get the S3 path before deleting from database
+	histories, err := c.resumeHistoryModel.GetByUserID(userID.(int))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch resume history"})
+		return
+	}
+
+	var s3Path string
+	for _, history := range histories {
+		if history.ID == id {
+			s3Path = history.S3Path
+			break
+		}
+	}
+
+	// Delete from database
+	err = c.resumeHistoryModel.DeleteByID(id, userID.(int))
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to delete resume from history"})
 		return
 	}
 
+	// Delete from S3 if s3Service is available and path exists
+	if c.s3Service != nil && s3Path != "" {
+		// Extract filename from S3 path
+		// S3 path format: https://bucket.s3.region.amazonaws.com/filename
+		// We need just the filename
+		parts := []string{}
+		for i := len(s3Path) - 1; i >= 0; i-- {
+			if s3Path[i] == '/' {
+				parts = append(parts, s3Path[i+1:])
+				break
+			}
+		}
+
+		if len(parts) > 0 {
+			fileName := parts[0]
+			if err := c.s3Service.DeleteFile(fileName); err != nil {
+				// Log error but don't fail the request
+				fmt.Printf("Warning: Failed to delete file from S3: %v\n", err)
+			}
+		}
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "Resume deleted from history",
+		"message": "Resume deleted from history and storage",
 	})
 }
 

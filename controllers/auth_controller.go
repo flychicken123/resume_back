@@ -35,10 +35,10 @@ type LoginRequest struct {
 }
 
 type AuthResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	User    string `json:"user,omitempty"`
-	Token   string `json:"token,omitempty"`
+	Success bool        `json:"success"`
+	Message string      `json:"message"`
+	User    interface{} `json:"user,omitempty"`
+	Token   string      `json:"token,omitempty"`
 }
 
 func (c *AuthController) Register(ctx *gin.Context) {
@@ -82,7 +82,7 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := c.jwtService.GenerateToken(user.ID, user.Email)
+	token, err := c.jwtService.GenerateToken(user.ID, user.Email, user.IsAdmin)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -94,8 +94,13 @@ func (c *AuthController) Register(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, AuthResponse{
 		Success: true,
 		Message: "Registration successful",
-		User:    user.Email,
-		Token:   token,
+		User: gin.H{
+			"id":       user.ID,
+			"email":    user.Email,
+			"name":     user.Name,
+			"is_admin": user.IsAdmin,
+		},
+		Token: token,
 	})
 }
 
@@ -130,7 +135,7 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := c.jwtService.GenerateToken(user.ID, user.Email)
+	token, err := c.jwtService.GenerateToken(user.ID, user.Email, user.IsAdmin)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -142,8 +147,13 @@ func (c *AuthController) Login(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, AuthResponse{
 		Success: true,
 		Message: "Login successful",
-		User:    user.Email,
-		Token:   token,
+		User: gin.H{
+			"id":       user.ID,
+			"email":    user.Email,
+			"name":     user.Name,
+			"is_admin": user.IsAdmin,
+		},
+		Token: token,
 	})
 }
 
@@ -208,7 +218,7 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 	}
 
 	// Generate JWT token
-	token, err := c.jwtService.GenerateToken(user.ID, user.Email)
+	token, err := c.jwtService.GenerateToken(user.ID, user.Email, user.IsAdmin)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -222,15 +232,25 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 		ctx.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "Google account created and login successful",
-			User:    user.Email,
-			Token:   token,
+			User: gin.H{
+				"id":       user.ID,
+				"email":    user.Email,
+				"name":     user.Name,
+				"is_admin": user.IsAdmin,
+			},
+			Token: token,
 		})
 	} else {
 		ctx.JSON(http.StatusOK, AuthResponse{
 			Success: true,
 			Message: "Google login successful",
-			User:    user.Email,
-			Token:   token,
+			User: gin.H{
+				"id":       user.ID,
+				"email":    user.Email,
+				"name":     user.Name,
+				"is_admin": user.IsAdmin,
+			},
+			Token: token,
 		})
 	}
 }

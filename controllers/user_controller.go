@@ -37,9 +37,10 @@ func (c *UserController) GetProfile(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"user": gin.H{
-			"id":    user.ID,
-			"email": user.Email,
-			"name":  user.Name,
+			"id":       user.ID,
+			"email":    user.Email,
+			"name":     user.Name,
+			"is_admin": user.IsAdmin,
 		},
 	})
 }

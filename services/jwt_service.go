@@ -18,15 +18,17 @@ func NewJWTService(secretKey string) *JWTService {
 }
 
 type Claims struct {
-	UserID int    `json:"user_id"`
-	Email  string `json:"email"`
+	UserID  int    `json:"user_id"`
+	Email   string `json:"email"`
+	IsAdmin bool   `json:"is_admin"`
 	jwt.RegisteredClaims
 }
 
-func (s *JWTService) GenerateToken(userID int, email string) (string, error) {
+func (s *JWTService) GenerateToken(userID int, email string, isAdmin bool) (string, error) {
 	claims := Claims{
-		UserID: userID,
-		Email:  email,
+		UserID:  userID,
+		Email:   email,
+		IsAdmin: isAdmin,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(24 * time.Hour)),
 			NotBefore: jwt.NewNumericDate(time.Now()),

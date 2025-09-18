@@ -21,7 +21,7 @@ import (
 func main() {
 	// Initialize structured logger
 	logger := utils.NewLogger()
-	
+
 	dbConfig := config.GetDatabaseConfig()
 
 	logger.Info("Starting application", map[string]interface{}{
@@ -58,15 +58,23 @@ func main() {
 		log.Fatal("Error initializing S3 service:", err)
 	}
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
+	stripeService := services.NewStripeService(db)
+
+	// Initialize Stripe products (only run this once or on startup)
+	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
+		log.Printf("Warning: Could not initialize Stripe products: %v", err)
+	}
 
 	// Initialize controllers
 	authController := controllers.NewAuthController(userModel, jwtService)
-	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService)
+	resumeController := controllers.NewResumeController(resumeHistoryModel, resumeService, s3Service)
 	userController := controllers.NewUserController(userModel, resumeModel)
 	projectController := controllers.NewProjectController(projectModel)
+	subscriptionController := controllers.NewSubscriptionController(db, stripeService)
+	adminController := controllers.NewAdminController(db)
 
 	r := gin.Default()
-	
+
 	// Create rate limiters and caches
 	rateLimiters := middleware.CreateRateLimiters()
 	caches := middleware.CreateCaches()
@@ -194,25 +202,23 @@ func main() {
 		public.POST("/experience/optimize", handlers.OptimizeExperience)
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
-		
+
 		// New grammar improvement endpoints
 		public.POST("/experience/improve-grammar", handlers.ImproveExperienceGrammar)
 		public.POST("/summary/improve-grammar", handlers.ImproveSummaryGrammar)
 		public.POST("/project/optimize", handlers.OptimizeProject)
 		public.POST("/project/improve-grammar", handlers.ImproveProjectGrammar)
-		
+
 		// New final step AI endpoints
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
-		
-		// Resume generation endpoints (public - no history saving)
-		public.POST("/resume/generate", handlers.GenerateResume)
-		public.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
+
+		// Resume parsing (no limit needed)
 		public.POST("/resume/parse", handlers.ParseResume)
-		
+
 		// Job extraction endpoint
 		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
-		
+
 		// Job automation endpoints removed - feature in development
 	}
 
@@ -232,17 +238,42 @@ func main() {
 		protected.GET("/resume/history", resumeController.GetHistory)
 		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
-		
-		// Protected resume generation (saves to history)
-		protected.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
-		
+
 		// Project routes
 		protected.GET("/projects/resume/:resumeId", projectController.GetProjectsByResumeID)
 		protected.POST("/projects", projectController.CreateProject)
 		protected.PUT("/projects/:id", projectController.UpdateProject)
 		protected.DELETE("/projects/:id", projectController.DeleteProject)
-		
-		// Job automation routes removed - feature in development
+
+		// Subscription routes
+		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)
+		protected.GET("/subscription/usage", subscriptionController.GetUsageStats)
+		protected.POST("/subscription/checkout", subscriptionController.CreateCheckoutSession)
+		protected.POST("/subscription/cancel", subscriptionController.CancelSubscription)
+		protected.POST("/subscription/portal", subscriptionController.CreateCustomerPortal)
+		protected.GET("/subscription/check-limit", subscriptionController.CheckResumeLimit)
+		protected.POST("/subscription/confirm", subscriptionController.ConfirmSuccess)
+
+		admin := protected.Group("/admin")
+		admin.Use(middleware.RequireAdmin())
+		{
+			admin.GET("/memberships/users", adminController.ListUsers)
+			admin.PUT("/memberships/users/:id", adminController.UpdateUserMembership)
+		}
+	}
+
+	// Public subscription routes
+	api.GET("/plans", subscriptionController.GetPlans)
+	api.POST("/webhook/stripe", subscriptionController.HandleStripeWebhook)
+
+	// Apply subscription limit middleware to resume generation endpoints
+	resumeGenRoutes := r.Group("/api")
+	resumeGenRoutes.Use(handlers.AuthMiddleware()) // Auth is required to track usage
+	resumeGenRoutes.Use(middleware.CheckResumeLimitMiddleware(db))
+	{
+		resumeGenRoutes.POST("/resume/generate", handlers.GenerateResume)
+		resumeGenRoutes.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
+		resumeGenRoutes.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
 	}
 
 	log.Println("Server starting on port 8081")

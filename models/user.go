@@ -13,6 +13,7 @@ type User struct {
 	AuthProvider   string    `json:"auth_provider"`
 	GoogleID       string    `json:"google_id,omitempty"`
 	ProfilePicture string    `json:"profile_picture,omitempty"`
+	IsAdmin        bool      `json:"is_admin"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
 }
@@ -34,10 +35,10 @@ func (m *UserModel) CreateWithProvider(email, name, password, authProvider, goog
 	query := `
 		INSERT INTO users (email, name, password, auth_provider, google_id, profile_picture, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
-		RETURNING id, email, name, auth_provider, google_id, profile_picture, created_at, updated_at
+		RETURNING id, email, name, auth_provider, google_id, profile_picture, is_admin, created_at, updated_at
 	`
 	err := m.DB.QueryRow(query, email, name, password, authProvider, googleID, profilePicture, time.Now()).Scan(
-		&user.ID, &user.Email, &user.Name, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.CreatedAt, &user.UpdatedAt,
+		&user.ID, &user.Email, &user.Name, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.IsAdmin, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -52,11 +53,12 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		       COALESCE(auth_provider, 'email') as auth_provider, 
 		       google_id, 
 		       profile_picture, 
+		       is_admin, 
 		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
 	err := m.DB.QueryRow(query, email).Scan(
-		&user.ID, &user.Email, &user.Name, &user.Password, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.CreatedAt, &user.UpdatedAt,
+		&user.ID, &user.Email, &user.Name, &user.Password, &user.AuthProvider, &user.GoogleID, &user.ProfilePicture, &user.IsAdmin, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -67,11 +69,11 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 func (m *UserModel) GetByID(id int) (*User, error) {
 	user := &User{}
 	query := `
-		SELECT id, email, name, created_at, updated_at
+		SELECT id, email, name, is_admin, created_at, updated_at
 		FROM users WHERE id = $1
 	`
 	err := m.DB.QueryRow(query, id).Scan(
-		&user.ID, &user.Email, &user.Name, &user.CreatedAt, &user.UpdatedAt,
+		&user.ID, &user.Email, &user.Name, &user.IsAdmin, &user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, err
