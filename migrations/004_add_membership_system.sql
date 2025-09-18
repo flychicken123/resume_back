@@ -63,9 +63,9 @@ CREATE TABLE IF NOT EXISTS payment_history (
 INSERT INTO subscription_plans (name, display_name, price, resume_limit, resume_period, features) VALUES
 ('free', 'Free Plan', 0.00, 1, 'weekly',
  '{"features": ["1 resume per week", "Basic templates", "PDF export", "Email support"]}'),
-('premium', 'Premium Plan', 0.01, 30, 'monthly',
+('premium', 'Premium Plan', 9.99, 30, 'monthly',
  '{"features": ["30 resumes per month"]}'),
-('ultimate', 'Ultimate Plan', 0.02, 200, 'monthly',
+('ultimate', 'Ultimate Plan', 29.99, 200, 'monthly',
  '{"features": ["200 resumes per month"]}')
 ON CONFLICT (name) DO NOTHING;
 
@@ -176,7 +176,7 @@ CREATE INDEX IF NOT EXISTS idx_users_is_admin ON users(is_admin);
 
 -- Normalize plan pricing for testing environments
 UPDATE subscription_plans
-SET price = 0.01,
+SET price = 9.99,
     features = '{"features": ["30 resumes per month"]}',
     resume_limit = 30,
     resume_period = 'monthly',
@@ -184,9 +184,10 @@ SET price = 0.01,
 WHERE name = 'premium';
 
 UPDATE subscription_plans
-SET price = 0.02,
+SET price = 29.99,
     features = '{"features": ["200 resumes per month"]}',
     resume_limit = 200,
     resume_period = 'monthly',
     updated_at = CURRENT_TIMESTAMP
 WHERE name = 'ultimate';
+

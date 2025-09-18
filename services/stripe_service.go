@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/stripe/stripe-go/v74"
@@ -17,8 +19,19 @@ import (
 	"github.com/stripe/stripe-go/v74/webhook"
 )
 
+type stripePlan struct {
+	ID            int
+	Name          string
+	DisplayName   string
+	PriceCents    int64
+	StripePriceID string
+}
+
 type StripeService struct {
-	db *sql.DB
+	db           *sql.DB
+	planCache    map[string]stripePlan
+	cacheMu      sync.RWMutex
+	lastPlanSync time.Time
 }
 
 func NewStripeService(db *sql.DB) *StripeService {
@@ -27,23 +40,126 @@ func NewStripeService(db *sql.DB) *StripeService {
 	if stripe.Key == "" {
 		fmt.Println("Warning: STRIPE_SECRET_KEY not set")
 	}
-	return &StripeService{db: db}
+	return &StripeService{
+		db:        db,
+		planCache: make(map[string]stripePlan),
+	}
 }
 
-// CreateOrUpdateStripeProducts creates Stripe products and prices for our plans
+func (s *StripeService) getStripePlans() ([]stripePlan, error) {
+	s.cacheMu.RLock()
+	if len(s.planCache) > 0 && time.Since(s.lastPlanSync) < 5*time.Minute {
+		plans := make([]stripePlan, 0, len(s.planCache))
+		for _, p := range s.planCache {
+			plans = append(plans, p)
+		}
+		s.cacheMu.RUnlock()
+		return plans, nil
+	}
+	s.cacheMu.RUnlock()
+
+	rows, err := s.db.Query(`
+        SELECT id, name, display_name, price, stripe_price_id
+        FROM subscription_plans
+        WHERE is_active = true
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load plans: %w", err)
+	}
+	defer rows.Close()
+
+	var plans []stripePlan
+	for rows.Next() {
+		var (
+			id            int
+			name          string
+			displayName   string
+			price         float64
+			stripePriceID sql.NullString
+		)
+		if err := rows.Scan(&id, &name, &displayName, &price, &stripePriceID); err != nil {
+			return nil, fmt.Errorf("failed to scan plan: %w", err)
+		}
+
+		priceCents := int64(math.Round(price * 100))
+		if priceCents <= 0 {
+			continue
+		}
+
+		plans = append(plans, stripePlan{
+			ID:            id,
+			Name:          name,
+			DisplayName:   displayName,
+			PriceCents:    priceCents,
+			StripePriceID: stripePriceID.String,
+		})
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("failed to read plans: %w", err)
+	}
+
+	s.cacheMu.Lock()
+	s.planCache = make(map[string]stripePlan, len(plans))
+	for _, p := range plans {
+		s.planCache[p.Name] = p
+	}
+	s.lastPlanSync = time.Now()
+	s.cacheMu.Unlock()
+
+	return plans, nil
+}
+
+func (s *StripeService) getPlanByName(planName string) (stripePlan, error) {
+	if planName == "" {
+		return stripePlan{}, fmt.Errorf("plan name is required")
+	}
+
+	if _, err := s.getStripePlans(); err != nil {
+		return stripePlan{}, err
+	}
+
+	s.cacheMu.RLock()
+	plan, ok := s.planCache[planName]
+	s.cacheMu.RUnlock()
+	if !ok {
+		return stripePlan{}, fmt.Errorf("plan not found: %s", planName)
+	}
+
+	return plan, nil
+}
+
+func (s *StripeService) getPlanByPriceID(priceID string) (stripePlan, bool, error) {
+	if priceID == "" {
+		return stripePlan{}, false, nil
+	}
+
+	if _, err := s.getStripePlans(); err != nil {
+		return stripePlan{}, false, err
+	}
+
+	s.cacheMu.RLock()
+	defer s.cacheMu.RUnlock()
+
+	for _, plan := range s.planCache {
+		if plan.StripePriceID == priceID {
+			return plan, true, nil
+		}
+	}
+
+	return stripePlan{}, false, nil
+}
+
 func (s *StripeService) CreateOrUpdateStripeProducts() error {
-	plans := []struct {
-		Name        string
-		DisplayName string
-		Price       int64 // in cents
-		PlanID      int
-	}{
-		{"premium", "Premium Plan", 1, 2},   // $0.01
-		{"ultimate", "Ultimate Plan", 2, 3}, // $0.02
+	plans, err := s.getStripePlans()
+	if err != nil {
+		return err
+	}
+	if len(plans) == 0 {
+		return fmt.Errorf("no active subscription plans to sync with Stripe")
 	}
 
 	for _, plan := range plans {
-		// Create or get product
 		productParams := &stripe.ProductParams{
 			Name:        stripe.String(plan.DisplayName),
 			Description: stripe.String(fmt.Sprintf("%s - Resume Builder", plan.DisplayName)),
@@ -55,10 +171,9 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 			return fmt.Errorf("failed to create product %s: %v", plan.Name, err)
 		}
 
-		// Create price
 		priceParams := &stripe.PriceParams{
 			Product:    stripe.String(prod.ID),
-			UnitAmount: stripe.Int64(plan.Price),
+			UnitAmount: stripe.Int64(plan.PriceCents),
 			Currency:   stripe.String("usd"),
 			Recurring: &stripe.PriceRecurringParams{
 				Interval: stripe.String("month"),
@@ -71,37 +186,34 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 			return fmt.Errorf("failed to create price for %s: %v", plan.Name, err)
 		}
 
-		// Update database with Stripe price ID
-		_, err = s.db.Exec(`
+		if _, err := s.db.Exec(`
 			UPDATE subscription_plans
 			SET stripe_price_id = $1, updated_at = CURRENT_TIMESTAMP
 			WHERE id = $2
-		`, priceObj.ID, plan.PlanID)
-		if err != nil {
+		`, priceObj.ID, plan.ID); err != nil {
 			return fmt.Errorf("failed to update plan with stripe price ID: %v", err)
 		}
+		plan.StripePriceID = priceObj.ID
+		s.cacheMu.Lock()
+		s.planCache[plan.Name] = plan
+		s.cacheMu.Unlock()
 	}
 
 	return nil
 }
-
-// CreateCheckoutSession creates a Stripe checkout session for subscription
 func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, cancelURL string) (*stripe.CheckoutSession, error) {
 	// Get plan details
-	var priceID string
-	var planID int
-	err := s.db.QueryRow(`
-		SELECT id, stripe_price_id
-		FROM subscription_plans
-		WHERE name = $1 AND is_active = true
-	`, planName).Scan(&planID, &priceID)
+	plan, err := s.getPlanByName(planName)
 	if err != nil {
 		return nil, fmt.Errorf("plan not found: %v", err)
 	}
 
-	if priceID == "" {
+	if plan.StripePriceID == "" {
 		return nil, fmt.Errorf("stripe price ID not configured for plan %s", planName)
 	}
+
+	planID := plan.ID
+	priceID := plan.StripePriceID
 
 	// Get user email
 	var email string
@@ -382,8 +494,14 @@ func (s *StripeService) ConfirmCheckoutSession(userID int, sessionID string) err
 		if subObj != nil && len(subObj.Items.Data) > 0 {
 			priceID := subObj.Items.Data[0].Price.ID
 			if priceID != "" {
-				// Map price ID to plan ID in DB
-				_ = s.db.QueryRow(`SELECT id FROM subscription_plans WHERE stripe_price_id = $1`, priceID).Scan(&planID)
+				if plan, found, cacheErr := s.getPlanByPriceID(priceID); cacheErr != nil {
+					return cacheErr
+				} else if found {
+					planID = plan.ID
+				} else {
+					// Fallback to database lookup if the price is not in cache yet
+					_ = s.db.QueryRow(`SELECT id FROM subscription_plans WHERE stripe_price_id = $1`, priceID).Scan(&planID)
+				}
 			}
 		}
 		if planID == 0 {
