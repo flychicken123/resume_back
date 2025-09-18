@@ -53,7 +53,9 @@ func (sc *SubscriptionController) GetPlans(c *gin.Context) {
 		}
 
 		var featuresObj map[string]interface{}
-		json.Unmarshal(features, &featuresObj)
+		if err := json.Unmarshal(features, &featuresObj); err != nil {
+			featuresObj = map[string]interface{}{}
+		}
 
 		plans = append(plans, map[string]interface{}{
 			"id":            id,

@@ -283,22 +283,26 @@ func (s *StripeService) handleSubscriptionCanceled(sub *stripe.Subscription) err
 	customerID := sub.Customer.ID
 
 	// Update subscription to canceled
-	_, err := s.db.Exec(`
+	if _, err := s.db.Exec(`
 		UPDATE user_subscriptions
 		SET status = 'canceled',
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE stripe_customer_id = $1
-	`, customerID)
+	`, customerID); err != nil {
+		return err
+	}
 
 	// Revert user to free plan
-	_, err = s.db.Exec(`
+	if _, err := s.db.Exec(`
 		UPDATE users
 		SET subscription_plan_id = 1,
 		    subscription_status = 'free'
 		WHERE stripe_customer_id = $1
-	`, customerID)
+	`, customerID); err != nil {
+		return err
+	}
 
-	return err
+	return nil
 }
 
 // CheckUsageLimit checks if user can generate more resumes
