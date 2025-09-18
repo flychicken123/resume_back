@@ -56,13 +56,13 @@ func (sc *SubscriptionController) GetPlans(c *gin.Context) {
 		json.Unmarshal(features, &featuresObj)
 
 		plans = append(plans, map[string]interface{}{
-			"id":           id,
-			"name":         name,
-			"display_name": displayName,
-			"price":        price,
-			"resume_limit": resumeLimit,
+			"id":            id,
+			"name":          name,
+			"display_name":  displayName,
+			"price":         price,
+			"resume_limit":  resumeLimit,
 			"resume_period": resumePeriod,
-			"features":     featuresObj,
+			"features":      featuresObj,
 		})
 	}
 
@@ -266,12 +266,12 @@ func (sc *SubscriptionController) GetUsageStats(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"usage": gin.H{
-			"can_generate":  canGenerate,
-			"remaining":     remaining,
-			"total_used":    totalUsed,
-			"limit":         planLimit,
-			"period":        planPeriod,
-			"reset_date":    resetDate,
+			"can_generate": canGenerate,
+			"remaining":    remaining,
+			"total_used":   totalUsed,
+			"limit":        planLimit,
+			"period":       planPeriod,
+			"reset_date":   resetDate,
 		},
 	})
 }
@@ -333,28 +333,30 @@ func (sc *SubscriptionController) CheckResumeLimit(c *gin.Context) {
 
 // ConfirmSuccess finalizes a subscription after returning from Stripe Checkout (fallback when webhooks are not available)
 func (sc *SubscriptionController) ConfirmSuccess(c *gin.Context) {
-    userID := c.GetInt("user_id")
-    if userID == 0 {
-        c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
-        return
-    }
+	userID := c.GetInt("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
 
-    sessionID := c.Query("session_id")
-    if sessionID == "" {
-        var req struct{ SessionID string `json:"session_id"` }
-        if err := c.ShouldBindJSON(&req); err == nil {
-            sessionID = req.SessionID
-        }
-    }
-    if sessionID == "" {
-        c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
-        return
-    }
+	sessionID := c.Query("session_id")
+	if sessionID == "" {
+		var req struct {
+			SessionID string `json:"session_id"`
+		}
+		if err := c.ShouldBindJSON(&req); err == nil {
+			sessionID = req.SessionID
+		}
+	}
+	if sessionID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id required"})
+		return
+	}
 
-    if err := sc.stripeService.ConfirmCheckoutSession(userID, sessionID); err != nil {
-        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-        return
-    }
+	if err := sc.stripeService.ConfirmCheckoutSession(userID, sessionID); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
 
-    c.JSON(http.StatusOK, gin.H{"success": true})
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
