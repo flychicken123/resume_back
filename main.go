@@ -59,6 +59,7 @@ func main() {
 	}
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
+	emailService := services.NewEmailService()
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -218,6 +219,9 @@ func main() {
 
 		// Job extraction endpoint
 		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
+		public.POST("/assistant/chat", handlers.ChatAssistant)
+		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
+		public.POST("/contact", handlers.CreateContactRequest(db, emailService))
 
 		// Job automation endpoints removed - feature in development
 	}
