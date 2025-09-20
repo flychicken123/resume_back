@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	"resumeai/services"
 )
 
@@ -172,12 +174,14 @@ If the question is outside scope, briefly say you can only help with HiHired res
 	if len(history) > maxHistory {
 		history = history[len(history)-maxHistory:]
 	}
+	titleCaser := cases.Title(language.English)
 	for _, msg := range history {
 		role := strings.ToLower(msg.Role)
 		if role != "assistant" && role != "bot" {
 			role = "user"
 		}
-		fmt.Fprintf(&historyBuilder, "%s: %s\n", strings.Title(role), strings.TrimSpace(msg.Text))
+		roleTitle := titleCaser.String(role)
+		fmt.Fprintf(&historyBuilder, "%s: %s\n", roleTitle, strings.TrimSpace(msg.Text))
 	}
 
 	knowledgeContext := buildKnowledgeContext(findRelevantKnowledge(userMessage, history))
