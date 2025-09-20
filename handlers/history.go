@@ -2,9 +2,12 @@ package handlers
 
 import (
 	"database/sql"
+	"fmt"
 	"log"
 	"net/http"
+	"resumeai/services"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -188,21 +191,103 @@ func DeleteResumeFromHistory(db *sql.DB) gin.HandlerFunc {
 	}
 }
 
-// cleanupOldResumes removes old resumes beyond the limit of 3
+// cleanupOldResumes removes old resumes beyond the limit of 3 and prunes S3 objects
 func cleanupOldResumes(db *sql.DB, userID int) {
-	query := `
-		DELETE FROM resume_history
+	const selectQuery = `
+		SELECT id, s3_path
+		FROM resume_history
 		WHERE user_id = $1
-		AND id NOT IN (
-			SELECT id FROM resume_history
-			WHERE user_id = $1
-			ORDER BY generated_at DESC
-			LIMIT 3
-		)
+		ORDER BY generated_at DESC, id DESC
+		OFFSET 3
 	`
 
-	_, err := db.Exec(query, userID)
+	rows, err := db.Query(selectQuery, userID)
 	if err != nil {
-		log.Printf("Error cleaning up old resumes: %v", err)
+		log.Printf("Error querying old resumes: %v", err)
+		return
 	}
+	defer rows.Close()
+
+	var ids []int
+	var keys []string
+	for rows.Next() {
+		var (
+			id     int
+			s3Path string
+		)
+		if err := rows.Scan(&id, &s3Path); err != nil {
+			log.Printf("Error scanning old resume row: %v", err)
+			continue
+		}
+		ids = append(ids, id)
+		keys = append(keys, extractS3Key(s3Path))
+	}
+
+	if err := rows.Err(); err != nil {
+		log.Printf("Error iterating old resume rows: %v", err)
+	}
+
+	if len(ids) == 0 {
+		return
+	}
+
+	if svc, err := services.NewS3Service(); err != nil {
+		log.Printf("S3 service not available for cleanup: %v", err)
+	} else {
+		for _, key := range keys {
+			if key == "" {
+				continue
+			}
+			if err := svc.DeleteFile(key); err != nil {
+				log.Printf("Error deleting S3 file %s: %v", key, err)
+			}
+		}
+	}
+
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids)+1)
+	args[0] = userID
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = id
+	}
+
+	deleteQuery := fmt.Sprintf(`
+		DELETE FROM resume_history
+		WHERE user_id = $1
+		AND id IN (%s)
+	`, strings.Join(placeholders, ","))
+
+	if _, err := db.Exec(deleteQuery, args...); err != nil {
+		log.Printf("Error deleting old resume records: %v", err)
+	}
+}
+
+func extractS3Key(s3Path string) string {
+	s3Path = strings.TrimSpace(s3Path)
+	if s3Path == "" {
+		return ""
+	}
+
+	if strings.HasPrefix(s3Path, "http://") || strings.HasPrefix(s3Path, "https://") {
+		if parts := strings.Split(s3Path, ".amazonaws.com/"); len(parts) > 1 {
+			key := parts[1]
+			if idx := strings.Index(key, "?"); idx != -1 {
+				key = key[:idx]
+			}
+			return key
+		}
+
+		if parts := strings.Split(s3Path, "/"); len(parts) >= 4 {
+			key := strings.Join(parts[3:], "/")
+			if idx := strings.Index(key, "?"); idx != -1 {
+				key = key[:idx]
+			}
+			return key
+		}
+
+		return ""
+	}
+
+	return s3Path
 }

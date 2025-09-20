@@ -225,7 +225,7 @@ func GeneratePDFResumeFromHTMLFileWithService(resumeService *services.ResumeServ
 		if userEmail == "" {
 			userEmail = c.GetHeader("X-User-Email")
 		}
-		
+
 		// Expect a multipart form file field named 'html'
 		file, err := c.FormFile("html")
 		if err != nil {
@@ -288,18 +288,18 @@ func GeneratePDFResumeFromHTMLFileWithService(resumeService *services.ResumeServ
 		// Generate presigned URL for response
 		if presigned, preErr := s3svc.GeneratePresignedURL(key); preErr == nil {
 			c.JSON(http.StatusOK, gin.H{
-				"message": "PDF generated", 
+				"message":     "PDF generated",
 				"downloadURL": presigned,
-				"filename": pdfFilename,
-				"s3Path": key,
+				"filename":    pdfFilename,
+				"s3Path":      key,
 			})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{
-			"message": "PDF generated", 
+			"message":     "PDF generated",
 			"downloadURL": url,
-			"filename": pdfFilename,
-			"s3Path": key,
+			"filename":    pdfFilename,
+			"s3Path":      key,
 		})
 	}
 }
@@ -341,110 +341,34 @@ func DownloadResume(db *sql.DB) gin.HandlerFunc {
 		if userExists && dbExists {
 			fmt.Printf("Recording download in history for user %v\n", userID)
 
-			// Create resume name from filename
 			resumeName := strings.TrimSuffix(filename, ".pdf")
 			resumeName = strings.ReplaceAll(resumeName, "_", " ")
 			resumeName = cases.Title(language.English).String(resumeName)
 			fmt.Printf("Resume name: %s\n", resumeName)
 
-			// Add to history
-			go func() {
+			go func(savedKey string) {
+				userIDInt, ok := userID.(int)
+				if !ok {
+					if v, okFloat := userID.(float64); okFloat {
+						userIDInt = int(v)
+					} else {
+						fmt.Printf("unable to convert userID %v to int\n", userID)
+						return
+					}
+				}
+
 				query := `
 				INSERT INTO resume_history (user_id, resume_name, s3_path, generated_at)
 				VALUES ($1, $2, $3, $4)
-			`
-				_, insertErr := db.Exec(query, userID, resumeName, presignedURL, time.Now())
-				if insertErr != nil {
+				`
+				if _, insertErr := db.Exec(query, userIDInt, resumeName, savedKey, time.Now()); insertErr != nil {
 					fmt.Printf("Error saving to resume history: %v\n", insertErr)
 				} else {
 					fmt.Printf("Successfully saved to resume history\n")
 				}
 
-				// Clean up old resumes (keep only last 3)
-				// First, get the S3 keys of records that will be deleted
-				getOldRecordsQuery := `
-				SELECT s3_path FROM resume_history
-				WHERE user_id = $1
-				AND id NOT IN (
-					SELECT id FROM resume_history
-					WHERE user_id = $1
-					ORDER BY generated_at DESC
-					LIMIT 3
-				)
-			`
-				rows, queryErr := db.Query(getOldRecordsQuery, userID)
-				if queryErr != nil {
-					fmt.Printf("Error querying old records: %v\n", queryErr)
-				} else {
-					defer rows.Close()
-
-					// Collect S3 keys to delete
-					var s3KeysToDelete []string
-					for rows.Next() {
-						var s3Path string
-						if err := rows.Scan(&s3Path); err != nil {
-							fmt.Printf("Error scanning s3_path: %v\n", err)
-							continue
-						}
-
-						// Extract the S3 key from the presigned URL or s3_path
-						// The s3_path might be a presigned URL, so we need to extract the key
-						if strings.Contains(s3Path, "resumes/") {
-							// If it's already a key, use it directly
-							s3KeysToDelete = append(s3KeysToDelete, s3Path)
-						} else if strings.Contains(s3Path, "amazonaws.com/") {
-							// If it's a presigned URL, extract the key
-							urlParts := strings.Split(s3Path, "amazonaws.com/")
-							if len(urlParts) > 1 {
-								key := urlParts[1]
-								// Remove query parameters if any
-								if strings.Contains(key, "?") {
-									key = strings.Split(key, "?")[0]
-								}
-								s3KeysToDelete = append(s3KeysToDelete, key)
-							}
-						}
-					}
-
-					// Delete old records from database
-					cleanupQuery := `
-					DELETE FROM resume_history
-					WHERE user_id = $1
-					AND id NOT IN (
-						SELECT id FROM resume_history
-						WHERE user_id = $1
-						ORDER BY generated_at DESC
-						LIMIT 3
-					)
-				`
-					_, cleanupErr := db.Exec(cleanupQuery, userID)
-					if cleanupErr != nil {
-						fmt.Printf("Error cleaning up old resumes from database: %v\n", cleanupErr)
-					} else {
-						fmt.Printf("Successfully cleaned up old database records\n")
-					}
-
-					// Delete corresponding S3 files
-					if len(s3KeysToDelete) > 0 {
-						fmt.Printf("Deleting %d old S3 files: %v\n", len(s3KeysToDelete), s3KeysToDelete)
-
-						// Get S3 service
-						s3svc, s3err := services.NewS3Service()
-						if s3err != nil {
-							fmt.Printf("S3 service not available for cleanup: %v\n", s3err)
-						} else {
-							// Delete each S3 file
-							for _, key := range s3KeysToDelete {
-								if err := s3svc.DeleteFile(key); err != nil {
-									fmt.Printf("Error deleting S3 file %s: %v\n", key, err)
-								} else {
-									fmt.Printf("Successfully deleted S3 file: %s\n", key)
-								}
-							}
-						}
-					}
-				}
-			}()
+				cleanupOldResumes(db, userIDInt)
+			}(key)
 		} else {
 			fmt.Printf("Not recording history - userExists: %v, dbExists: %v\n", userExists, dbExists)
 		}
