@@ -191,10 +191,10 @@ func GeneratePDFResume(c *gin.Context) {
 		localURL := fmt.Sprintf("/static/%s", filename)
 		fmt.Printf("S3 upload failed: %v. Serving local file %s\n", uploadErr, localURL)
 		c.JSON(http.StatusOK, gin.H{
-			"message":        "PDF generated locally; cloud storage unavailable",
-			"downloadURL":    localURL,
-			"filename":       filename,
-			"storage":        "local",
+			"message":       "PDF generated locally; cloud storage unavailable",
+			"downloadURL":   localURL,
+			"filename":      filename,
+			"storage":       "local",
 			"s3UploadError": uploadErr.Error(),
 		})
 		return
@@ -283,8 +283,15 @@ func GeneratePDFResumeFromHTMLFileWithService(resumeService *services.ResumeServ
 		key := "resumes/" + pdfFilename
 		url, uploadErr := s3svc.UploadFile(pdfPath, key)
 		if uploadErr != nil {
-			fmt.Printf("S3 upload failed: %v\n", uploadErr)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to upload PDF to storage"})
+			localURL := fmt.Sprintf("/static/%s", pdfFilename)
+			fmt.Printf("S3 upload failed: %v. Serving local file %s\n", uploadErr, localURL)
+			c.JSON(http.StatusOK, gin.H{
+				"message":       "PDF generated locally; cloud storage unavailable",
+				"downloadURL":   localURL,
+				"filename":      pdfFilename,
+				"storage":       "local",
+				"s3UploadError": uploadErr.Error(),
+			})
 			return
 		}
 
