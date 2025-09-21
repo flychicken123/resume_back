@@ -67,10 +67,18 @@ func (s *S3Service) UploadFile(filePath, fileName string) (string, error) {
 		// The bucket should be configured for public read access
 	}
 
-	// Upload to S3
-	_, err = s.s3Client.PutObject(input)
-	if err != nil {
-		return "", fmt.Errorf("failed to upload to S3: %v", err)
+	// Upload to S3 with simple retries to handle transient network issues
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		_, lastErr = s.s3Client.PutObject(input)
+		if lastErr == nil {
+			break
+		}
+		log.Printf("S3 upload attempt %d failed: %v", attempt, lastErr)
+		time.Sleep(time.Duration(attempt) * 500 * time.Millisecond)
+	}
+	if lastErr != nil {
+		return "", fmt.Errorf("failed to upload to S3 after retries: %v", lastErr)
 	}
 
 	// Generate download URL
