@@ -71,6 +71,8 @@ def generate_pdf_resume(template_name, user_data, output_path):
             print(f"Error reading HTML for logging: {e}")
         
         # Convert HTML to PDF using wkhtmltopdf with minimal margins
+        # Slight zoom (>1.0) compensates for wkhtmltopdf rendering slightly smaller glyphs
+        zoom = os.getenv('WKHTMLTOPDF_ZOOM', '1.0')
         cmd = [
             'wkhtmltopdf',
             '--page-size', 'Letter',
@@ -81,11 +83,11 @@ def generate_pdf_resume(template_name, user_data, output_path):
             '--margin-bottom', '5',
             '--margin-left', '5',
             '--print-media-type',
-            '--zoom', '0.88',  # Smaller zoom to fit more content per page
+            '--zoom', str(zoom),  # Slight upscale to better match on-screen preview
             '--dpi', '96',
             '--disable-smart-shrinking',
-            # Aggressive CSS to compress content and match preview density with page-break control
-            '--user-style-sheet', 'data:text/css,*{margin:0!important;padding:0!important;box-sizing:border-box!important;}body{margin:0!important;padding:0!important;line-height:1.15!important;font-size:95%!important;}p,div,li{margin:0!important;padding:1px 0!important;line-height:1.15!important;page-break-inside:avoid!important;}section{margin:4px 0!important;padding:0!important;page-break-inside:avoid!important;}h1,h2,h3,h4{margin:2px 0!important;padding:0!important;page-break-after:avoid!important;}ul{margin:0!important;padding-left:15px!important;page-break-inside:avoid!important;}li{margin:0!important;padding:0!important;page-break-inside:avoid!important;}.preview{padding:5px!important;}li:has(ul){page-break-inside:avoid!important;}',
+            # Keep pagination helpers but avoid shrinking text relative to preview
+            '--user-style-sheet', 'data:text/css,body{margin:0;padding:0;font-size:100%;}*{box-sizing:border-box;}p,div,li{page-break-inside:avoid;}section{page-break-inside:avoid;}h1,h2,h3,h4{page-break-after:avoid;margin-top:4px;margin-bottom:4px;}ul{padding-left:18px;page-break-inside:avoid;}li{page-break-inside:avoid;margin-bottom:2px;}li ul{page-break-inside:avoid;}.preview{padding:8px;}@page{margin:0;}',
             html_path,
             output_path
         ]
