@@ -78,10 +78,10 @@ def generate_pdf_resume(template_name, user_data, output_path):
             '--page-size', 'Letter',
             '--page-height', '11in',  # Standard Letter height
             # Minimal margins to maximize content space
-            '--margin-top', '5',
-            '--margin-right', '5',
-            '--margin-bottom', '5',
-            '--margin-left', '5',
+            '--margin-top', '0',
+            '--margin-right', '0',
+            '--margin-bottom', '0',
+            '--margin-left', '0',
             '--print-media-type',
             '--zoom', str(zoom),  # Slight upscale to better match on-screen preview
             '--dpi', '96',
