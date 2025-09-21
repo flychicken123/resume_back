@@ -99,15 +99,15 @@ func ParseResume(c *gin.Context) {
 
 	// Method 1: Use our Go-based parser (primary method)
 	fmt.Printf("[parse] Attempting Go-based extraction...\n")
-	
+
 	extractor := parsers.NewPDFExtractor()
 	rawText, extractErr := extractor.ExtractFromFile(tempFile)
-	
+
 	var extracted map[string]interface{}
-	
+
 	if extractErr != nil || strings.TrimSpace(rawText) == "" {
 		fmt.Printf("[parse] Go extraction failed: %v, falling back to Python...\n", extractErr)
-		
+
 		// Method 2: Fallback to Python script
 		extracted = fallbackToPython(tempFile)
 		if extracted == nil {
@@ -125,17 +125,17 @@ func ParseResume(c *gin.Context) {
 	}
 	// Skip the complex Go parser and go straight to AI for better accuracy
 	fmt.Printf("[parse] Using AI for resume extraction...\n")
-	
+
 	// Extract basic contact info if available
 	email := ""
 	phone := ""
-	
+
 	// Try to extract email and phone with simple regex
 	emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 	if match := emailRegex.FindString(rawText); match != "" {
 		email = match
 	}
-	
+
 	phoneRegex := regexp.MustCompile(`\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}`)
 	if match := phoneRegex.FindString(rawText); match != "" {
 		phone = match
@@ -207,13 +207,13 @@ Phone: %s`, schema, rawText, email, phone)
 	if err != nil {
 		fmt.Printf("[parse] AI extraction failed: %v\n", err)
 		fmt.Printf("[parse] Using simple fallback parser instead...\n")
-		
+
 		// Simple fallback parser - better than nothing
 		structured := parseResumeSimple(rawText, email, phone)
-		
+
 		// Clean up temp file
 		_ = os.Remove(tempFile)
-		
+
 		c.JSON(200, gin.H{
 			"structured": structured,
 			"extracted":  extracted,
@@ -224,7 +224,7 @@ Phone: %s`, schema, rawText, email, phone)
 	}
 
 	fmt.Printf("[parse] AI extraction successful, response length: %d\n", len(aiResp))
-	
+
 	cleaned := strings.TrimSpace(aiResp)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
@@ -296,7 +296,7 @@ func fallbackToPython(tempFile string) map[string]interface{} {
 // parseResumeSimple is a simple fallback parser when AI is not available
 func parseResumeSimple(text string, email string, phone string) map[string]interface{} {
 	lines := strings.Split(text, "\n")
-	
+
 	// Extract name (usually first non-empty line)
 	name := ""
 	for _, line := range lines {
@@ -307,7 +307,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			break
 		}
 	}
-	
+
 	// Initialize result structure
 	result := map[string]interface{}{
 		"name":       name,
@@ -319,22 +319,22 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 		"projects":   []map[string]interface{}{},
 		"skills":     []string{},
 	}
-	
+
 	// Simple section detection
 	currentSection := ""
 	var currentExperience map[string]interface{}
 	var currentEducation map[string]interface{}
 	var currentProject map[string]interface{}
 	var bullets []string
-	
+
 	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
 		}
-		
+
 		lineLower := strings.ToLower(line)
-		
+
 		// Detect sections
 		if strings.Contains(lineLower, "experience") || strings.Contains(lineLower, "employment") {
 			currentSection = "experience"
@@ -352,14 +352,14 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			currentSection = "summary"
 			continue
 		}
-		
+
 		// Process content based on current section
 		switch currentSection {
 		case "experience":
 			// Look for company names (often have Inc, LLC, etc)
-			if strings.Contains(line, "Inc") || strings.Contains(line, "LLC") || 
-			   strings.Contains(line, "Corp") || strings.Contains(line, "Company") ||
-			   (len(line) < 50 && i < len(lines)-1 && !strings.HasPrefix(line, "•")) {
+			if strings.Contains(line, "Inc") || strings.Contains(line, "LLC") ||
+				strings.Contains(line, "Corp") || strings.Contains(line, "Company") ||
+				(len(line) < 50 && i < len(lines)-1 && !strings.HasPrefix(line, "•")) {
 				// Save previous experience if exists
 				if currentExperience != nil {
 					if len(bullets) > 0 {
@@ -368,7 +368,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 					result["experience"] = append(result["experience"].([]map[string]interface{}), currentExperience)
 					bullets = []string{}
 				}
-				
+
 				// Start new experience
 				currentExperience = map[string]interface{}{
 					"company":   line,
@@ -386,16 +386,16 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 				// Likely the job title
 				currentExperience["role"] = line
 			}
-			
+
 		case "education":
 			// Look for university/college
 			if strings.Contains(lineLower, "university") || strings.Contains(lineLower, "college") ||
-			   strings.Contains(lineLower, "institute") || strings.Contains(lineLower, "school") {
+				strings.Contains(lineLower, "institute") || strings.Contains(lineLower, "school") {
 				// Save previous education if exists
 				if currentEducation != nil {
 					result["education"] = append(result["education"].([]map[string]interface{}), currentEducation)
 				}
-				
+
 				// Start new education
 				currentEducation = map[string]interface{}{
 					"school":    line,
@@ -407,12 +407,12 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			} else if currentEducation != nil && currentEducation["degree"] == nil {
 				// Likely the degree
 				if strings.Contains(lineLower, "bachelor") || strings.Contains(lineLower, "master") ||
-				   strings.Contains(lineLower, "b.s") || strings.Contains(lineLower, "m.s") ||
-				   strings.Contains(lineLower, "ph.d") || strings.Contains(lineLower, "degree") {
+					strings.Contains(lineLower, "b.s") || strings.Contains(lineLower, "m.s") ||
+					strings.Contains(lineLower, "ph.d") || strings.Contains(lineLower, "degree") {
 					currentEducation["degree"] = line
 				}
 			}
-			
+
 		case "skills":
 			// Add to skills - split by comma if present
 			if strings.Contains(line, ",") {
@@ -426,7 +426,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			} else if !strings.HasPrefix(line, "•") {
 				result["skills"] = append(result["skills"].([]string), line)
 			}
-			
+
 		case "summary":
 			// Add to summary
 			if result["summary"] == nil {
@@ -434,11 +434,11 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			} else {
 				result["summary"] = result["summary"].(string) + " " + line
 			}
-			
+
 		case "projects":
 			// Look for project names (often capitalized or followed by a colon)
-			if !strings.HasPrefix(line, "•") && !strings.HasPrefix(line, "-") && 
-			   (strings.Contains(line, ":") || (len(line) < 60 && i < len(lines)-1)) {
+			if !strings.HasPrefix(line, "•") && !strings.HasPrefix(line, "-") &&
+				(strings.Contains(line, ":") || (len(line) < 60 && i < len(lines)-1)) {
 				// Save previous project if exists
 				if currentProject != nil {
 					if len(bullets) > 0 {
@@ -447,13 +447,13 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 					result["projects"] = append(result["projects"].([]map[string]interface{}), currentProject)
 					bullets = []string{}
 				}
-				
+
 				// Start new project
 				projectName := line
 				if idx := strings.Index(line, ":"); idx > 0 {
 					projectName = strings.TrimSpace(line[:idx])
 				}
-				
+
 				currentProject = map[string]interface{}{
 					"projectName":  projectName,
 					"description":  nil,
@@ -471,7 +471,7 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 			}
 		}
 	}
-	
+
 	// Save last experience if exists
 	if currentExperience != nil {
 		if len(bullets) > 0 {
@@ -479,12 +479,12 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 		}
 		result["experience"] = append(result["experience"].([]map[string]interface{}), currentExperience)
 	}
-	
+
 	// Save last education if exists
 	if currentEducation != nil {
 		result["education"] = append(result["education"].([]map[string]interface{}), currentEducation)
 	}
-	
+
 	// Save last project if exists
 	if currentProject != nil {
 		if len(bullets) > 0 {
@@ -492,6 +492,6 @@ func parseResumeSimple(text string, email string, phone string) map[string]inter
 		}
 		result["projects"] = append(result["projects"].([]map[string]interface{}), currentProject)
 	}
-	
+
 	return result
 }

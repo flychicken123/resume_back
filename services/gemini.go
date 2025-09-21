@@ -488,7 +488,7 @@ Format the response as a clean, professional summary that immediately demonstrat
 func BuildResumeAdvicePrompt(resumeData map[string]interface{}, jobDescription string) string {
 	// Convert resume data to readable format
 	resumeText := ""
-	
+
 	if name, ok := resumeData["name"].(string); ok && name != "" {
 		resumeText += fmt.Sprintf("Name: %s\n", name)
 	}
@@ -498,11 +498,11 @@ func BuildResumeAdvicePrompt(resumeData map[string]interface{}, jobDescription s
 	if phone, ok := resumeData["phone"].(string); ok && phone != "" {
 		resumeText += fmt.Sprintf("Phone: %s\n", phone)
 	}
-	
+
 	if summary, ok := resumeData["summary"].(string); ok && summary != "" {
 		resumeText += fmt.Sprintf("\nSummary: %s\n", summary)
 	}
-	
+
 	if experiences, ok := resumeData["experiences"].([]interface{}); ok {
 		resumeText += "\nExperience:\n"
 		for i, exp := range experiences {
@@ -520,7 +520,7 @@ func BuildResumeAdvicePrompt(resumeData map[string]interface{}, jobDescription s
 			}
 		}
 	}
-	
+
 	if education, ok := resumeData["education"].([]interface{}); ok {
 		resumeText += "\nEducation:\n"
 		for i, edu := range education {
@@ -535,7 +535,7 @@ func BuildResumeAdvicePrompt(resumeData map[string]interface{}, jobDescription s
 			}
 		}
 	}
-	
+
 	if skills, ok := resumeData["skills"].(string); ok && skills != "" {
 		resumeText += fmt.Sprintf("\nSkills: %s\n", skills)
 	}
@@ -589,7 +589,7 @@ func BuildCoverLetterPrompt(resumeData map[string]interface{}, jobDescription, c
 	if n, ok := resumeData["name"].(string); ok {
 		name = n
 	}
-	
+
 	experience := ""
 	if experiences, ok := resumeData["experiences"].([]interface{}); ok && len(experiences) > 0 {
 		if expMap, ok := experiences[0].(map[string]interface{}); ok {
@@ -605,12 +605,12 @@ func BuildCoverLetterPrompt(resumeData map[string]interface{}, jobDescription, c
 			}
 		}
 	}
-	
+
 	skills := ""
 	if s, ok := resumeData["skills"].(string); ok {
 		skills = s
 	}
-	
+
 	summary := ""
 	if s, ok := resumeData["summary"].(string); ok {
 		summary = s

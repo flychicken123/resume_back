@@ -41,7 +41,7 @@ func (m *ProjectModel) Create(project *Project) error {
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id, created_at, updated_at
 	`
-	
+
 	err := m.db.QueryRow(
 		query,
 		project.ResumeID,
@@ -55,7 +55,7 @@ func (m *ProjectModel) Create(project *Project) error {
 		project.IsCurrent,
 		project.DisplayOrder,
 	).Scan(&project.ID, &project.CreatedAt, &project.UpdatedAt)
-	
+
 	return err
 }
 
@@ -69,13 +69,13 @@ func (m *ProjectModel) GetByResumeID(resumeID int) ([]*Project, error) {
 		WHERE resume_id = $1
 		ORDER BY display_order, start_date DESC
 	`
-	
+
 	rows, err := m.db.Query(query, resumeID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	
+
 	var projects []*Project
 	for rows.Next() {
 		project := &Project{}
@@ -99,7 +99,7 @@ func (m *ProjectModel) GetByResumeID(resumeID int) ([]*Project, error) {
 		}
 		projects = append(projects, project)
 	}
-	
+
 	return projects, nil
 }
 
@@ -113,7 +113,7 @@ func (m *ProjectModel) Update(project *Project) error {
 		WHERE id = $1
 		RETURNING updated_at
 	`
-	
+
 	err := m.db.QueryRow(
 		query,
 		project.ID,
@@ -127,7 +127,7 @@ func (m *ProjectModel) Update(project *Project) error {
 		project.IsCurrent,
 		project.DisplayOrder,
 	).Scan(&project.UpdatedAt)
-	
+
 	return err
 }
 

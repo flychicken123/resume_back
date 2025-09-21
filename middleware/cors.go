@@ -2,9 +2,9 @@ package middleware
 
 import (
 	"fmt"
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"strings"
-	"github.com/gin-gonic/gin"
 )
 
 // CORSConfig contains CORS configuration
@@ -25,7 +25,7 @@ func DefaultCORSConfig() CORSConfig {
 		AllowedHeaders:   []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With", "Content-Length"},
 		ExposedHeaders:   []string{"Content-Length", "Content-Type"},
 		AllowCredentials: true,
-		MaxAge:          86400,
+		MaxAge:           86400,
 	}
 }
 
@@ -43,7 +43,7 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		}
 
 		origin := c.Request.Header.Get("Origin")
-		
+
 		// Check if origin is allowed
 		if len(config.AllowedOrigins) == 1 && config.AllowedOrigins[0] == "*" {
 			c.Header("Access-Control-Allow-Origin", "*")
@@ -54,15 +54,15 @@ func CORS(config CORSConfig) gin.HandlerFunc {
 		// Set other CORS headers
 		c.Header("Access-Control-Allow-Methods", strings.Join(config.AllowedMethods, ", "))
 		c.Header("Access-Control-Allow-Headers", strings.Join(config.AllowedHeaders, ", "))
-		
+
 		if len(config.ExposedHeaders) > 0 {
 			c.Header("Access-Control-Expose-Headers", strings.Join(config.ExposedHeaders, ", "))
 		}
-		
+
 		if config.AllowCredentials {
 			c.Header("Access-Control-Allow-Credentials", "true")
 		}
-		
+
 		if config.MaxAge > 0 {
 			c.Header("Access-Control-Max-Age", fmt.Sprintf("%d", config.MaxAge))
 		}
@@ -87,7 +87,7 @@ func isOriginAllowed(origin string, allowedOrigins []string) bool {
 	if origin == "" {
 		return false
 	}
-	
+
 	for _, allowed := range allowedOrigins {
 		if allowed == "*" || allowed == origin {
 			return true
@@ -100,6 +100,6 @@ func isOriginAllowed(origin string, allowedOrigins []string) bool {
 			}
 		}
 	}
-	
+
 	return false
 }

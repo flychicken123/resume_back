@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"resumeai/models"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
+	"resumeai/models"
 )
 
 type ResumeService struct {

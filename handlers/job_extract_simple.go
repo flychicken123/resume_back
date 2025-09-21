@@ -65,7 +65,7 @@ func SimpleExtractJobDescription(c *gin.Context) {
 	}
 
 	htmlContent := string(bodyBytes)
-	
+
 	// For now, just return the first 1000 characters of HTML to verify fetch works
 	preview := htmlContent
 	if len(preview) > 1000 {
@@ -73,12 +73,12 @@ func SimpleExtractJobDescription(c *gin.Context) {
 	}
 
 	fmt.Printf("[SimpleExtractJobDescription] Successfully fetched %d bytes from %s\n", len(bodyBytes), req.URL)
-	
+
 	c.JSON(http.StatusOK, gin.H{
-		"status": "success",
-		"url": req.URL,
+		"status":        "success",
+		"url":           req.URL,
 		"contentLength": len(bodyBytes),
-		"preview": preview,
-		"message": "Successfully fetched HTML. Full AI extraction not yet implemented.",
+		"preview":       preview,
+		"message":       "Successfully fetched HTML. Full AI extraction not yet implemented.",
 	})
 }

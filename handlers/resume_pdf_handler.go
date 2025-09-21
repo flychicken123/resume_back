@@ -22,19 +22,19 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		// Get authenticated user from context (set by AuthMiddleware)
 		userID, exists := c.Get("user_id")
 		userEmail, emailExists := c.Get("user_email")
-		
+
 		var userIDInt int
 		var userEmailStr string
-		
+
 		if exists {
 			userIDInt = userID.(int)
 		}
 		if emailExists {
 			userEmailStr = userEmail.(string)
 		}
-		
+
 		fmt.Printf("DEBUG: Authenticated user - ID: %d, Email: %s\n", userIDInt, userEmailStr)
-		
+
 		// Expect a multipart form file field named 'html'
 		file, err := c.FormFile("html")
 		if err != nil {
@@ -77,12 +77,12 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 			fmt.Printf("S3 not configured or invalid: %v\n", s3err)
 			// Continue without S3 - file is still available locally
 			downloadURL := fmt.Sprintf("/static/%s", pdfFilename)
-			
+
 			// Save to resume history if we have user ID
 			if userIDInt > 0 && resumeHistoryModel != nil {
 				resumeName := fmt.Sprintf("Resume %s", time.Now().Format("2006-01-02 15:04"))
 				s3Path := downloadURL // Use local path if S3 unavailable
-				
+
 				history, err := resumeHistoryModel.Create(userIDInt, resumeName, s3Path)
 				if err != nil {
 					fmt.Printf("Failed to save resume history: %v\n", err)
@@ -90,16 +90,16 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 					fmt.Printf("Saved resume history ID %d for user %d\n", history.ID, userIDInt)
 				}
 			}
-			
+
 			c.JSON(http.StatusOK, gin.H{
-				"message": "PDF generated (local storage)", 
+				"message":     "PDF generated (local storage)",
 				"downloadURL": downloadURL,
-				"filename": pdfFilename,
-				"userID": userIDInt,
+				"filename":    pdfFilename,
+				"userID":      userIDInt,
 			})
 			return
 		}
-		
+
 		// Upload to S3
 		key := "resumes/" + pdfFilename
 		url, uploadErr := s3svc.UploadFile(pdfPath, key)
@@ -112,13 +112,13 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		// Save to resume history if we have user ID
 		if userIDInt > 0 && resumeHistoryModel != nil {
 			resumeName := fmt.Sprintf("Resume %s", time.Now().Format("2006-01-02 15:04"))
-			
+
 			history, err := resumeHistoryModel.Create(userIDInt, resumeName, key)
 			if err != nil {
 				fmt.Printf("Failed to save resume history: %v\n", err)
 			} else {
 				fmt.Printf("Successfully saved resume history ID %d for user %d\n", history.ID, userIDInt)
-				
+
 				// Clean up old resumes (keep only last 10)
 				if cleanupErr := resumeHistoryModel.CleanupOldResumes(userIDInt, 10); cleanupErr != nil {
 					fmt.Printf("Failed to cleanup old resumes: %v\n", cleanupErr)
@@ -131,22 +131,22 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		// Generate presigned URL for response
 		if presigned, preErr := s3svc.GeneratePresignedURL(key); preErr == nil {
 			c.JSON(http.StatusOK, gin.H{
-				"message": "PDF generated and saved to history", 
-				"downloadURL": presigned,
-				"filename": pdfFilename,
-				"s3Path": key,
-				"userID": userIDInt,
+				"message":        "PDF generated and saved to history",
+				"downloadURL":    presigned,
+				"filename":       pdfFilename,
+				"s3Path":         key,
+				"userID":         userIDInt,
 				"savedToHistory": userIDInt > 0,
 			})
 			return
 		}
-		
+
 		c.JSON(http.StatusOK, gin.H{
-			"message": "PDF generated and saved to history", 
-			"downloadURL": url,
-			"filename": pdfFilename,
-			"s3Path": key,
-			"userID": userIDInt,
+			"message":        "PDF generated and saved to history",
+			"downloadURL":    url,
+			"filename":       pdfFilename,
+			"s3Path":         key,
+			"userID":         userIDInt,
 			"savedToHistory": userIDInt > 0,
 		})
 	}

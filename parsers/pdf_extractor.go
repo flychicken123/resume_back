@@ -1,12 +1,16 @@
 package parsers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	pdf "github.com/ledongthuc/pdf"
 )
 
 // PDFExtractor handles extracting text from PDF files
@@ -19,17 +23,18 @@ func NewPDFExtractor() *PDFExtractor {
 
 // ExtractText extracts text from a PDF file using multiple fallback methods
 func (e *PDFExtractor) ExtractText(filePath string) (string, error) {
-	// Method 1: Try pdftotext (poppler-utils)
 	if text, err := e.extractWithPdfToText(filePath); err == nil && strings.TrimSpace(text) != "" {
 		return text, nil
 	}
 
-	// Method 2: Try Python script as fallback
+	if text, err := e.extractWithGoPDF(filePath); err == nil && strings.TrimSpace(text) != "" {
+		return text, nil
+	}
+
 	if text, err := e.extractWithPython(filePath); err == nil && strings.TrimSpace(text) != "" {
 		return text, nil
 	}
 
-	// Method 3: Try ps2ascii if available
 	if text, err := e.extractWithPs2Ascii(filePath); err == nil && strings.TrimSpace(text) != "" {
 		return text, nil
 	}
@@ -65,7 +70,38 @@ func (e *PDFExtractor) extractWithPdfToText(filePath string) (string, error) {
 	// Clean up text
 	text := string(content)
 	text = e.cleanupText(text)
-	
+
+	return text, nil
+}
+
+func (e *PDFExtractor) extractWithGoPDF(filePath string) (string, error) {
+	f, r, err := pdf.Open(filePath)
+	if err != nil {
+		return "", fmt.Errorf("go pdf extractor failed to open: %w", err)
+	}
+	defer f.Close()
+
+	reader, err := r.GetPlainText()
+	if err != nil {
+		return "", fmt.Errorf("go pdf extractor failed to read: %w", err)
+	}
+
+	if closer, ok := reader.(io.Closer); ok {
+		defer closer.Close()
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(reader); err != nil {
+		return "", fmt.Errorf("go pdf extractor failed to buffer: %w", err)
+	}
+
+	text := e.cleanupText(buf.String())
+	text = strings.ReplaceAll(text, "\u0000", "")
+
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("go pdf extractor returned empty text")
+	}
+
 	return text, nil
 }
 
@@ -159,7 +195,7 @@ func (e *PDFExtractor) cleanupText(text string) string {
 			words := strings.Fields(line)
 			hasSpacedWords := false
 			singleCharCount := 0
-			
+
 			for _, word := range words {
 				if len(word) == 1 && word != "•" && word != "-" && word != "|" && word != "&" {
 					singleCharCount++
@@ -169,12 +205,12 @@ func (e *PDFExtractor) cleanupText(text string) string {
 					}
 				}
 			}
-			
+
 			if hasSpacedWords {
 				// Rebuild the line by combining single characters
 				var fixedWords []string
 				var currentWord []string
-				
+
 				for _, word := range words {
 					if len(word) == 1 && word != "•" && word != "-" && word != "|" && word != "," && word != "." && word != "&" {
 						currentWord = append(currentWord, word)
@@ -189,12 +225,12 @@ func (e *PDFExtractor) cleanupText(text string) string {
 				if len(currentWord) > 0 {
 					fixedWords = append(fixedWords, strings.Join(currentWord, ""))
 				}
-				
+
 				lines[i] = strings.Join(fixedWords, " ")
 			}
 		}
 	}
-	
+
 	return strings.Join(lines, "\n")
 }
 

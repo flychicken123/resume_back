@@ -28,10 +28,10 @@ func Connect(host, port, user, password, dbname, sslmode string) (*sql.DB, error
 	}
 
 	// Configure connection pool
-	db.SetMaxOpenConns(25)                 // Maximum number of open connections
-	db.SetMaxIdleConns(5)                  // Maximum number of idle connections
-	db.SetConnMaxLifetime(5 * 60)          // 5 minutes connection lifetime
-	db.SetConnMaxIdleTime(2 * 60)          // 2 minutes idle timeout
+	db.SetMaxOpenConns(25)        // Maximum number of open connections
+	db.SetMaxIdleConns(5)         // Maximum number of idle connections
+	db.SetConnMaxLifetime(5 * 60) // 5 minutes connection lifetime
+	db.SetConnMaxIdleTime(2 * 60) // 2 minutes idle timeout
 
 	// Test the connection
 	err = db.Ping()

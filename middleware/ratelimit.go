@@ -1,10 +1,10 @@
 package middleware
 
 import (
+	"github.com/gin-gonic/gin"
 	"net/http"
 	"sync"
 	"time"
-	"github.com/gin-gonic/gin"
 )
 
 // RateLimiter stores rate limit data
@@ -28,10 +28,10 @@ func NewRateLimiter(rate int, window time.Duration) *RateLimiter {
 		rate:     rate,
 		window:   window,
 	}
-	
+
 	// Clean up old visitors every minute
 	go rl.cleanupVisitors()
-	
+
 	return rl
 }
 
@@ -39,7 +39,7 @@ func NewRateLimiter(rate int, window time.Duration) *RateLimiter {
 func (rl *RateLimiter) Limit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
-		
+
 		rl.mu.Lock()
 		v, exists := rl.visitors[ip]
 		if !exists {
@@ -51,7 +51,7 @@ func (rl *RateLimiter) Limit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		// Reset count if window has passed
 		if time.Since(v.lastSeen) > rl.window {
 			v.count = 1
@@ -60,23 +60,23 @@ func (rl *RateLimiter) Limit() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		// Check if rate limit exceeded
 		if v.count >= rl.rate {
 			rl.mu.Unlock()
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error": "Rate limit exceeded. Please try again later.",
+				"error":       "Rate limit exceeded. Please try again later.",
 				"retry_after": rl.window.Seconds(),
 			})
 			c.Abort()
 			return
 		}
-		
+
 		// Increment count
 		v.count++
 		v.lastSeen = time.Now()
 		rl.mu.Unlock()
-		
+
 		c.Next()
 	}
 }
@@ -99,8 +99,8 @@ func (rl *RateLimiter) cleanupVisitors() {
 // CreateRateLimiters creates different rate limiters for different endpoints
 func CreateRateLimiters() map[string]*RateLimiter {
 	return map[string]*RateLimiter{
-		"ai":      NewRateLimiter(10, 1*time.Minute),  // 10 requests per minute for AI
-		"auth":    NewRateLimiter(5, 1*time.Minute),   // 5 requests per minute for auth
-		"general": NewRateLimiter(60, 1*time.Minute),  // 60 requests per minute general
+		"ai":      NewRateLimiter(10, 1*time.Minute), // 10 requests per minute for AI
+		"auth":    NewRateLimiter(5, 1*time.Minute),  // 5 requests per minute for auth
+		"general": NewRateLimiter(60, 1*time.Minute), // 60 requests per minute general
 	}
 }

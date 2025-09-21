@@ -190,8 +190,8 @@ func (c *ResumeController) DownloadResume(ctx *gin.Context) {
 	// Return the presigned URL as JSON instead of redirecting
 	// This avoids CORS issues when the frontend tries to follow the redirect
 	ctx.JSON(http.StatusOK, gin.H{
-		"success": true,
+		"success":     true,
 		"downloadUrl": presignedURL,
-		"filename": filename,
+		"filename":    filename,
 	})
 }

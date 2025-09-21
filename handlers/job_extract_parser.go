@@ -68,10 +68,10 @@ func ParseExtractJobDescription(c *gin.Context) {
 	}
 
 	htmlContent := string(bodyBytes)
-	
+
 	// Extract text content from HTML
 	description := extractJobDescriptionFromHTML(htmlContent)
-	
+
 	if description == "" {
 		// If we couldn't extract a job description, return the cleaned text
 		description = cleanHTMLToText(htmlContent)
@@ -81,7 +81,7 @@ func ParseExtractJobDescription(c *gin.Context) {
 	}
 
 	fmt.Printf("[ParseExtractJobDescription] Successfully extracted %d characters from %s\n", len(description), req.URL)
-	
+
 	response := JobExtractResponse{
 		Description: description,
 	}
@@ -94,7 +94,7 @@ func extractJobDescriptionFromHTML(html string) string {
 	// Remove script and style tags
 	re := regexp.MustCompile(`(?i)<script[^>]*>[\s\S]*?</script>|<style[^>]*>[\s\S]*?</style>`)
 	html = re.ReplaceAllString(html, "")
-	
+
 	// Look for common job description patterns
 	patterns := []string{
 		`(?i)<div[^>]*class="[^"]*job-description[^"]*"[^>]*>([\s\S]*?)</div>`,
@@ -103,7 +103,7 @@ func extractJobDescriptionFromHTML(html string) string {
 		`(?i)<section[^>]*class="[^"]*description[^"]*"[^>]*>([\s\S]*?)</section>`,
 		`(?i)<article[^>]*>([\s\S]*?)</article>`,
 	}
-	
+
 	for _, pattern := range patterns {
 		re := regexp.MustCompile(pattern)
 		matches := re.FindStringSubmatch(html)
@@ -114,7 +114,7 @@ func extractJobDescriptionFromHTML(html string) string {
 			}
 		}
 	}
-	
+
 	return ""
 }
 
@@ -125,11 +125,11 @@ func cleanHTMLToText(html string) string {
 	html = strings.ReplaceAll(html, "&gt;", ">")
 	html = strings.ReplaceAll(html, "&quot;", "\"")
 	html = strings.ReplaceAll(html, "&#39;", "'")
-	
+
 	// Remove HTML tags
 	re := regexp.MustCompile(`<[^>]+>`)
 	text := re.ReplaceAllString(html, " ")
-	
+
 	// Decode remaining HTML entities
 	text = strings.ReplaceAll(text, "&nbsp;", " ")
 	text = strings.ReplaceAll(text, "&amp;", "&")
@@ -144,10 +144,10 @@ func cleanHTMLToText(html string) string {
 	text = strings.ReplaceAll(text, "&#8221;", "\"")
 	text = strings.ReplaceAll(text, "&#8211;", "-")
 	text = strings.ReplaceAll(text, "&#8212;", "-")
-	
+
 	// Clean up whitespace
 	text = regexp.MustCompile(`\s+`).ReplaceAllString(text, " ")
 	text = strings.TrimSpace(text)
-	
+
 	return text
 }

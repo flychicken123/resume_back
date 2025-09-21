@@ -1,8 +1,8 @@
 package utils
 
 import (
-	"net/http"
 	"github.com/gin-gonic/gin"
+	"net/http"
 )
 
 // StandardResponse represents a standard API response
@@ -36,7 +36,7 @@ func ErrorResponseWithCode(c *gin.Context, statusCode int, message string, err e
 	if err != nil {
 		errorMsg = err.Error()
 	}
-	
+
 	c.JSON(statusCode, ErrorResponse{
 		Success: false,
 		Message: message,

@@ -15,7 +15,7 @@ func CheckResumeLimitMiddleware(db *sql.DB) gin.HandlerFunc {
 		userID, exists := c.Get("user_id")
 		if !exists {
 			c.JSON(http.StatusUnauthorized, gin.H{
-				"error": "User not authenticated",
+				"error":     "User not authenticated",
 				"needsAuth": true,
 			})
 			c.Abort()
@@ -84,13 +84,13 @@ func CheckResumeLimitMiddleware(db *sql.DB) gin.HandlerFunc {
 			}
 
 			c.JSON(http.StatusForbidden, gin.H{
-				"error": message,
+				"error":        message,
 				"limitReached": true,
-				"plan": planName,
-				"limit": resumeLimit,
-				"period": resumePeriod,
-				"remaining": 0,
-				"resetDate": resetDate.Time,
+				"plan":         planName,
+				"limit":        resumeLimit,
+				"period":       resumePeriod,
+				"remaining":    0,
+				"resetDate":    resetDate.Time,
 			})
 			c.Abort()
 			return

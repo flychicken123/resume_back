@@ -56,11 +56,11 @@ func (l *Logger) Error(message string, err error, data ...interface{}) {
 		Message:   message,
 		Error:     err.Error(),
 	}
-	
+
 	if len(data) > 0 {
 		entry.Data = data[0]
 	}
-	
+
 	l.output(entry)
 }
 
@@ -76,11 +76,11 @@ func (l *Logger) log(level LogLevel, message string, data ...interface{}) {
 		Level:     level,
 		Message:   message,
 	}
-	
+
 	if len(data) > 0 {
 		entry.Data = data[0]
 	}
-	
+
 	l.output(entry)
 }
 
@@ -91,7 +91,7 @@ func (l *Logger) output(entry LogEntry) {
 		log.Printf("Error marshaling log entry: %v", err)
 		return
 	}
-	
+
 	l.logger.Println(string(jsonBytes))
 }
 

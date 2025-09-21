@@ -7,7 +7,7 @@ import (
 
 func TestResumeParser_Basic(t *testing.T) {
 	parser := NewResumeParser()
-	
+
 	sampleResume := `
 John Doe
 john.doe@email.com
@@ -88,7 +88,7 @@ Go, Python, JavaScript, React, Docker, Kubernetes
 
 func TestResumeParser_EmptyInput(t *testing.T) {
 	parser := NewResumeParser()
-	
+
 	_, err := parser.Parse("")
 	if err == nil {
 		t.Error("Expected error for empty input")
@@ -97,11 +97,11 @@ func TestResumeParser_EmptyInput(t *testing.T) {
 
 func TestResumeParser_ContactExtraction(t *testing.T) {
 	parser := NewResumeParser()
-	
+
 	tests := []struct {
-		input    string
-		email    string
-		phone    string
+		input string
+		email string
+		phone string
 	}{
 		{
 			input: "Contact: test@example.com, phone: +1-555-123-4567",
@@ -110,7 +110,7 @@ func TestResumeParser_ContactExtraction(t *testing.T) {
 		},
 		{
 			input: "Email: user@domain.org\nPhone: (987) 654-3210",
-			email: "user@domain.org", 
+			email: "user@domain.org",
 			phone: "(987) 654-3210",
 		},
 	}

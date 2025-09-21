@@ -31,11 +31,11 @@ func CheckSubscriptionLimit(stripeService *services.StripeService) gin.HandlerFu
 
 		if !canGenerate {
 			c.JSON(http.StatusTooManyRequests, gin.H{
-				"error":      "Resume generation limit reached",
-				"remaining":  remaining,
-				"reset_date": resetDate,
+				"error":       "Resume generation limit reached",
+				"remaining":   remaining,
+				"reset_date":  resetDate,
 				"upgrade_url": "/pricing",
-				"message":    "You've reached your resume generation limit. Please upgrade your plan or wait for the limit to reset.",
+				"message":     "You've reached your resume generation limit. Please upgrade your plan or wait for the limit to reset.",
 			})
 			c.Abort()
 			return

@@ -1,10 +1,10 @@
 package middleware
 
 import (
-	"net/http"
-	"strings"
 	"github.com/gin-gonic/gin"
+	"net/http"
 	"resumeai/utils"
+	"strings"
 )
 
 // MaxRequestSize limits the request body size
@@ -19,13 +19,13 @@ func MaxRequestSize(maxSize int64) gin.HandlerFunc {
 func ValidateContentType(expectedTypes ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		contentType := c.GetHeader("Content-Type")
-		
+
 		// Skip validation for GET and DELETE requests
 		if c.Request.Method == "GET" || c.Request.Method == "DELETE" {
 			c.Next()
 			return
 		}
-		
+
 		valid := false
 		for _, expectedType := range expectedTypes {
 			if strings.Contains(contentType, expectedType) {
@@ -33,13 +33,13 @@ func ValidateContentType(expectedTypes ...string) gin.HandlerFunc {
 				break
 			}
 		}
-		
+
 		if !valid {
 			utils.BadRequestError(c, "Invalid content type", nil)
 			c.Abort()
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -52,14 +52,14 @@ func ValidateJSON() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		contentType := c.GetHeader("Content-Type")
 		if !strings.Contains(contentType, "application/json") {
 			utils.BadRequestError(c, "Content-Type must be application/json", nil)
 			c.Abort()
 			return
 		}
-		
+
 		c.Next()
 	}
 }
@@ -75,7 +75,7 @@ func SanitizeInput() gin.HandlerFunc {
 			}
 		}
 		c.Request.URL.RawQuery = queryParams.Encode()
-		
+
 		c.Next()
 	}
 }
@@ -84,14 +84,14 @@ func SanitizeInput() gin.HandlerFunc {
 func sanitizeString(input string) string {
 	// Remove null bytes
 	input = strings.ReplaceAll(input, "\x00", "")
-	
+
 	// Trim whitespace
 	input = strings.TrimSpace(input)
-	
+
 	// Limit length to prevent buffer overflow attacks
 	if len(input) > 10000 {
 		input = input[:10000]
 	}
-	
+
 	return input
 }

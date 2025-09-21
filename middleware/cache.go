@@ -4,9 +4,9 @@ import (
 	"crypto/md5"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/gin-gonic/gin"
 	"sync"
 	"time"
-	"github.com/gin-gonic/gin"
 )
 
 // CacheEntry represents a cached response
@@ -28,10 +28,10 @@ func NewResponseCache(ttl time.Duration) *ResponseCache {
 		cache: make(map[string]*CacheEntry),
 		ttl:   ttl,
 	}
-	
+
 	// Clean up expired entries every 5 minutes
 	go rc.cleanup()
-	
+
 	return rc
 }
 
@@ -43,32 +43,32 @@ func (rc *ResponseCache) Cache() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		
+
 		// Generate cache key
 		key := rc.generateKey(c)
-		
+
 		// Check if cached response exists
 		rc.mu.RLock()
 		entry, exists := rc.cache[key]
 		rc.mu.RUnlock()
-		
+
 		if exists && time.Now().Before(entry.ExpiresAt) {
 			// Return cached response
 			c.JSON(200, entry.Data)
 			c.Abort()
 			return
 		}
-		
+
 		// Create response writer wrapper to capture response
 		writer := &responseWriter{
 			ResponseWriter: c.Writer,
-			body:          []byte{},
+			body:           []byte{},
 		}
 		c.Writer = writer
-		
+
 		// Process request
 		c.Next()
-		
+
 		// Cache successful responses
 		if c.Writer.Status() == 200 && len(writer.body) > 0 {
 			var data interface{}
@@ -90,7 +90,7 @@ func (rc *ResponseCache) generateKey(c *gin.Context) string {
 	h.Write([]byte(c.Request.Method))
 	h.Write([]byte(c.Request.URL.Path))
 	h.Write([]byte(c.Request.URL.RawQuery))
-	
+
 	// Include body for POST requests
 	if c.Request.Method == "POST" {
 		body, _ := c.GetRawData()
@@ -98,7 +98,7 @@ func (rc *ResponseCache) generateKey(c *gin.Context) string {
 		// Restore body for further processing
 		c.Request.Body = &cachedBody{bytes: body}
 	}
-	
+
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -157,7 +157,7 @@ func isAIEndpoint(path string) bool {
 		"/api/experience/improve-grammar",
 		"/api/summary/improve-grammar",
 	}
-	
+
 	for _, aiPath := range aiPaths {
 		if path == aiPath {
 			return true
