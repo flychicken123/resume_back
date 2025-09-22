@@ -67,3 +67,4 @@ func (s *ResumeService) GenerateUniqueFilename(extension string) string {
 func (s *ResumeService) GetPDFPath(filename string) string {
 	return filepath.Join("./static", filename)
 }
+
