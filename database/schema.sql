@@ -25,7 +25,7 @@ CREATE TABLE resumes (
     phone VARCHAR(100),
     summary TEXT,
     skills TEXT,
-    selected_format VARCHAR(50) DEFAULT 'temp1',
+    selected_format VARCHAR(50) DEFAULT 'classic-professional',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

@@ -18,8 +18,10 @@ func GenerateWordFile(content string, filepath string) error {
 func GenerateWordFileFromTemplate(templateName string, userData map[string]string, outputPath string) error {
 	// Map template names to file names
 	templateMap := map[string]string{
+		"classic-professional":   "classic-professional.docx",
+		"modern-clean":           "classic-professional.docx",
+		"executive-serif":        "executive-serif.docx",
 		"color-block":            "Color block resume.docx",
-		"industry-manager":       "Industry manager resume.docx",
 		"social-media-marketing": "Social media marketing resume.docx",
 	}
 
@@ -91,7 +93,7 @@ func createProperTemplate(templateName string) *document.Document {
 	doc := document.New()
 
 	switch templateName {
-	case "color-block":
+	case "classic-professional", "color-block":
 		// Color Block template structure
 		headerPara := doc.AddParagraph()
 		headerPara.AddRun().AddText("{{NAME}}")
@@ -119,8 +121,8 @@ func createProperTemplate(templateName string) *document.Document {
 		skillsContent := doc.AddParagraph()
 		skillsContent.AddRun().AddText("{{SKILLS}}")
 
-	case "industry-manager":
-		// Industry Manager template structure
+	case "executive-serif":
+		// Executive Serif template structure
 		headerPara := doc.AddParagraph()
 		headerPara.AddRun().AddText("{{NAME}}")
 

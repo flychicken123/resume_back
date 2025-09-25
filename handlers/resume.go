@@ -64,10 +64,7 @@ func GenerateResume(c *gin.Context) {
 	filepath := saveDir + "/" + filename
 
 	// Use default template if none selected
-	templateFormat := req.Format
-	if templateFormat == "" {
-		templateFormat = "temp1"
-	}
+	templateFormat := normalizeTemplateFormat(req.Format)
 
 	// Generate HTML resume using Python
 	if err := generateHTMLResumeWithPython(templateFormat, userData, filepath); err != nil {
@@ -151,8 +148,8 @@ func GeneratePDFResume(c *gin.Context) {
 	if strings.Contains(htmlContent, "color: #000000") {
 		fmt.Println("Found #000000 color overrides in HTML content")
 	}
-	if strings.Contains(htmlContent, ".preview.modern .name") {
-		fmt.Println("Found .preview.modern .name overrides in HTML content")
+	if strings.Contains(htmlContent, ".preview.modern-clean .name") {
+		fmt.Println("Found .preview.modern-clean .name overrides in HTML content")
 	}
 
 	// Ensure output dir exists
@@ -167,12 +164,13 @@ func GeneratePDFResume(c *gin.Context) {
 	pdfPath := filepath.Join(saveDir, filename)
 
 	// Prepare user data for PDF generation
+	templateSlug := normalizeTemplateFormat(req.Format)
 	userData := map[string]interface{}{
 		"htmlContent": htmlContent,
 	}
 
 	// Generate PDF via Python + wkhtmltopdf
-	if err := generatePDFResumeWithPython("temp1", userData, pdfPath); err != nil {
+	if err := generatePDFResumeWithPython(templateSlug, userData, pdfPath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -268,7 +266,7 @@ func GeneratePDFResumeFromHTMLFileWithService(resumeService *services.ResumeServ
 			"htmlContent": "",
 			"htmlPath":    htmlPath,
 		}
-		if err := generatePDFResumeWithPython("temp1", userData, pdfPath); err != nil {
+		if err := generatePDFResumeWithPython(defaultTemplateSlug, userData, pdfPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}

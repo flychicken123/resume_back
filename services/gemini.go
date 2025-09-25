@@ -154,7 +154,7 @@ func getFormatInstructions(format string) string {
 - Creative and modern design approach
 - Professional yet visually appealing`
 
-	case "industry-manager":
+	case "executive-serif":
 		return `- Use sophisticated Georgia font family
 - Include thick border lines under section headers
 - Professional layout suitable for management roles
