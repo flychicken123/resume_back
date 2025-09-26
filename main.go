@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -50,6 +51,7 @@ func main() {
 	resumeHistoryModel := models.NewResumeHistoryModel(db)
 	resumeModel := models.NewResumeModel(db)
 	projectModel := models.NewProjectModel(db)
+	feedbackModel := models.NewFeedbackModel(db)
 
 	// Initialize services
 	jwtService := services.NewJWTService(config.GetAppConfig().JWTSecret)
@@ -60,6 +62,11 @@ func main() {
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
 	emailService := services.NewEmailService()
+	feedbackLogger := log.New(os.Stdout, "[feedback] ", log.LstdFlags)
+	feedbackService := services.NewFeedbackService(feedbackModel, emailService, feedbackLogger)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go feedbackService.StartScheduler(ctx)
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -221,6 +228,8 @@ func main() {
 		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
 		public.POST("/assistant/chat", handlers.ChatAssistant)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
+		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
+		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))
 		public.POST("/contact", handlers.CreateContactRequest(db, emailService))
 
 		// Job automation endpoints removed - feature in development

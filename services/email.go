@@ -1,10 +1,12 @@
 package services
 
 import (
+	"errors"
 	"fmt"
 	"net/smtp"
 	"os"
 	"strconv"
+	"strings"
 )
 
 type EmailService struct {
@@ -44,6 +46,24 @@ func (s *EmailService) SendSupportEmail(subject, body string) error {
 	if !s.Enabled() {
 		return fmt.Errorf("email service not configured")
 	}
+	return s.sendEmail([]string{s.from}, subject, body)
+}
+
+func (s *EmailService) SendEmail(to string, subject, body string) error {
+	if !s.Enabled() {
+		return fmt.Errorf("email service not configured")
+	}
+	recipient := strings.TrimSpace(to)
+	if recipient == "" {
+		return errors.New("missing recipient")
+	}
+	return s.sendEmail([]string{recipient}, subject, body)
+}
+
+func (s *EmailService) sendEmail(recipients []string, subject, body string) error {
+	if !s.Enabled() {
+		return fmt.Errorf("email service not configured")
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.host, s.port)
 	auth := smtp.PlainAuth("", s.username, s.password, s.host)
@@ -53,5 +73,5 @@ func (s *EmailService) SendSupportEmail(subject, body string) error {
 		"Content-Type: text/plain; charset=\"utf-8\"\r\n\r\n" +
 		body + "\r\n")
 
-	return smtp.SendMail(addr, auth, s.from, []string{s.from}, msg)
+	return smtp.SendMail(addr, auth, s.from, recipients, msg)
 }
