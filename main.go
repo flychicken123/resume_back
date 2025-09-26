@@ -60,6 +60,7 @@ func main() {
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
 	emailService := services.NewEmailService()
+	jobMatchingService := services.NewJobMatchingService(config.GetJobBoardConfig(), logger)
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -73,6 +74,7 @@ func main() {
 	projectController := controllers.NewProjectController(projectModel)
 	subscriptionController := controllers.NewSubscriptionController(db, stripeService)
 	adminController := controllers.NewAdminController(db)
+	jobController := controllers.NewJobController(jobMatchingService)
 
 	r := gin.Default()
 
@@ -246,6 +248,9 @@ func main() {
 
 		// Project routes
 		protected.GET("/projects/resume/:resumeId", projectController.GetProjectsByResumeID)
+
+		// Job discovery
+		protected.POST("/jobs/match", jobController.MatchJobs)
 		protected.POST("/projects", projectController.CreateProject)
 		protected.PUT("/projects/:id", projectController.UpdateProject)
 		protected.DELETE("/projects/:id", projectController.DeleteProject)
