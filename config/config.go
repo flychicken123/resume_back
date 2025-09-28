@@ -6,6 +6,8 @@ import (
 	"strconv"
 )
 
+const defaultTimeZone = "America/Los_Angeles"
+
 type DatabaseConfig struct {
 	Host     string
 	Port     int
@@ -20,6 +22,7 @@ type AppConfig struct {
 	Database    DatabaseConfig
 	JWTSecret   string
 	Environment string
+	TimeZone    string
 }
 
 func GetDatabaseConfig() DatabaseConfig {
@@ -49,6 +52,7 @@ func GetAppConfig() AppConfig {
 		Database:    GetDatabaseConfig(),
 		JWTSecret:   getEnv("JWT_SECRET", "your-secret-key"),
 		Environment: getEnv("ENVIRONMENT", "development"),
+		TimeZone:    getEnv("APP_TIMEZONE", defaultTimeZone),
 	}
 }
 

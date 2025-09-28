@@ -19,15 +19,23 @@ import (
 )
 
 func main() {
-	// Initialize structured logger
+	appConfig := config.GetAppConfig()
+
+	loc, err := time.LoadLocation(appConfig.TimeZone)
+	if err != nil {
+		log.Fatalf("invalid APP_TIMEZONE %q: %v", appConfig.TimeZone, err)
+	}
+	time.Local = loc
+
 	logger := utils.NewLogger()
 
-	dbConfig := config.GetDatabaseConfig()
+	dbConfig := appConfig.Database
 
 	logger.Info("Starting application", map[string]interface{}{
-		"db_host": dbConfig.Host,
-		"db_port": dbConfig.Port,
-		"db_name": dbConfig.DBName,
+		"db_host":   dbConfig.Host,
+		"db_port":   dbConfig.Port,
+		"db_name":   dbConfig.DBName,
+		"time_zone": appConfig.TimeZone,
 	})
 
 	db, err := database.Connect(
@@ -37,6 +45,7 @@ func main() {
 		dbConfig.Password,
 		dbConfig.DBName,
 		dbConfig.SSLMode,
+		appConfig.TimeZone,
 	)
 	if err != nil {
 		log.Fatal("Error connecting to database:", err)
@@ -56,7 +65,7 @@ func main() {
 	feedbackModel := models.NewFeedbackModel(db)
 
 	// Initialize services
-	jwtService := services.NewJWTService(config.GetAppConfig().JWTSecret)
+	jwtService := services.NewJWTService(appConfig.JWTSecret)
 	s3Service, err := services.NewS3Service()
 	if err != nil {
 		log.Fatal("Error initializing S3 service:", err)

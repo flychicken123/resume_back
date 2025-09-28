@@ -16,10 +16,15 @@ type DatabaseConfig struct {
 	SSLMode  string
 }
 
-func Connect(host, port, user, password, dbname, sslmode string) (*sql.DB, error) {
+func Connect(host, port, user, password, dbname, sslmode, timezone string) (*sql.DB, error) {
 	// Build connection string
-	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, password, dbname, sslmode)
+	psqlInfo := fmt.Sprintf(
+		"host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
+		host, port, user, password, dbname, sslmode,
+	)
+	if timezone != "" {
+		psqlInfo = fmt.Sprintf("%s TimeZone=%s", psqlInfo, timezone)
+	}
 
 	// Open database connection
 	db, err := sql.Open("postgres", psqlInfo)
@@ -37,6 +42,12 @@ func Connect(host, port, user, password, dbname, sslmode string) (*sql.DB, error
 	err = db.Ping()
 	if err != nil {
 		return nil, fmt.Errorf("error connecting to database: %v", err)
+	}
+
+	if timezone != "" {
+		if _, err := db.Exec("SET TIME ZONE $1", timezone); err != nil {
+			return nil, fmt.Errorf("error setting time zone: %v", err)
+		}
 	}
 
 	return db, nil
