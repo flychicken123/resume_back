@@ -50,6 +50,9 @@ func main() {
 	resumeHistoryModel := models.NewResumeHistoryModel(db)
 	resumeModel := models.NewResumeModel(db)
 	projectModel := models.NewProjectModel(db)
+	if err := models.EnsureFeedbackSchema(db); err != nil {
+		log.Fatal("Error ensuring feedback tables:", err)
+	}
 	feedbackModel := models.NewFeedbackModel(db)
 
 	// Initialize services
