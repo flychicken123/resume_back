@@ -201,6 +201,11 @@ func intOrNil(v interface{}) interface{} {
 			return nil
 		}
 		return int64(val)
+	case *int:
+		if val == nil || *val <= 0 {
+			return nil
+		}
+		return *val
 	case *int64:
 		if val == nil || *val <= 0 {
 			return nil

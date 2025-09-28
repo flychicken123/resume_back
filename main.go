@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -62,11 +61,6 @@ func main() {
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
 	emailService := services.NewEmailService()
-	feedbackLogger := log.New(os.Stdout, "[feedback] ", log.LstdFlags)
-	feedbackService := services.NewFeedbackService(feedbackModel, emailService, feedbackLogger)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	go feedbackService.StartScheduler(ctx)
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
