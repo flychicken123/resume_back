@@ -1,14 +1,17 @@
 package parsers
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	pdf "github.com/ledongthuc/pdf"
 )
@@ -161,27 +164,150 @@ func (e *PDFExtractor) extractWithPs2Ascii(filePath string) (string, error) {
 
 // ExtractFromDocx extracts text from DOCX files (basic implementation)
 func (e *PDFExtractor) ExtractFromDocx(filePath string) (string, error) {
-	// Try using docx2txt if available
+	if text, err := e.extractDocxXML(filePath); err == nil && strings.TrimSpace(text) != "" {
+		return text, nil
+	}
+
 	if _, err := exec.LookPath("docx2txt"); err == nil {
 		cmd := exec.Command("docx2txt", filePath, "-")
-		output, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("docx2txt failed: %v", err)
+		if output, err := cmd.Output(); err == nil {
+			cleaned := e.cleanupText(string(output))
+			if strings.TrimSpace(cleaned) != "" {
+				return cleaned, nil
+			}
 		}
-		return string(output), nil
 	}
 
-	// Try using pandoc if available
 	if _, err := exec.LookPath("pandoc"); err == nil {
 		cmd := exec.Command("pandoc", "-t", "plain", filePath)
-		output, err := cmd.Output()
-		if err != nil {
-			return "", fmt.Errorf("pandoc failed: %v", err)
+		if output, err := cmd.Output(); err == nil {
+			cleaned := e.cleanupText(string(output))
+			if strings.TrimSpace(cleaned) != "" {
+				return cleaned, nil
+			}
 		}
-		return string(output), nil
 	}
 
-	return "", fmt.Errorf("no DOCX extraction tools available (tried docx2txt, pandoc)")
+	return "", fmt.Errorf("no DOCX extraction tools available (tried built-in XML parser, docx2txt, pandoc)")
+}
+
+func (e *PDFExtractor) extractDocxXML(filePath string) (string, error) {
+	reader, err := zip.OpenReader(filePath)
+	if err != nil {
+		return "", fmt.Errorf("open docx as zip: %w", err)
+	}
+	defer reader.Close()
+
+	var paragraphs []string
+	for _, f := range reader.File {
+		name := strings.ToLower(f.Name)
+		if !strings.HasPrefix(name, "word/") {
+			continue
+		}
+
+		base := filepath.Base(name)
+		if !(strings.HasPrefix(base, "document") || strings.HasPrefix(base, "header") || strings.HasPrefix(base, "footer")) {
+			continue
+		}
+
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+
+		fileParagraphs, err := extractParagraphsFromXML(rc)
+		rc.Close()
+		if err != nil {
+			continue
+		}
+
+		paragraphs = append(paragraphs, fileParagraphs...)
+	}
+
+	if len(paragraphs) == 0 {
+		return "", fmt.Errorf("docx xml extraction produced empty text")
+	}
+
+	text := e.cleanupText(strings.Join(paragraphs, "\n"))
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("docx xml extraction produced empty text")
+	}
+
+	return text, nil
+}
+
+func extractParagraphsFromXML(r io.Reader) ([]string, error) {
+	const wordNamespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+	decoder := xml.NewDecoder(r)
+	var paragraphs []string
+	var current strings.Builder
+	var inParagraph bool
+	var lastRune rune
+
+	flush := func() {
+		text := strings.TrimSpace(current.String())
+		if text != "" {
+			paragraphs = append(paragraphs, text)
+		}
+		current.Reset()
+		lastRune = 0
+	}
+
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			if inParagraph {
+				flush()
+			}
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			if t.Name.Space == wordNamespace && t.Name.Local == "p" {
+				if inParagraph {
+					flush()
+				}
+				current.Reset()
+				inParagraph = true
+				lastRune = 0
+			} else if t.Name.Space == wordNamespace && t.Name.Local == "t" {
+				var text string
+				if err := decoder.DecodeElement(&text, &t); err != nil {
+					return nil, err
+				}
+				text = strings.TrimSpace(text)
+				if text != "" {
+					if current.Len() > 0 && lastRune != '\n' && lastRune != '\t' && lastRune != ' ' {
+						current.WriteRune(' ')
+					}
+					current.WriteString(text)
+					if r, _ := utf8.DecodeLastRuneInString(text); r != utf8.RuneError {
+						lastRune = r
+					}
+				}
+			} else if t.Name.Space == wordNamespace && t.Name.Local == "tab" {
+				current.WriteRune('	')
+				lastRune = '	'
+			} else if t.Name.Space == wordNamespace && (t.Name.Local == "br" || t.Name.Local == "cr") {
+				current.WriteString("\n")
+				lastRune = '\n'
+			}
+		case xml.EndElement:
+			if t.Name.Space == wordNamespace && t.Name.Local == "p" {
+				if inParagraph {
+					flush()
+					inParagraph = false
+				}
+			}
+		}
+	}
+
+	return paragraphs, nil
 }
 
 // cleanupText fixes common PDF extraction issues
