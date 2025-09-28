@@ -3,6 +3,7 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"strings"
 
 	_ "github.com/lib/pq"
 )
@@ -45,7 +46,9 @@ func Connect(host, port, user, password, dbname, sslmode, timezone string) (*sql
 	}
 
 	if timezone != "" {
-		if _, err := db.Exec("SET TIME ZONE $1", timezone); err != nil {
+		sanitized := strings.ReplaceAll(timezone, "'", "''")
+		query := fmt.Sprintf("SET TIME ZONE '%s'", sanitized)
+		if _, err := db.Exec(query); err != nil {
 			return nil, fmt.Errorf("error setting time zone: %v", err)
 		}
 	}
