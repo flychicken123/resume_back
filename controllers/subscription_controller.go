@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"resumeai/services"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -174,6 +175,51 @@ func (sc *SubscriptionController) CreateCheckoutSession(c *gin.Context) {
 }
 
 // HandleStripeWebhook handles Stripe webhook events
+
+// ChangePlan updates the user's active subscription to a different paid plan
+func (sc *SubscriptionController) ChangePlan(c *gin.Context) {
+	userID := c.GetInt("user_id")
+	if userID == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var req struct {
+		PlanName string `json:"plan_name" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	planName := strings.TrimSpace(strings.ToLower(req.PlanName))
+	if planName == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Plan name is required"})
+		return
+	}
+	if planName == "free" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Use the cancel endpoint to switch to the free plan"})
+		return
+	}
+
+	updatedSub, err := sc.stripeService.ChangeSubscriptionPlan(userID, planName)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Subscription updated",
+		"subscription": gin.H{
+			"plan_name":            planName,
+			"status":               updatedSub.Status,
+			"current_period_start": time.Unix(updatedSub.CurrentPeriodStart, 0),
+			"current_period_end":   time.Unix(updatedSub.CurrentPeriodEnd, 0),
+		},
+	})
+}
+
 func (sc *SubscriptionController) HandleStripeWebhook(c *gin.Context) {
 	payload, err := io.ReadAll(c.Request.Body)
 	if err != nil {

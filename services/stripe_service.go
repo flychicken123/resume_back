@@ -7,11 +7,13 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/stripe/stripe-go/v74"
 	"github.com/stripe/stripe-go/v74/checkout/session"
+	"github.com/stripe/stripe-go/v74/coupon"
 	"github.com/stripe/stripe-go/v74/customer"
 	"github.com/stripe/stripe-go/v74/price"
 	"github.com/stripe/stripe-go/v74/product"
@@ -222,6 +224,36 @@ func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, 
 		return nil, fmt.Errorf("user not found: %v", err)
 	}
 
+	// Determine if this is the user's first time purchasing this specific plan
+	var priorSubs int
+	_ = s.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM user_subscriptions us
+		WHERE us.user_id = $1 AND us.plan_id = $2
+	`, userID, planID).Scan(&priorSubs)
+	firstPurchase := priorSubs == 0
+
+	// Disable introductory pricing if the user has ever held a paid subscription
+	var paidHistoryCount int
+	_ = s.db.QueryRow(`
+		SELECT COUNT(1)
+		FROM user_subscriptions us
+		JOIN subscription_plans sp ON sp.id = us.plan_id
+		WHERE us.user_id = $1 AND sp.price > 0
+	`, userID).Scan(&paidHistoryCount)
+	if paidHistoryCount > 0 {
+		firstPurchase = false
+	}
+
+	// Configure introductory pricing targets (in cents)
+	var introCents int64
+	switch planName {
+	case "premium":
+		introCents = 199 // $1.99 first month for Pro (Premium)
+	case "ultimate":
+		introCents = 699 // $6.99 first month for Ultimate
+	}
+
 	// Create checkout session
 	params := &stripe.CheckoutSessionParams{
 		Mode: stripe.String(string(stripe.CheckoutSessionModeSubscription)),
@@ -231,18 +263,155 @@ func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, 
 				Quantity: stripe.Int64(1),
 			},
 		},
-		SuccessURL:          stripe.String(successURL),
-		CancelURL:           stripe.String(cancelURL),
-		CustomerEmail:       stripe.String(email),
-		AllowPromotionCodes: stripe.Bool(true),
-		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
-			TrialPeriodDays: stripe.Int64(7), // 7-day free trial
-		},
+		SuccessURL:       stripe.String(successURL),
+		CancelURL:        stripe.String(cancelURL),
+		CustomerEmail:    stripe.String(email),
+		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{},
 	}
 	params.AddMetadata("user_id", fmt.Sprintf("%d", userID))
 	params.AddMetadata("plan_id", fmt.Sprintf("%d", planID))
 
+	// Apply automatic first-purchase intro pricing without requiring the user to enter a coupon.
+	// We programmatically create a one-time coupon equal to (basePrice - introPrice) and apply it.
+	appliedDiscount := false
+	if firstPurchase && introCents > 0 && plan.PriceCents > introCents {
+		discountCents := plan.PriceCents - introCents
+		// Try env-configured coupon first if provided; otherwise create a one-time coupon on the fly.
+		var couponID string
+		if planName == "premium" {
+			couponID = os.Getenv("STRIPE_PREMIUM_INTRO_COUPON_ID")
+		} else if planName == "ultimate" {
+			couponID = os.Getenv("STRIPE_ULTIMATE_INTRO_COUPON_ID")
+		}
+		if couponID == "" {
+			cParams := &stripe.CouponParams{
+				AmountOff: stripe.Int64(discountCents),
+				Currency:  stripe.String("usd"),
+				Duration:  stripe.String("once"),
+			}
+			cParams.AddMetadata("type", "intro_pricing")
+			cParams.AddMetadata("plan_name", planName)
+			cParams.AddMetadata("target_first_month_cents", fmt.Sprintf("%d", introCents))
+			cParams.AddMetadata("generated_at", time.Now().Format(time.RFC3339))
+			created, cErr := coupon.New(cParams)
+			if cErr == nil && created != nil {
+				couponID = created.ID
+			}
+		}
+		if couponID != "" {
+			params.Discounts = []*stripe.CheckoutSessionDiscountParams{{Coupon: stripe.String(couponID)}}
+			params.SubscriptionData.TrialPeriodDays = nil
+			appliedDiscount = true
+		}
+	} else {
+		// Keep 7-day trial when no intro pricing applies
+		params.SubscriptionData.TrialPeriodDays = stripe.Int64(7)
+	}
+
+	// Stripe disallows specifying both discounts and allow_promotion_codes at the same time.
+	// Only enable promotion codes when we did not apply a discount programmatically.
+	if !appliedDiscount {
+		params.AllowPromotionCodes = stripe.Bool(true)
+	}
+
 	return session.New(params)
+}
+
+// ChangeSubscriptionPlan updates an active Stripe subscription to a different paid plan without creating a new checkout session.
+func (s *StripeService) ChangeSubscriptionPlan(userID int, planName string) (*stripe.Subscription, error) {
+	planName = strings.TrimSpace(strings.ToLower(planName))
+	if planName == "" {
+		return nil, fmt.Errorf("plan name is required")
+	}
+
+	plan, err := s.getPlanByName(planName)
+	if err != nil {
+		return nil, err
+	}
+	if plan.StripePriceID == "" {
+		return nil, fmt.Errorf("plan %s is not configured for billing", planName)
+	}
+
+	var currentPlanID int
+	if err := s.db.QueryRow(`
+		SELECT COALESCE(subscription_plan_id, 1)
+		FROM users
+		WHERE id = $1
+	`, userID).Scan(&currentPlanID); err != nil {
+		return nil, fmt.Errorf("failed to determine current plan: %w", err)
+	}
+	if currentPlanID == plan.ID {
+		return nil, fmt.Errorf("subscription already on the %s plan", plan.DisplayName)
+	}
+
+	var stripeSubID string
+	err = s.db.QueryRow(`
+		SELECT stripe_subscription_id
+		FROM user_subscriptions
+		WHERE user_id = $1 AND stripe_subscription_id IS NOT NULL
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, userID).Scan(&stripeSubID)
+	if err == sql.ErrNoRows || stripeSubID == "" {
+		return nil, fmt.Errorf("no active subscription found to update")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to locate current subscription: %w", err)
+	}
+
+	sub, err := subscription.Get(stripeSubID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load current subscription from Stripe: %w", err)
+	}
+	if len(sub.Items.Data) == 0 {
+		return nil, fmt.Errorf("subscription has no items to update")
+	}
+
+	itemID := sub.Items.Data[0].ID
+	if itemID == "" {
+		return nil, fmt.Errorf("subscription item ID is missing")
+	}
+
+	params := &stripe.SubscriptionParams{
+		Items: []*stripe.SubscriptionItemsParams{
+			{
+				ID:    stripe.String(itemID),
+				Price: stripe.String(plan.StripePriceID),
+			},
+		},
+	}
+	params.ProrationBehavior = stripe.String("none")
+	params.CancelAtPeriodEnd = stripe.Bool(false)
+
+	updated, err := subscription.Update(stripeSubID, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update subscription in Stripe: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		UPDATE users
+		SET subscription_plan_id = $1,
+		    subscription_status = 'active',
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`, plan.ID, userID); err != nil {
+		return nil, fmt.Errorf("failed to update user record: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		UPDATE user_subscriptions
+		SET plan_id = $1,
+		    status = 'active',
+		    cancel_at_period_end = false,
+		    current_period_start = $2,
+		    current_period_end = $3,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $4
+	`, plan.ID, time.Unix(updated.CurrentPeriodStart, 0), time.Unix(updated.CurrentPeriodEnd, 0), userID); err != nil {
+		return nil, fmt.Errorf("failed to update subscription record: %w", err)
+	}
+
+	return updated, nil
 }
 
 // CreateCustomerPortalSession creates a session for customer to manage subscription

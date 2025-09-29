@@ -260,6 +260,7 @@ func main() {
 		protected.GET("/subscription/usage", subscriptionController.GetUsageStats)
 		protected.POST("/subscription/checkout", subscriptionController.CreateCheckoutSession)
 		protected.POST("/subscription/cancel", subscriptionController.CancelSubscription)
+		protected.POST("/subscription/change-plan", subscriptionController.ChangePlan)
 		protected.POST("/subscription/portal", subscriptionController.CreateCustomerPortal)
 		protected.GET("/subscription/check-limit", subscriptionController.CheckResumeLimit)
 		protected.POST("/subscription/confirm", subscriptionController.ConfirmSuccess)

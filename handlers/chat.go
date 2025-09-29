@@ -33,11 +33,11 @@ type knowledgeEntry struct {
 }
 
 var assistantKnowledge = []knowledgeEntry{
-	{
-		Title:    "Plan overview",
-		Summary:  "HiHired has three plans: Free ($0, 1 resume per week with basic templates and PDF export), Premium ($9.99/month, up to 30 resumes with advanced templates and keyword tools), and Ultimate ($29.99/month, up to 200 resumes with full template library, bulk downloads, and agency tools).",
-		Keywords: []string{"plans", "pricing", "free plan", "premium plan", "ultimate plan", "price", "cost"},
-	},
+    {
+        Title:    "Plan overview",
+        Summary:  "HiHired has three plans: Free ($0, 1 resume per week), Premium ($7.99/month, first month $1.99, up to 30 resumes with AI-generated cover letters), and Ultimate ($29.99/month, first month $6.99, up to 300 resumes with 24 hours online support).",
+        Keywords: []string{"plans", "pricing", "free plan", "premium plan", "ultimate plan", "price", "cost"},
+    },
 	{
 		Title:    "Platform overview",
 		Summary:  "HiHired is a free AI-powered resume builder that helps job seekers craft ATS-friendly resumes, customize content for job descriptions, and download polished PDFs without mandatory signup.",
@@ -48,11 +48,11 @@ var assistantKnowledge = []knowledgeEntry{
 		Summary:  "The Free Plan costs $0, includes 1 AI-generated resume per week, provides basic templates, PDF export, and email support—ideal for getting started quickly.",
 		Keywords: []string{"free", "plan", "pricing", "cost", "starter", "basic"},
 	},
-	{
-		Title:    "Premium plan",
-		Summary:  "Premium Plan is $9.99/month and unlocks up to 30 resumes per month with more advanced templates and keyword optimization—great for active job searches.",
-		Keywords: []string{"premium", "upgrade", "monthly", "plan", "membership"},
-	},
+    {
+        Title:    "Premium plan",
+        Summary:  "Premium Plan is $7.99/month (first month $1.99) and unlocks up to 30 resumes per month with AI-generated cover letters.",
+        Keywords: []string{"premium", "upgrade", "monthly", "plan", "membership"},
+    },
 	{
 		Title:    "Ultimate plan",
 		Summary:  "Ultimate Plan is $29.99/month, allows up to 200 resumes monthly, and is tailored for power users or agencies that handle many applications.",
@@ -65,7 +65,7 @@ var assistantKnowledge = []knowledgeEntry{
 	},
 	{
 		Title:    "Membership upgrade steps",
-		Summary:  "To upgrade: log in, open Pricing, choose Premium or Ultimate, and complete checkout. Accounts update instantly and resume limits reset according to the plan period.",
+		Summary:  "To upgrade: log in, open Pricing, choose Pro or Ultimate, and complete checkout. Accounts update instantly and resume limits reset according to the plan period.",
 		Keywords: []string{"upgrade", "change", "membership", "checkout", "limit"},
 	},
 	{
@@ -162,7 +162,7 @@ func ChatAssistant(c *gin.Context) {
 		return
 	}
 
-	const systemInstructions = `You are HiHired's AI resume assistant. Keep answers short, clear, and friendly (120 words max).
+const systemInstructions = `You are HiHired's AI resume assistant. Keep answers short, clear, and friendly (120 words max).
 Focus on HiHired features: AI resume builder, templates, PDF export, memberships, workflow steps, and support.
 When pricing is mentioned, explicitly list the Free, Premium, and Ultimate plans with their benefits.
 When asked how to use the builder, provide step-by-step instructions.
