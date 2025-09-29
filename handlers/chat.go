@@ -35,7 +35,7 @@ type knowledgeEntry struct {
 var assistantKnowledge = []knowledgeEntry{
 	{
 		Title:    "Plan overview",
-		Summary:  "HiHired has three plans: Free ($0, 1 resume per week with basic templates and PDF export), Premium ($9.99/month, up to 30 resumes with advanced templates and keyword tools), and Ultimate ($29.99/month, up to 200 resumes with full template library, bulk downloads, and agency tools).",
+		Summary:  "HiHired has three plans: Free ($0, 1 resume per week), Premium ($7.99/month, first month $1.99, up to 30 resumes with AI-generated cover letters), and Ultimate ($29.99/month, first month $6.99, up to 300 resumes with 24 hours online support).",
 		Keywords: []string{"plans", "pricing", "free plan", "premium plan", "ultimate plan", "price", "cost"},
 	},
 	{
@@ -50,7 +50,7 @@ var assistantKnowledge = []knowledgeEntry{
 	},
 	{
 		Title:    "Premium plan",
-		Summary:  "Premium Plan is $9.99/month and unlocks up to 30 resumes per month with more advanced templates and keyword optimization—great for active job searches.",
+		Summary:  "Premium Plan is $7.99/month (first month $1.99) and unlocks up to 30 resumes per month with AI-generated cover letters.",
 		Keywords: []string{"premium", "upgrade", "monthly", "plan", "membership"},
 	},
 	{
@@ -65,7 +65,7 @@ var assistantKnowledge = []knowledgeEntry{
 	},
 	{
 		Title:    "Membership upgrade steps",
-		Summary:  "To upgrade: log in, open Pricing, choose Premium or Ultimate, and complete checkout. Accounts update instantly and resume limits reset according to the plan period.",
+		Summary:  "To upgrade: log in, open Pricing, choose Pro or Ultimate, and complete checkout. Accounts update instantly and resume limits reset according to the plan period.",
 		Keywords: []string{"upgrade", "change", "membership", "checkout", "limit"},
 	},
 	{
