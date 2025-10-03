@@ -186,7 +186,7 @@ SET display_name = 'Premium Plan',
     price = 7.99,
     features = '{"features": [
       "30 resumes per month",
-      "AI-generated cover letters included"
+      "AI-generated cover letters included" 
     ]}',
     resume_limit = 30,
     resume_period = 'monthly',

@@ -29,7 +29,20 @@ type ResumeRequest struct {
 	Education   string   `json:"education"`
 	Skills      []string `json:"skills"`
 	Format      string   `json:"format"`
+	Engine      string   `json:"engine"`
 	HtmlContent string   `json:"htmlContent"` // HTML content from live preview
+}
+
+func resolvePDFEngine(c *gin.Context, initial ...string) string {
+	candidates := append([]string{}, initial...)
+	candidates = append(candidates, c.PostForm("engine"), c.GetHeader("X-PDF-Engine"), c.Query("engine"))
+	for _, raw := range candidates {
+		candidate := strings.TrimSpace(raw)
+		if candidate != "" {
+			return strings.ToLower(candidate)
+		}
+	}
+	return ""
 }
 
 func GenerateResume(c *gin.Context) {
@@ -107,6 +120,7 @@ func GeneratePDFResume(c *gin.Context) {
 	}
 
 	htmlContent := req.HtmlContent
+	engine := resolvePDFEngine(c, req.Engine)
 	if htmlContent == "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "HTML content is required"})
 		return
@@ -167,6 +181,7 @@ func GeneratePDFResume(c *gin.Context) {
 	templateSlug := normalizeTemplateFormat(req.Format)
 	userData := map[string]interface{}{
 		"htmlContent": htmlContent,
+		"engine":      engine,
 	}
 
 	// Generate PDF via Python + wkhtmltopdf
@@ -259,12 +274,14 @@ func GeneratePDFResumeFromHTMLFileWithService(resumeService *services.ResumeServ
 
 		// Prepare the target PDF path
 		pdfFilename := strings.TrimSuffix(htmlFilename, filepath.Ext(htmlFilename)) + ".pdf"
+		engine := resolvePDFEngine(c)
 		pdfPath := filepath.Join(saveDir, pdfFilename)
 
 		// Ask Python to render this HTML file into the PDF
 		userData := map[string]interface{}{
 			"htmlContent": "",
 			"htmlPath":    htmlPath,
+			"engine":      engine,
 		}
 		if err := generatePDFResumeWithPython(defaultTemplateSlug, userData, pdfPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
