@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"resumeai/models"
 	"resumeai/services"
 
 	"github.com/gin-gonic/gin"
@@ -20,17 +21,26 @@ import (
 )
 
 type ResumeRequest struct {
-	Position    string   `json:"position"`
-	Name        string   `json:"name"`
-	Email       string   `json:"email"`
-	Phone       string   `json:"phone"`
-	Summary     string   `json:"summary"`
-	Experience  string   `json:"experience"`
-	Education   string   `json:"education"`
-	Skills      []string `json:"skills"`
-	Format      string   `json:"format"`
-	Engine      string   `json:"engine"`
-	HtmlContent string   `json:"htmlContent"` // HTML content from live preview
+	Position       string   `json:"position"`
+	Name           string   `json:"name"`
+	Email          string   `json:"email"`
+	Phone          string   `json:"phone"`
+	Summary        string   `json:"summary"`
+	Experience     string   `json:"experience"`
+	Education      string   `json:"education"`
+	JobDescription string   `json:"jobDescription"`
+	Location       string   `json:"location"`
+	Skills         []string `json:"skills"`
+	Format         string   `json:"format"`
+	Engine         string   `json:"engine"`
+	HtmlContent    string   `json:"htmlContent"` // HTML content from live preview
+}
+
+var resumeJobMatcher services.ResumeJobMatcher
+
+// SetResumeJobMatcherService injects the matcher service used for per-resume job suggestions.
+func SetResumeJobMatcherService(matcher services.ResumeJobMatcher) {
+	resumeJobMatcher = matcher
 }
 
 func resolvePDFEngine(c *gin.Context, initial ...string) string {
@@ -85,10 +95,58 @@ func GenerateResume(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"message":  "Resume generated successfully.",
 		"filePath": "/static/" + filename,
-	})
+	}
+
+	var resumeHash string
+	var jobMatches []*models.ResumeJobMatchRecord
+	if resumeJobMatcher != nil {
+		if userID, ok := extractUserID(c); ok {
+			hashInput := services.ResumeHashInput{
+				Position:       req.Position,
+				Name:           req.Name,
+				Email:          req.Email,
+				Summary:        req.Summary,
+				Experience:     req.Experience,
+				Education:      req.Education,
+				JobDescription: req.JobDescription,
+				Location:       req.Location,
+				Skills:         req.Skills,
+				HtmlContent:    req.HtmlContent,
+			}
+			resumeHash = services.DeriveResumeHash(hashInput)
+			matches, err := resumeJobMatcher.MatchAndStore(c.Request.Context(), services.ResumeJobMatchInput{
+				UserID:            userID,
+				ResumeHash:        resumeHash,
+				Position:          req.Position,
+				Summary:           req.Summary,
+				Experience:        req.Experience,
+				Education:         req.Education,
+				JobDescription:    req.JobDescription,
+				PreferredLocation: req.Location,
+				Skills:            req.Skills,
+				CandidateJobLimit: 250,
+				MaxResults:        20,
+			})
+			if err != nil {
+				fmt.Printf("job matching failed: %v\n", err)
+			} else {
+				jobMatches = matches
+			}
+		}
+	}
+
+	if resumeHash != "" {
+		response["resumeHash"] = resumeHash
+	}
+	if len(jobMatches) > 0 {
+		response["jobMatches"] = jobMatches
+		response["topMatch"] = jobMatches[0]
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func generateHTMLResumeWithPython(templateName string, userData map[string]interface{}, outputPath string) error {
@@ -107,6 +165,25 @@ func generateHTMLResumeWithPython(templateName string, userData map[string]inter
 		return fmt.Errorf("python script failed: %v, output: %s", err, string(output))
 	}
 	return nil
+}
+
+func extractUserID(c *gin.Context) (int, bool) {
+	value, exists := c.Get("user_id")
+	if !exists {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
 }
 
 func GeneratePDFResume(c *gin.Context) {

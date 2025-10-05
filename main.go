@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -52,7 +53,7 @@ func main() {
 	}
 	defer db.Close()
 
-	log.Println("✅ Database connection successful!")
+	log.Println("? Database connection successful!")
 
 	// Initialize models
 	userModel := models.NewUserModel(db)
@@ -64,6 +65,11 @@ func main() {
 	}
 	feedbackModel := models.NewFeedbackModel(db)
 
+	jobCompanyModel := models.NewJobCompanyModel(db)
+	jobPostingModel := models.NewJobPostingModel(db)
+	jobSyncModel := models.NewJobSyncRunModel(db)
+	jobMatchModel := models.NewResumeJobMatchModel(db)
+
 	// Initialize services
 	jwtService := services.NewJWTService(appConfig.JWTSecret)
 	s3Service, err := services.NewS3Service()
@@ -73,6 +79,10 @@ func main() {
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
 	emailService := services.NewEmailService()
+	jobsService := services.NewJobIngestionService(db, logger)
+	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger)
+	handlers.SetResumeJobMatcherService(jobMatcherService)
+	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -87,7 +97,18 @@ func main() {
 	subscriptionController := controllers.NewSubscriptionController(db, stripeService)
 	adminController := controllers.NewAdminController(db)
 
-	r := gin.Default()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobsService.StartScheduler(ctx, 24*time.Hour)
+	go func() {
+		if err := jobsService.SyncAllCompanies(ctx); err != nil {
+			logger.Warn("initial job sync failed", map[string]interface{}{"error": err.Error()})
+		}
+	}()
+
+	r := gin.New()
+	r.Use(gin.Logger())
+	r.Use(gin.Recovery())
 
 	// Create rate limiters and caches
 	rateLimiters := middleware.CreateRateLimiters()
@@ -204,6 +225,7 @@ func main() {
 		api.POST("/auth/login", authController.Login)
 		api.POST("/auth/google", authController.GoogleLogin)
 		api.POST("/auth/logout", handlers.LogoutUser())
+		api.GET("/jobs", jobsController.ListJobs)
 	}
 
 	// Public routes (no auth required) - keep using handlers for now
@@ -265,6 +287,9 @@ func main() {
 		protected.PUT("/projects/:id", projectController.UpdateProject)
 		protected.DELETE("/projects/:id", projectController.DeleteProject)
 
+		protected.POST("/jobs/matches", jobsController.ComputeMatches)
+		protected.GET("/jobs/matches", jobsController.ListMatchedJobs)
+
 		// Subscription routes
 		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)
 		protected.GET("/subscription/usage", subscriptionController.GetUsageStats)
@@ -280,6 +305,10 @@ func main() {
 		{
 			admin.GET("/memberships/users", adminController.ListUsers)
 			admin.PUT("/memberships/users/:id", adminController.UpdateUserMembership)
+			admin.GET("/jobs/companies", jobsController.ListCompanies)
+			admin.POST("/jobs/companies", jobsController.CreateCompany)
+			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
+			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 		}
 	}
 
