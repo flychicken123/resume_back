@@ -231,7 +231,7 @@ func (m *JobCompanyModel) BulkUpsert(companies []*JobCompany) (int, int, error) 
 
 	stmt, err := tx.Prepare(query)
 	if err != nil {
-		tx.Rollback()
+		_ = tx.Rollback()
 		return 0, 0, err
 	}
 	defer stmt.Close()
@@ -266,7 +266,7 @@ func (m *JobCompanyModel) BulkUpsert(companies []*JobCompany) (int, int, error) 
 		).Scan(&company.ID, &createdAt, &updatedAt, &rowInserted)
 		if err != nil {
 			stmt.Close()
-			tx.Rollback()
+			_ = tx.Rollback()
 			return 0, 0, err
 		}
 		company.CreatedAt = createdAt
