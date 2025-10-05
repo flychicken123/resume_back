@@ -307,6 +307,7 @@ func main() {
 			admin.PUT("/memberships/users/:id", adminController.UpdateUserMembership)
 			admin.GET("/jobs/companies", jobsController.ListCompanies)
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
+			admin.POST("/jobs/companies/import", jobsController.ImportCompanies)
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 		}

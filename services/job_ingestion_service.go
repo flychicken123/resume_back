@@ -73,6 +73,9 @@ func NewJobIngestionService(db *sql.DB, logger *utils.Logger) *JobIngestionServi
 
 	httpClient := &http.Client{Timeout: 20 * time.Second}
 	service.RegisterProvider("greenhouse", NewGreenhouseProvider(httpClient, logger))
+	service.RegisterProvider("workday", NewWorkdayProvider(httpClient, logger))
+	service.RegisterProvider("smartrecruiters", NewSmartRecruitersProvider(httpClient, logger))
+	service.RegisterProvider("lever", NewLeverProvider(httpClient, logger))
 
 	return service
 }

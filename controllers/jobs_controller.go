@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -19,6 +20,7 @@ type JobsController struct {
 	matches   *models.ResumeJobMatchModel
 	matcher   services.ResumeJobMatcher
 	ingest    *services.JobIngestionService
+	importer  *services.CompanyImportService
 }
 
 func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPostingModel, syncRuns *models.JobSyncRunModel, matches *models.ResumeJobMatchModel, matcher services.ResumeJobMatcher, ingest *services.JobIngestionService) *JobsController {
@@ -29,6 +31,7 @@ func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPo
 		matches:   matches,
 		matcher:   matcher,
 		ingest:    ingest,
+		importer:  services.NewCompanyImportService(companies),
 	}
 }
 
@@ -92,6 +95,41 @@ func (jc *JobsController) CreateCompany(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"company": company})
+}
+
+func (jc *JobsController) ImportCompanies(c *gin.Context) {
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file field 'file' is required"})
+		return
+	}
+
+	if file.Size == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "uploaded file is empty"})
+		return
+	}
+
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to open uploaded file"})
+		return
+	}
+	defer src.Close()
+
+	summary, err := jc.importer.ImportCSV(src)
+	if err != nil {
+		if errors.Is(err, services.ErrCompanyImportInvalidFormat) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to import companies"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "company import completed",
+		"summary": summary,
+	})
 }
 
 func (jc *JobsController) TriggerSync(c *gin.Context) {

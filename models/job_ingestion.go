@@ -202,6 +202,90 @@ func (m *JobCompanyModel) Create(company *JobCompany) error {
 	).Scan(&company.ID, &company.CreatedAt, &company.UpdatedAt)
 }
 
+// BulkUpsert inserts or updates a batch of job companies using careers_url as the unique key.
+func (m *JobCompanyModel) BulkUpsert(companies []*JobCompany) (int, int, error) {
+	if len(companies) == 0 {
+		return 0, 0, nil
+	}
+
+	tx, err := m.db.Begin()
+	if err != nil {
+		return 0, 0, err
+	}
+
+	const query = `
+		INSERT INTO job_companies (
+			name, website_url, careers_url, ats_provider, external_identifier, is_active, sync_interval_minutes
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (careers_url) DO UPDATE SET
+			name = EXCLUDED.name,
+			website_url = EXCLUDED.website_url,
+			careers_url = EXCLUDED.careers_url,
+			ats_provider = EXCLUDED.ats_provider,
+			external_identifier = EXCLUDED.external_identifier,
+			is_active = EXCLUDED.is_active,
+			sync_interval_minutes = EXCLUDED.sync_interval_minutes,
+			updated_at = CURRENT_TIMESTAMP
+		RETURNING id, created_at, updated_at, (xmax = 0) AS inserted
+	`
+
+	stmt, err := tx.Prepare(query)
+	if err != nil {
+		tx.Rollback()
+		return 0, 0, err
+	}
+	defer stmt.Close()
+
+	var inserted, updated int
+	for _, company := range companies {
+		if company == nil {
+			continue
+		}
+
+		name := strings.TrimSpace(company.Name)
+		careersURL := strings.TrimSpace(company.CareersURL)
+		atsProvider := strings.TrimSpace(company.ATSProvider)
+		if name == "" || careersURL == "" || atsProvider == "" {
+			continue
+		}
+
+		if company.SyncIntervalMinutes <= 0 {
+			company.SyncIntervalMinutes = 1440
+		}
+
+		var createdAt, updatedAt time.Time
+		var rowInserted bool
+		err = stmt.QueryRow(
+			name,
+			nullString(company.WebsiteURL),
+			careersURL,
+			atsProvider,
+			nullStringPtr(company.ExternalIdentifier),
+			company.IsActive,
+			company.SyncIntervalMinutes,
+		).Scan(&company.ID, &createdAt, &updatedAt, &rowInserted)
+		if err != nil {
+			stmt.Close()
+			tx.Rollback()
+			return 0, 0, err
+		}
+		company.CreatedAt = createdAt
+		company.UpdatedAt = updatedAt
+
+		if rowInserted {
+			inserted++
+		} else {
+			updated++
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, 0, err
+	}
+
+	return inserted, updated, nil
+}
+
 // UpdateSyncMetadata stores the results of the latest sync attempt
 func (m *JobCompanyModel) UpdateSyncMetadata(companyID int, syncedAt time.Time, status string) error {
 	const query = `
