@@ -152,37 +152,11 @@ func (m *JobCompanyModel) fetchCompanies(query string, args ...interface{}) ([]*
 
 	var companies []*JobCompany
 	for rows.Next() {
-		var c JobCompany
-		var externalID sql.NullString
-		var lastStatus sql.NullString
-		var lastSynced sql.NullTime
-		if err := rows.Scan(
-			&c.ID,
-			&c.Name,
-			&c.WebsiteURL,
-			&c.CareersURL,
-			&c.ATSProvider,
-			&externalID,
-			&c.IsActive,
-			&c.SyncIntervalMinutes,
-			&lastSynced,
-			&lastStatus,
-			&c.CreatedAt,
-			&c.UpdatedAt,
-		); err != nil {
+		company, err := scanJobCompanyRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		if externalID.Valid {
-			c.ExternalIdentifier = &externalID.String
-		}
-		if lastStatus.Valid {
-			c.LastSyncStatus = &lastStatus.String
-		}
-		if lastSynced.Valid {
-			ts := lastSynced.Time
-			c.LastSyncedAt = &ts
-		}
-		companies = append(companies, &c)
+		companies = append(companies, company)
 	}
 
 	return companies, rows.Err()
@@ -198,41 +172,12 @@ func (m *JobCompanyModel) GetByID(id int) (*JobCompany, error) {
         WHERE id = $1
     `
 
-	var c JobCompany
-	var externalID sql.NullString
-	var lastStatus sql.NullString
-	var lastSynced sql.NullTime
-
-	err := m.db.QueryRow(query, id).Scan(
-		&c.ID,
-		&c.Name,
-		&c.WebsiteURL,
-		&c.CareersURL,
-		&c.ATSProvider,
-		&externalID,
-		&c.IsActive,
-		&c.SyncIntervalMinutes,
-		&lastSynced,
-		&lastStatus,
-		&c.CreatedAt,
-		&c.UpdatedAt,
-	)
+	company, err := scanJobCompanyRow(m.db.QueryRow(query, id))
 	if err != nil {
 		return nil, err
 	}
 
-	if externalID.Valid {
-		c.ExternalIdentifier = &externalID.String
-	}
-	if lastStatus.Valid {
-		c.LastSyncStatus = &lastStatus.String
-	}
-	if lastSynced.Valid {
-		ts := lastSynced.Time
-		c.LastSyncedAt = &ts
-	}
-
-	return &c, nil
+	return company, nil
 }
 
 // Create inserts a new company entry
