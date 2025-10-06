@@ -57,6 +57,8 @@ type JobIngestionService struct {
 	clock        func() time.Time
 }
 
+const dailySyncInterval = 24 * time.Hour
+
 func NewJobIngestionService(db *sql.DB, logger *utils.Logger) *JobIngestionService {
 	if logger == nil {
 		logger = utils.NewLogger()
@@ -233,7 +235,9 @@ func (s *JobIngestionService) SyncAllCompaniesWithSummary(ctx context.Context) (
 
 func (s *JobIngestionService) StartScheduler(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
-		interval = 24 * time.Hour
+		interval = dailySyncInterval
+	} else if interval < dailySyncInterval {
+		interval = dailySyncInterval
 	}
 	go s.schedulerLoop(ctx, interval)
 }
@@ -263,12 +267,15 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 
 	now := s.clock()
 	for _, company := range companies {
-		if company.SyncIntervalMinutes <= 0 {
-			company.SyncIntervalMinutes = 180
+		interval := time.Duration(company.SyncIntervalMinutes) * time.Minute
+		if interval <= 0 {
+			interval = dailySyncInterval
+		} else if interval < dailySyncInterval {
+			interval = dailySyncInterval
 		}
 
 		if company.LastSyncedAt != nil {
-			next := company.LastSyncedAt.Add(time.Duration(company.SyncIntervalMinutes) * time.Minute)
+			next := company.LastSyncedAt.Add(interval)
 			if now.Before(next) {
 				continue
 			}
