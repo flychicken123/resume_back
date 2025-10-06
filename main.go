@@ -310,6 +310,7 @@ func main() {
 			admin.POST("/jobs/companies/import", jobsController.ImportCompanies)
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
+			admin.PATCH("/jobs/companies/:id/status", jobsController.UpdateCompanyStatus)
 		}
 	}
 

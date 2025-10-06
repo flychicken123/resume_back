@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"errors"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,12 +37,59 @@ func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPo
 }
 
 func (jc *JobsController) ListCompanies(c *gin.Context) {
-	companies, err := jc.companies.ListAll()
+	page := 1
+	pageSize := 25
+	status := strings.ToLower(strings.TrimSpace(c.DefaultQuery("status", "all")))
+
+	if raw := c.Query("page"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			page = parsed
+		}
+	}
+	if raw := c.Query("page_size"); raw != "" {
+		if parsed, err := strconv.Atoi(raw); err == nil && parsed > 0 {
+			pageSize = parsed
+		}
+	}
+
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	if page <= 0 {
+		page = 1
+	}
+
+	offset := (page - 1) * pageSize
+	companies, total, err := jc.companies.ListWithPagination(status, pageSize, offset)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load companies"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"companies": companies})
+
+	totalPages := int(math.Ceil(float64(total) / float64(pageSize)))
+	if totalPages == 0 {
+		totalPages = 1
+	}
+	if total == 0 {
+		page = 1
+	}
+	if total > 0 && page > totalPages {
+		page = totalPages
+		offset = (page - 1) * pageSize
+		companies, _, err = jc.companies.ListWithPagination(status, pageSize, offset)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load companies"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"companies":   companies,
+		"page":        page,
+		"page_size":   pageSize,
+		"total":       total,
+		"total_pages": totalPages,
+	})
 }
 
 type createCompanyRequest struct {
@@ -95,6 +143,37 @@ func (jc *JobsController) CreateCompany(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusCreated, gin.H{"company": company})
+}
+
+type updateCompanyStatusRequest struct {
+	IsActive *bool `json:"is_active"`
+}
+
+func (jc *JobsController) UpdateCompanyStatus(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid company id"})
+		return
+	}
+
+	var req updateCompanyStatusRequest
+	if err := c.ShouldBindJSON(&req); err != nil || req.IsActive == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_active field is required"})
+		return
+	}
+
+	if err := jc.companies.SetCompanyActive(id, *req.IsActive); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update company status"})
+		return
+	}
+
+	company, err := jc.companies.GetByID(id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"company": company})
 }
 
 func (jc *JobsController) ImportCompanies(c *gin.Context) {

@@ -240,6 +240,16 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 	location := strings.ToLower(job.Location)
 	remote := strings.ToLower(job.RemoteType)
 
+	combinedLocation := strings.TrimSpace(job.Location + " " + job.RemoteType)
+	preferred := strings.TrimSpace(preferredLocation)
+	if preferred != "" {
+		if utils.LooksUSLocation(preferred) && !utils.LooksCanadianLocation(preferred) {
+			if utils.LooksCanadianLocation(combinedLocation) && !utils.LooksUSLocation(combinedLocation) {
+				return -100
+			}
+		}
+	}
+
 	score := 0.0
 	skillMatches := 0
 

@@ -183,6 +183,97 @@ var supportedLocationTokens = map[string]struct{}{
 	"nu":    {},
 	"yt":    {},
 }
+var usLocationKeywords = []string{
+	"united states of america",
+	"united states",
+	"usa",
+	"us only",
+	"united states only",
+	"remote us",
+	"us remote",
+	"alabama",
+	"alaska",
+	"arizona",
+	"arkansas",
+	"california",
+	"colorado",
+	"connecticut",
+	"delaware",
+	"florida",
+	"georgia",
+	"hawaii",
+	"idaho",
+	"illinois",
+	"indiana",
+	"iowa",
+	"kansas",
+	"kentucky",
+	"louisiana",
+	"maine",
+	"maryland",
+	"massachusetts",
+	"michigan",
+	"minnesota",
+	"mississippi",
+	"missouri",
+	"montana",
+	"nebraska",
+	"nevada",
+	"new hampshire",
+	"new jersey",
+	"new mexico",
+	"new york",
+	"north carolina",
+	"north dakota",
+	"ohio",
+	"oklahoma",
+	"oregon",
+	"pennsylvania",
+	"rhode island",
+	"south carolina",
+	"south dakota",
+	"tennessee",
+	"texas",
+	"utah",
+	"vermont",
+	"virginia",
+	"washington",
+	"west virginia",
+	"wisconsin",
+	"wyoming",
+	"district of columbia",
+	"washington dc",
+}
+
+var canadaLocationKeywords = []string{
+	"canada",
+	"remote canada",
+	"canadian",
+	"ontario",
+	"british columbia",
+	"alberta",
+	"saskatchewan",
+	"manitoba",
+	"quebec",
+	"new brunswick",
+	"nova scotia",
+	"newfoundland and labrador",
+	"prince edward island",
+	"pei",
+	"yukon",
+	"northwest territories",
+	"nunavut",
+	"toronto",
+	"vancouver",
+	"montreal",
+	"ottawa",
+	"calgary",
+	"edmonton",
+	"winnipeg",
+	"halifax",
+	"victoria",
+	"waterloo",
+}
 
 // IsSupportedJobLocation returns true if the given job location is within the supported geographies (US, Canada, UK).
 func IsSupportedJobLocation(location, remoteType string) bool {
@@ -249,4 +340,29 @@ func normalizeLocationString(value string) string {
 	}
 
 	return strings.Join(strings.Fields(builder.String()), " ")
+}
+
+func containsLocationKeyword(normalized string, keywords []string) bool {
+	for _, keyword := range keywords {
+		if strings.Contains(normalized, keyword) {
+			return true
+		}
+	}
+	return false
+}
+
+func LooksUSLocation(value string) bool {
+	normalized := normalizeLocationString(sanitizeLocationString(value))
+	if normalized == "" {
+		return false
+	}
+	return containsLocationKeyword(normalized, usLocationKeywords)
+}
+
+func LooksCanadianLocation(value string) bool {
+	normalized := normalizeLocationString(sanitizeLocationString(value))
+	if normalized == "" {
+		return false
+	}
+	return containsLocationKeyword(normalized, canadaLocationKeywords)
 }

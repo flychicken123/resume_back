@@ -32,3 +32,43 @@ func TestIsSupportedJobLocation(t *testing.T) {
 		})
 	}
 }
+
+func TestLooksCanadianLocation(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "Toronto with province", value: "Toronto, Ontario, Canada", want: true},
+		{name: "Remote Canada text", value: "Remote - Canada", want: true},
+		{name: "Non Canadian location", value: "Austin, Texas, United States", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LooksCanadianLocation(tt.value); got != tt.want {
+				t.Fatalf("LooksCanadianLocation(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLooksUSLocation(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "US city and state", value: "Austin, Texas, United States", want: true},
+		{name: "Remote US", value: "Remote - US", want: true},
+		{name: "Canadian city", value: "Toronto, Ontario", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := LooksUSLocation(tt.value); got != tt.want {
+				t.Fatalf("LooksUSLocation(%q) = %v, want %v", tt.value, got, tt.want)
+			}
+		})
+	}
+}

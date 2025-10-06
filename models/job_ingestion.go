@@ -26,6 +26,8 @@ type JobCompany struct {
 	SyncIntervalMinutes int        `json:"sync_interval_minutes"`
 	LastSyncedAt        *time.Time `json:"last_synced_at"`
 	LastSyncStatus      *string    `json:"last_sync_status"`
+	LastSyncError       *string    `json:"last_sync_error"`
+	SyncFailureCount    int        `json:"sync_failure_count"`
 	CreatedAt           time.Time  `json:"created_at"`
 	UpdatedAt           time.Time  `json:"updated_at"`
 }
@@ -82,7 +84,9 @@ func scanJobCompanyRow(scanner rowScanner) (*JobCompany, error) {
 	var website sql.NullString
 	var externalID sql.NullString
 	var lastStatus sql.NullString
+	var lastError sql.NullString
 	var lastSynced sql.NullTime
+	var failureCount sql.NullInt64
 
 	if err := scanner.Scan(
 		&c.ID,
@@ -95,6 +99,8 @@ func scanJobCompanyRow(scanner rowScanner) (*JobCompany, error) {
 		&c.SyncIntervalMinutes,
 		&lastSynced,
 		&lastStatus,
+		&lastError,
+		&failureCount,
 		&c.CreatedAt,
 		&c.UpdatedAt,
 	); err != nil {
@@ -108,9 +114,15 @@ func scanJobCompanyRow(scanner rowScanner) (*JobCompany, error) {
 	if lastStatus.Valid {
 		c.LastSyncStatus = &lastStatus.String
 	}
+	if lastError.Valid {
+		c.LastSyncError = &lastError.String
+	}
 	if lastSynced.Valid {
 		ts := lastSynced.Time
 		c.LastSyncedAt = &ts
+	}
+	if failureCount.Valid {
+		c.SyncFailureCount = int(failureCount.Int64)
 	}
 
 	return &c, nil
@@ -121,7 +133,8 @@ func (m *JobCompanyModel) ListActive() ([]*JobCompany, error) {
 	const query = `
         SELECT id, name, website_url, careers_url, ats_provider,
                external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, created_at, updated_at
+               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+               created_at, updated_at
         FROM job_companies
         WHERE is_active = TRUE
         ORDER BY sync_interval_minutes, id
@@ -135,12 +148,54 @@ func (m *JobCompanyModel) ListAll() ([]*JobCompany, error) {
 	const query = `
         SELECT id, name, website_url, careers_url, ats_provider,
                external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, created_at, updated_at
+               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+               created_at, updated_at
         FROM job_companies
         ORDER BY id
     `
 
 	return m.fetchCompanies(query)
+}
+
+func (m *JobCompanyModel) ListWithPagination(status string, limit, offset int) ([]*JobCompany, int, error) {
+	if limit <= 0 {
+		limit = 25
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
+	whereClause := ""
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "active":
+		whereClause = "WHERE is_active = TRUE"
+	case "inactive":
+		whereClause = "WHERE is_active = FALSE"
+	}
+
+	countQuery := "SELECT COUNT(*) FROM job_companies " + whereClause
+	var total int
+	if err := m.db.QueryRow(countQuery).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	dataQuery := fmt.Sprintf(`
+        SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
+               external_identifier, is_active, sync_interval_minutes,
+               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+               created_at, updated_at
+        FROM job_companies
+        %s
+        ORDER BY id DESC
+        LIMIT $1 OFFSET $2
+    `, whereClause)
+
+	companies, err := m.fetchCompanies(dataQuery, limit, offset)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return companies, total, nil
 }
 
 func (m *JobCompanyModel) fetchCompanies(query string, args ...interface{}) ([]*JobCompany, error) {
@@ -167,7 +222,8 @@ func (m *JobCompanyModel) GetByID(id int) (*JobCompany, error) {
 	const query = `
         SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
                external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, created_at, updated_at
+               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+               created_at, updated_at
         FROM job_companies
         WHERE id = $1
     `
@@ -292,10 +348,52 @@ func (m *JobCompanyModel) UpdateSyncMetadata(companyID int, syncedAt time.Time, 
         UPDATE job_companies
         SET last_synced_at = $2,
             last_sync_status = $3,
+            last_sync_error = NULL,
+            sync_failure_count = 0,
+            is_active = TRUE,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
 	_, err := m.db.Exec(query, companyID, syncedAt, status)
+	return err
+}
+
+func (m *JobCompanyModel) RecordSyncFailure(companyID int, syncedAt time.Time, status, errorMessage string) error {
+	trimmed := strings.TrimSpace(errorMessage)
+	const query = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            last_sync_error = NULLIF($4, ''),
+            sync_failure_count = sync_failure_count + 1,
+            is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	_, err := m.db.Exec(query, companyID, syncedAt, status, trimmed)
+	return err
+}
+
+func (m *JobCompanyModel) SetCompanyActive(companyID int, active bool) error {
+	if active {
+		const query = `
+            UPDATE job_companies
+            SET is_active = TRUE,
+                sync_failure_count = 0,
+                last_sync_error = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `
+		_, err := m.db.Exec(query, companyID)
+		return err
+	}
+	const query = `
+        UPDATE job_companies
+        SET is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	_, err := m.db.Exec(query, companyID)
 	return err
 }
 

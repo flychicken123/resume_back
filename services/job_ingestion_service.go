@@ -116,9 +116,18 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	result := &JobSyncResult{}
 	finish := func(status string, finishErr error) {
 		msg := ""
+		syncedAt := s.clock()
 		if finishErr != nil {
 			msg = finishErr.Error()
+			truncated := truncateErrorMessage(msg, 512)
 			s.logger.Error("job sync run failed", finishErr, map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider})
+			if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, status, truncated); err != nil {
+				s.logger.Warn("failed recording sync failure", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
+			}
+		} else {
+			if err := s.companyModel.UpdateSyncMetadata(company.ID, syncedAt, status); err != nil {
+				s.logger.Warn("failed updating sync metadata", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
+			}
 		}
 		metrics := map[string]int{
 			"found":   result.JobsFound,
@@ -127,7 +136,6 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 			"closed":  result.JobsClosed,
 		}
 		_ = s.syncRunModel.Finish(run.ID, status, optionalString(msg), metrics)
-		_ = s.companyModel.UpdateSyncMetadata(company.ID, s.clock(), status)
 	}
 
 	jobs, err := provider.FetchJobs(ctx, company)
@@ -287,6 +295,18 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func truncateErrorMessage(value string, limit int) string {
+	trimmed := strings.TrimSpace(value)
+	if limit <= 0 {
+		return trimmed
+	}
+	runes := []rune(trimmed)
+	if len(runes) <= limit {
+		return trimmed
+	}
+	return string(runes[:limit])
 }
 
 func optionalString(value string) *string {
