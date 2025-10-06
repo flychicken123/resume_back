@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -20,8 +21,10 @@ type WorkdayProvider struct {
 }
 
 type workdayRequest struct {
-	Limit  int `json:"limit"`
-	Offset int `json:"offset"`
+	Limit         int                 `json:"limit"`
+	Offset        int                 `json:"offset"`
+	AppliedFacets map[string][]string `json:"appliedFacets"`
+	SearchText    string              `json:"searchText"`
 }
 
 type workdayJobResponse struct {
@@ -161,7 +164,12 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 }
 
 func (p *WorkdayProvider) fetchPage(ctx context.Context, companyID int, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
-	reqBody := workdayRequest{Limit: limit, Offset: offset}
+	reqBody := workdayRequest{
+		Limit:         limit,
+		Offset:        offset,
+		AppliedFacets: map[string][]string{},
+		SearchText:    "",
+	}
 	buffer, err := json.Marshal(reqBody)
 	if err != nil {
 		return nil, 0, err
@@ -181,12 +189,24 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, companyID int, endpoint
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("read workday response: %w", err)
+	}
+
 	if resp.StatusCode >= 400 {
-		return nil, 0, fmt.Errorf("workday returned status %d", resp.StatusCode)
+		snippet := strings.TrimSpace(string(body))
+		if len(snippet) > 512 {
+			snippet = snippet[:512] + "..."
+		}
+		if snippet == "" {
+			snippet = "<empty body>"
+		}
+		return nil, 0, fmt.Errorf("workday returned status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var payload workdayJobResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, 0, fmt.Errorf("parse workday response: %w", err)
 	}
 
