@@ -51,6 +51,21 @@ type scoredJob struct {
 	score   float64
 }
 
+const (
+	seniorityIntern = iota
+	seniorityEntry
+	seniorityMid
+	senioritySenior
+	seniorityLead
+)
+
+var (
+	seniorityLeadKeywords   = []string{"lead", "principal", "manager", "director", "head", "vp", "svp", "evp", "chief", "cto", "cpo", "cio", "cfo", "coo", "vice president"}
+	senioritySeniorKeywords = []string{"senior", "sr", "staff"}
+	seniorityEntryKeywords  = []string{"junior", "jr", "associate", "entry", "graduate"}
+	seniorityInternKeywords = []string{"intern", "internship", "co-op", "coop", "trainee", "apprentice"}
+)
+
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
 func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMatchInput) ([]*models.ResumeJobMatchRecord, error) {
 	if input.UserID <= 0 {
@@ -76,10 +91,22 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	resumeText := strings.ToLower(strings.TrimSpace(sourceText))
 	keywords := extractKeywords(resumeText, 40)
 	preferredLocation := strings.ToLower(strings.TrimSpace(input.PreferredLocation))
+	candidateLevel := determineCandidateSeniority(input.Position, sourceText)
 
 	scored := make([]scoredJob, 0, len(jobs))
 	for _, job := range jobs {
 		if !utils.IsSupportedJobLocation(job.Location, job.RemoteType) {
+			continue
+		}
+
+		jobLevel := determineJobSeniority(job.Title, job.Description)
+		if jobLevel == seniorityIntern {
+			continue
+		}
+		if candidateLevel >= senioritySenior && jobLevel <= seniorityEntry {
+			continue
+		}
+		if candidateLevel >= seniorityLead && jobLevel < seniorityLead {
 			continue
 		}
 
@@ -238,8 +265,20 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		}
 	}
 
+	positionTokens := tokenizeWords(position)
+	titleTokens := tokenizeWords(title)
+	descriptionTokens := tokenizeWords(description)
+	if jobLooksLikeInternRole(title, description) {
+		return 0
+	}
+
 	if position != "" && title != "" && strings.Contains(title, position) {
 		score += 4
+	}
+
+	it := countTokenOverlap(positionTokens, titleTokens)
+	if it > 0 {
+		score += math.Min(float64(it)*2.5, 6)
 	}
 
 	if len(keywords) > 0 && description != "" {
@@ -254,6 +293,11 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		}
 	}
 
+	descriptionOverlap := countTokenOverlap(positionTokens, descriptionTokens)
+	if descriptionOverlap > 0 {
+		score += math.Min(float64(descriptionOverlap)*1.2, 4)
+	}
+
 	if strings.Contains(resumeText, "remote") {
 		if strings.Contains(remote, "remote") || strings.Contains(location, "remote") {
 			score += 1
@@ -264,8 +308,11 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		score += computeLocationBoost(location, remote, preferredLocation)
 	}
 
-	if skillMatches == 0 && (position == "" || !strings.Contains(title, position)) {
-		return 0
+	if skillMatches == 0 {
+		titleOverlap := countTokenOverlap(positionTokens, titleTokens)
+		if titleOverlap == 0 {
+			return 0
+		}
 	}
 
 	if score < 0 {
@@ -313,4 +360,109 @@ func computeLocationBoost(jobLocation, jobRemoteType, preferredLocation string) 
 	}
 
 	return -0.5
+}
+
+func jobLooksLikeInternRole(title, description string) bool {
+	return determineJobSeniority(title, description) == seniorityIntern
+}
+
+func determineJobSeniority(title, description string) int {
+	level := detectSeniorityFromString(title)
+	descriptionLevel := detectSeniorityFromString(description)
+	if descriptionLevel > level {
+		level = descriptionLevel
+	}
+	if level < 0 {
+		level = seniorityMid
+	}
+	return level
+}
+
+func determineCandidateSeniority(position, resumeText string) int {
+	level := detectSeniorityFromString(position)
+	resumeLevel := detectSeniorityFromString(resumeText)
+	if resumeLevel > level {
+		level = resumeLevel
+	}
+	if level < 0 {
+		level = seniorityMid
+	}
+	return level
+}
+
+func detectSeniorityFromString(value string) int {
+	normalized := normalizeSeniorityString(value)
+	if normalized == "" {
+		return -1
+	}
+	switch {
+	case containsAnySeniority(normalized, seniorityInternKeywords):
+		return seniorityIntern
+	case containsAnySeniority(normalized, seniorityLeadKeywords):
+		return seniorityLead
+	case containsAnySeniority(normalized, senioritySeniorKeywords):
+		return senioritySenior
+	case containsAnySeniority(normalized, seniorityEntryKeywords):
+		return seniorityEntry
+	default:
+		return -1
+	}
+}
+
+func normalizeSeniorityString(value string) string {
+	lower := strings.ToLower(value)
+	replacer := strings.NewReplacer(".", " ", "-", " ", "_", " ", "/", " ", ",", " ")
+	cleaned := replacer.Replace(lower)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	return cleaned
+}
+
+func containsAnySeniority(value string, keywords []string) bool {
+	for _, kw := range keywords {
+		if strings.Contains(value, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+func tokenizeWords(value string) []string {
+	trimmed := strings.TrimSpace(strings.ToLower(value))
+	if trimmed == "" {
+		return nil
+	}
+	tokens := strings.FieldsFunc(trimmed, func(r rune) bool {
+		return r == ' ' || r == '\n' || r == '\t' || r == '/' || r == '-' || r == '_' || r == ',' || r == '.' || r == '|'
+	})
+	filtered := make([]string, 0, len(tokens))
+	seen := make(map[string]struct{})
+	for _, token := range tokens {
+		clean := strings.TrimSpace(token)
+		if len(clean) < 2 {
+			continue
+		}
+		if _, exists := seen[clean]; exists {
+			continue
+		}
+		seen[clean] = struct{}{}
+		filtered = append(filtered, clean)
+	}
+	return filtered
+}
+
+func countTokenOverlap(a, b []string) int {
+	if len(a) == 0 || len(b) == 0 {
+		return 0
+	}
+	set := make(map[string]struct{}, len(a))
+	for _, token := range a {
+		set[token] = struct{}{}
+	}
+	overlap := 0
+	for _, token := range b {
+		if _, exists := set[token]; exists {
+			overlap++
+		}
+	}
+	return overlap
 }

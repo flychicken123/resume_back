@@ -231,6 +231,15 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		return
 	}
 
+	filteredMatches := make([]*models.ResumeJobMatchRecord, 0, len(matches))
+	for _, match := range matches {
+		if utils.JobLooksLikeInternRole(match.JobTitle, match.JobDescription) {
+			continue
+		}
+		filteredMatches = append(filteredMatches, match)
+	}
+	matches = filteredMatches
+
 	topMatches := matches
 	if len(topMatches) > 3 {
 		topMatches = topMatches[:3]
@@ -290,6 +299,9 @@ func (jc *JobsController) ListMatchedJobs(c *gin.Context) {
 
 	filteredMatches := make([]*models.ResumeJobMatchRecord, 0, len(matches))
 	for _, match := range matches {
+		if utils.JobLooksLikeInternRole(match.JobTitle, match.JobDescription) {
+			continue
+		}
 		if utils.IsSupportedJobLocation(match.JobLocation, match.JobRemoteType) {
 			filteredMatches = append(filteredMatches, match)
 		}

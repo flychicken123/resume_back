@@ -53,3 +53,64 @@ func TestNormaliseSkills(t *testing.T) {
 		t.Fatalf("expected deduplicated skills, got %v", skills)
 	}
 }
+
+func TestComputeMatchScorePositionTokens(t *testing.T) {
+	job := &models.JobPosting{
+		Title:       "Staff Product Manager",
+		Description: "Lead product strategy with cross-functional teams",
+		Location:    "San Francisco, CA",
+	}
+
+	score := computeMatchScore(job, "Product Manager", nil, nil, "", "San Francisco, CA")
+	if score <= 0 {
+		t.Fatalf("expected positive score from position tokens, got %.2f", score)
+	}
+}
+
+func TestInternJobFilteredForSeniorCandidate(t *testing.T) {
+	job := &models.JobPosting{
+		Title:       "Software Engineer Intern",
+		Description: "Join us for a summer internship building web apps",
+		Location:    "Remote - US",
+	}
+
+	score := computeMatchScore(job, "Senior Software Engineer", nil, nil, "seasoned senior software engineer building systems", "")
+	if score != 0 {
+		t.Fatalf("expected zero score for intern role when candidate is senior, got %.2f", score)
+	}
+}
+
+func TestInternJobFilteredForNonSeniorCandidate(t *testing.T) {
+	job := &models.JobPosting{
+		Title:       "Software Engineer Intern",
+		Description: "Join us for a summer internship building web apps",
+		Location:    "Remote - US",
+	}
+
+	score := computeMatchScore(job, "software engineer", nil, nil, "software engineering student", "")
+	if score != 0 {
+		t.Fatalf("expected zero score for intern job when candidate is not senior, got %.2f", score)
+	}
+}
+func TestDetermineJobSeniority(t *testing.T) {
+	if level := determineJobSeniority("Lead Data Scientist", ""); level != seniorityLead {
+		t.Fatalf("expected lead seniority, got %d", level)
+	}
+	if level := determineJobSeniority("Junior Developer", ""); level != seniorityEntry {
+		t.Fatalf("expected entry seniority, got %d", level)
+	}
+	if level := determineJobSeniority("Software Engineer Intern", ""); level != seniorityIntern {
+		t.Fatalf("expected intern seniority, got %d", level)
+	}
+}
+
+func TestDetermineCandidateSeniority(t *testing.T) {
+	level := determineCandidateSeniority("Senior Software Engineer", "Seasoned senior engineer leading teams")
+	if level < senioritySenior {
+		t.Fatalf("expected senior-or-above level, got %d", level)
+	}
+	entry := determineCandidateSeniority("Junior Developer", "recent graduate software engineer")
+	if entry != seniorityEntry {
+		t.Fatalf("expected entry level, got %d", entry)
+	}
+}

@@ -5,24 +5,27 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"resumeai/utils"
 )
 
 // ResumeJobMatchRecord represents a stored match enriched with job metadata.
 type ResumeJobMatchRecord struct {
-	ID            int64     `json:"id"`
-	UserID        int       `json:"user_id"`
-	ResumeHash    string    `json:"resume_hash"`
-	JobPostingID  int64     `json:"job_posting_id"`
-	MatchScore    float64   `json:"match_score"`
-	MatchedAt     time.Time `json:"matched_at"`
-	JobTitle      string    `json:"job_title"`
-	JobLocation   string    `json:"job_location"`
-	JobRemoteType string    `json:"job_remote_type"`
-	JobDepartment string    `json:"job_department"`
-	JobEmployment string    `json:"job_employment_type"`
-	JobURL        string    `json:"job_url"`
-	CompanyID     *int      `json:"company_id,omitempty"`
-	CompanyName   *string   `json:"company_name,omitempty"`
+	ID             int64     `json:"id"`
+	UserID         int       `json:"user_id"`
+	ResumeHash     string    `json:"resume_hash"`
+	JobPostingID   int64     `json:"job_posting_id"`
+	MatchScore     float64   `json:"match_score"`
+	MatchedAt      time.Time `json:"matched_at"`
+	JobTitle       string    `json:"job_title"`
+	JobLocation    string    `json:"job_location"`
+	JobRemoteType  string    `json:"job_remote_type"`
+	JobDepartment  string    `json:"job_department"`
+	JobEmployment  string    `json:"job_employment_type"`
+	JobURL         string    `json:"job_url"`
+	JobDescription string    `json:"job_description"`
+	CompanyID      *int      `json:"company_id,omitempty"`
+	CompanyName    *string   `json:"company_name,omitempty"`
 }
 
 // JobMatchCreate holds the data required to persist a match.
@@ -107,12 +110,16 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 	if limit <= 0 {
 		limit = 25
 	}
+	fetchLimit := limit * 3
+	if fetchLimit < limit {
+		fetchLimit = limit
+	}
 
 	query := `
-        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
-               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
-               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               p.company_id, c.name
+       SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
+              COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+              COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
+              COALESCE(p.description, ''), p.company_id, c.name
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -121,7 +128,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
         LIMIT $3
     `
 
-	rows, err := m.db.Query(query, userID, resumeHash, limit)
+	rows, err := m.db.Query(query, userID, resumeHash, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +153,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 			&record.JobDepartment,
 			&record.JobEmployment,
 			&record.JobURL,
+			&record.JobDescription,
 			&companyID,
 			&companyName,
 		); err != nil {
@@ -161,7 +169,14 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 			record.CompanyName = &name
 		}
 
+		if utils.JobLooksLikeInternRole(record.JobTitle, record.JobDescription) {
+			continue
+		}
+
 		results = append(results, &record)
+		if len(results) >= limit {
+			break
+		}
 	}
 	if err = rows.Err(); err != nil {
 		return nil, err
@@ -199,12 +214,16 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 	if limit <= 0 {
 		limit = 10
 	}
+	fetchLimit := limit * 3
+	if fetchLimit < limit {
+		fetchLimit = limit
+	}
 
 	query := `
         SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               p.company_id, c.name
+               COALESCE(p.description, ''), p.company_id, c.name
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -213,7 +232,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
         LIMIT $2
     `
 
-	rows, err := m.db.Query(query, userID, limit)
+	rows, err := m.db.Query(query, userID, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -238,6 +257,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 			&record.JobDepartment,
 			&record.JobEmployment,
 			&record.JobURL,
+			&record.JobDescription,
 			&companyID,
 			&companyName,
 		); err != nil {
@@ -253,7 +273,14 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 			record.CompanyName = &name
 		}
 
+		if utils.JobLooksLikeInternRole(record.JobTitle, record.JobDescription) {
+			continue
+		}
+
 		results = append(results, &record)
+		if len(results) >= limit {
+			break
+		}
 	}
 
 	if err = rows.Err(); err != nil {
