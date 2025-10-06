@@ -281,8 +281,8 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		score += math.Min(float64(it)*2.5, 6)
 	}
 
+	keywordHits := 0
 	if len(keywords) > 0 && description != "" {
-		keywordHits := 0
 		for _, keyword := range keywords {
 			if strings.Contains(description, keyword) {
 				keywordHits++
@@ -308,11 +308,8 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		score += computeLocationBoost(location, remote, preferredLocation)
 	}
 
-	if skillMatches == 0 {
-		titleOverlap := countTokenOverlap(positionTokens, titleTokens)
-		if titleOverlap == 0 {
-			return 0
-		}
+	if skillMatches == 0 && keywordHits == 0 {
+		return 0
 	}
 
 	if score < 0 {
@@ -398,10 +395,10 @@ func detectSeniorityFromString(value string) int {
 	switch {
 	case containsAnySeniority(normalized, seniorityInternKeywords):
 		return seniorityIntern
-	case containsAnySeniority(normalized, seniorityLeadKeywords):
-		return seniorityLead
 	case containsAnySeniority(normalized, senioritySeniorKeywords):
 		return senioritySenior
+	case containsAnySeniority(normalized, seniorityLeadKeywords):
+		return seniorityLead
 	case containsAnySeniority(normalized, seniorityEntryKeywords):
 		return seniorityEntry
 	default:

@@ -43,10 +43,10 @@ func DetectSeniorityFromString(value string) int {
 	switch {
 	case containsAnySeniority(normalized, seniorityInternKeywords):
 		return SeniorityIntern
-	case containsAnySeniority(normalized, seniorityLeadKeywords):
-		return SeniorityLead
 	case containsAnySeniority(normalized, senioritySeniorKeywords):
 		return SenioritySenior
+	case containsAnySeniority(normalized, seniorityLeadKeywords):
+		return SeniorityLead
 	case containsAnySeniority(normalized, seniorityEntryKeywords):
 		return SeniorityEntry
 	default:

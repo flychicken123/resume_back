@@ -61,9 +61,22 @@ func TestComputeMatchScorePositionTokens(t *testing.T) {
 		Location:    "San Francisco, CA",
 	}
 
-	score := computeMatchScore(job, "Product Manager", nil, nil, "", "San Francisco, CA")
+	keywords := []string{"strategy"}
+	score := computeMatchScore(job, "Product Manager", nil, keywords, "", "San Francisco, CA")
 	if score <= 0 {
-		t.Fatalf("expected positive score from position tokens, got %.2f", score)
+		t.Fatalf("expected positive score from resume keywords, got %.2f", score)
+	}
+}
+
+func TestComputeMatchScoreRejectsTitleOnlyMatch(t *testing.T) {
+	job := &models.JobPosting{
+		Title:       "Software Engineer",
+		Description: "Join our team supporting internal tooling.",
+	}
+
+	score := computeMatchScore(job, "Software Engineer", nil, nil, "", "")
+	if score != 0 {
+		t.Fatalf("expected zero score when only title overlaps, got %.2f", score)
 	}
 }
 
