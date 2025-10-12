@@ -66,6 +66,9 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 			"htmlContent": "",
 			"htmlPath":    htmlPath,
 		}
+		if engine := strings.TrimSpace(c.PostForm("engine")); engine != "" {
+			userData["engine"] = engine
+		}
 		if err := generatePDFResumeWithPython(defaultTemplateSlug, userData, pdfPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
