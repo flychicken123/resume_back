@@ -272,6 +272,11 @@ INCLUDE these types of metrics:
 - Team size (led team of X, collaborated with X departments)
 - Success rates (increased success rate from X%% to Y%%)
 
+INTEGRITY REQUIREMENTS:
+- Do NOT invent new accomplishments, responsibilities, technologies, or metrics that are not supported by the user's original experience.
+- Only rephrase, reorganize, or quantify information that already exists in the original description.
+- If the original text lacks metrics, keep the improvement qualitative rather than fabricating numbers.
+
 AVOID these weak phrases:
 - "Responsible for", "Worked on", "Helped with", "Assisted in", "Participated in"
 - "Various tasks", "Different projects", "Multiple initiatives"
@@ -333,12 +338,13 @@ Please create a professional summary that:
 1. Leads with specific job title/seniority level (e.g., "Senior Software Engineer", "Marketing Manager", "Data Scientist")
 2. States years of experience and core technical/functional expertise
 3. Highlights specific achievements with metrics where possible
-4. Emphasizes relevant technologies, tools, or methodologies
-5. Shows concrete impact and accomplishments
-6. Uses active, specific language - NO generic buzzwords
+  4. Emphasizes relevant technologies, tools, or methodologies
+  5. Shows concrete impact and accomplishments
+  6. Uses active, specific language - NO generic buzzwords
+  7. Stays fully aligned with the provided experience, education, and skills without inventing new roles, achievements, or metrics
 
-CRITICAL - AVOID these overused buzzwords and phrases:
-- "Results-oriented"
+  CRITICAL - AVOID these overused buzzwords and phrases:
+  - "Results-oriented"
 - "Detail-oriented" 
 - "Self-motivated"
 - "Team player"
@@ -356,9 +362,14 @@ INSTEAD, be specific about:
 - Concrete accomplishments
 - Industry expertise
 - Leadership experience with team sizes
-- Revenue/cost/efficiency impacts
+  - Revenue/cost/efficiency impacts
 
-IMPORTANT: Return ONLY the professional summary text. Do NOT include:
+  INTEGRITY REQUIREMENTS:
+  - Base every statement solely on the supplied experience, education, and skills.
+  - Do NOT introduce employers, titles, responsibilities, or outcomes that cannot be inferred from the provided information.
+  - If metrics are absent, keep accomplishments qualitative instead of fabricating numbers.
+
+  IMPORTANT: Return ONLY the professional summary text. Do NOT include:
 - Explanations or additional text
 - Bullet point symbols (• or -)
 - Any header information
@@ -396,14 +407,18 @@ CRITICAL - Use these types of action verbs:
 - DELIVERING: "Delivered", "Launched", "Deployed", "Implemented", "Released"
 
 ENHANCE with these types of metrics:
-- Performance improvements (X%% faster, X%% more efficient)
-- Cost/revenue impact ($X saved, $X generated, X%% cost reduction)
-- Scale (X users, X transactions, X data processed)
-- Time savings (reduced from X to Y, X hours saved per week)
-- Team size (led team of X, collaborated with X departments)
-- Success rates (increased success rate from X%% to Y%%)
+  - Performance improvements (X%% faster, X%% more efficient)
+  - Cost/revenue impact ($X saved, $X generated, X%% cost reduction)
+  - Scale (X users, X transactions, X data processed)
+  - Time savings (reduced from X to Y, X hours saved per week)
+  - Team size (led team of X, collaborated with X departments)
+  - Success rates (increased success rate from X%% to Y%%)
 
-AVOID these weak phrases:
+  INTEGRITY REQUIREMENTS:
+  - Preserve the factual content of the original description—do NOT invent new duties, technologies, companies, or outcomes.
+  - Only add metrics when they are implied by the original text; otherwise keep statements qualitative without fabricating numbers.
+
+  AVOID these weak phrases:
 - "Responsible for", "Worked on", "Helped with", "Assisted in", "Participated in"
 - "Various tasks", "Different projects", "Multiple initiatives"
 - Generic statements without specific outcomes
@@ -442,7 +457,7 @@ Please optimize this project by:
 6. Focusing on aspects most relevant to the target role
 7. Using action verbs that demonstrate the competencies required
 
-Keep the project authentic and truthful while emphasizing the most relevant aspects for this role.
+	Keep the project authentic and truthful while emphasizing the most relevant aspects for this role. Do NOT invent new achievements, technologies, or metrics—only elevate what is already present in the original project description. If specific numbers are missing, keep the statement qualitative rather than fabricating data.
 
 Return ONLY the improved project description text, with each achievement on a new line.
 Do NOT include project name, dates, or any header information.`, jobDescription, projectData)
@@ -464,11 +479,15 @@ Please improve this text by:
 3. Using powerful technical action verbs (Built, Developed, Architected, Implemented, Designed, Created, Deployed)
 4. Highlighting technical skills and tools effectively
 5. Adding specific metrics and outcomes where possible (users, performance, scale)
-6. Demonstrating technical complexity and problem-solving
-7. Ensuring consistent tense (past tense for completed projects)
-8. Making it clear what YOU specifically did (not team accomplishments)
+  6. Demonstrating technical complexity and problem-solving
+  7. Ensuring consistent tense (past tense for completed projects)
+  8. Making it clear what YOU specifically did (not team accomplishments)
 
-ENHANCE with these types of metrics:
+  INTEGRITY REQUIREMENTS:
+  - Preserve the factual details supplied in the original project; do NOT invent new scope, technologies, or outcomes.
+  - Only add metrics when they are implied by the original description—otherwise keep statements qualitative without fabricating numbers.
+
+  ENHANCE with these types of metrics:
 - Technical scale (X users, X requests/second, X GB data)
 - Performance improvements (X%% faster, X ms latency)
 - Code quality metrics (X%% test coverage, X%% reduction in bugs)
