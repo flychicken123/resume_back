@@ -267,7 +267,18 @@ func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, 
 		CancelURL:        stripe.String(cancelURL),
 		CustomerEmail:    stripe.String(email),
 		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{},
+		AutomaticTax: &stripe.CheckoutSessionAutomaticTaxParams{
+			Enabled: stripe.Bool(true),
+		},
+		BillingAddressCollection: stripe.String(string(stripe.CheckoutSessionBillingAddressCollectionRequired)),
+		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
+			Enabled: stripe.Bool(true),
+		},
+		CustomerUpdate: &stripe.CheckoutSessionCustomerUpdateParams{
+			Address: stripe.String("auto"),
+		},
 	}
+	params.AddExtra("subscription_data[automatic_tax][enabled]", "true")
 	params.AddMetadata("user_id", fmt.Sprintf("%d", userID))
 	params.AddMetadata("plan_id", fmt.Sprintf("%d", planID))
 
@@ -523,6 +534,16 @@ func (s *StripeService) handleCheckoutCompleted(session *stripe.CheckoutSession)
 		return err
 	}
 
+	if session.Subscription != nil && session.Subscription.ID != "" {
+		if _, err := subscription.Update(session.Subscription.ID, &stripe.SubscriptionParams{
+			AutomaticTax: &stripe.SubscriptionAutomaticTaxParams{
+				Enabled: stripe.Bool(true),
+			},
+		}); err != nil {
+			return fmt.Errorf("failed to enable automatic tax: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -698,6 +719,15 @@ func (s *StripeService) ConfirmCheckoutSession(userID int, sessionID string) err
 	var subscriptionID string
 	if sess.Subscription != nil {
 		subscriptionID = sess.Subscription.ID
+		if subscriptionID != "" {
+			if _, err := subscription.Update(subscriptionID, &stripe.SubscriptionParams{
+				AutomaticTax: &stripe.SubscriptionAutomaticTaxParams{
+					Enabled: stripe.Bool(true),
+				},
+			}); err != nil {
+				return fmt.Errorf("failed to enable automatic tax: %v", err)
+			}
+		}
 	}
 	// Update user record
 	if _, err := s.db.Exec(`

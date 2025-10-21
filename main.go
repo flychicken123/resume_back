@@ -319,6 +319,7 @@ func main() {
 	// Public subscription routes
 	api.GET("/plans", subscriptionController.GetPlans)
 	api.POST("/webhook/stripe", subscriptionController.HandleStripeWebhook)
+	api.POST("/stripe/webhook", subscriptionController.HandleStripeWebhook)
 
 	// Apply subscription limit middleware to resume generation endpoints
 	resumeGenRoutes := r.Group("/api")
