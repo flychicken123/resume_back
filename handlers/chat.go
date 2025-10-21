@@ -1,15 +1,21 @@
 package handlers
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"resumeai/models"
+	"resumeai/services"
+
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
-	"resumeai/services"
 )
 
 type chatMessage struct {
@@ -18,8 +24,11 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Message string        `json:"message" binding:"required"`
-	History []chatMessage `json:"history"`
+	Message   string        `json:"message" binding:"required"`
+	History   []chatMessage `json:"history"`
+	SessionID string        `json:"session_id"`
+	PagePath  string        `json:"page_path"`
+	UserEmail string        `json:"user_email"`
 }
 
 type chatResponse struct {
@@ -83,6 +92,13 @@ var assistantKnowledge = []knowledgeEntry{
 		Summary:  "You can build resumes without creating an account; saved data stays tied to your login; upgrades apply instantly after checkout; reach hihired_support@tactechs.net for any additional questions.",
 		Keywords: []string{"faq", "question", "signup", "account", "data", "privacy"},
 	},
+}
+
+var chatHistoryModel *models.ChatHistoryModel
+
+// SetChatHistoryModel injects the persistence layer for chat transcripts.
+func SetChatHistoryModel(m *models.ChatHistoryModel) {
+	chatHistoryModel = m
 }
 
 func findRelevantKnowledge(query string, history []chatMessage) []knowledgeEntry {
@@ -162,6 +178,10 @@ func ChatAssistant(c *gin.Context) {
 		return
 	}
 
+	sessionID := ensureSessionID(req.SessionID)
+	pagePath := strings.TrimSpace(req.PagePath)
+	userEmail := strings.TrimSpace(req.UserEmail)
+
 	const systemInstructions = `You are HiHired's AI resume assistant. Keep answers short, clear, and friendly (120 words max).
 Focus on HiHired features: AI resume builder, templates, PDF export, memberships, workflow steps, and support.
 When pricing is mentioned, explicitly list the Free, Premium, and Ultimate plans with their benefits.
@@ -200,5 +220,76 @@ If the question is outside scope, briefly say you can only help with HiHired res
 		cleaned = "I'm still learning. Please contact us via the Help bubble or at hihired_support@tactechs.net and our team will help you right away."
 	}
 
+	if err := persistChatExchange(c.Request.Context(), chatPersistencePayload{
+		sessionID:  sessionID,
+		pagePath:   pagePath,
+		userEmail:  userEmail,
+		userInput:  userMessage,
+		assistant:  cleaned,
+		historyLen: len(history),
+	}); err != nil {
+		log.Printf("failed to persist chat exchange: %v", err)
+	}
+
 	c.JSON(http.StatusOK, chatResponse{Reply: cleaned})
+}
+
+type chatPersistencePayload struct {
+	sessionID  string
+	pagePath   string
+	userEmail  string
+	userInput  string
+	assistant  string
+	historyLen int
+}
+
+func persistChatExchange(ctx context.Context, payload chatPersistencePayload) error {
+	if chatHistoryModel == nil {
+		return nil
+	}
+
+	userMeta := map[string]interface{}{
+		"history_length": payload.historyLen,
+		"recorded_at":    time.Now().UTC().Format(time.RFC3339),
+	}
+
+	messages := []models.ChatMessageRecord{
+		{
+			SessionID: payload.sessionID,
+			Role:      "user",
+			Message:   payload.userInput,
+			UserEmail: nullableSQLString(payload.userEmail),
+			PagePath:  nullableSQLString(payload.pagePath),
+			Metadata:  userMeta,
+		},
+		{
+			SessionID: payload.sessionID,
+			Role:      "assistant",
+			Message:   payload.assistant,
+			UserEmail: nullableSQLString(payload.userEmail),
+			PagePath:  nullableSQLString(payload.pagePath),
+			Metadata: map[string]interface{}{
+				"history_length": payload.historyLen,
+				"recorded_at":    time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	}
+
+	err := chatHistoryModel.SaveMessages(ctx, messages)
+	return err
+}
+
+func ensureSessionID(sessionID string) string {
+	s := strings.TrimSpace(sessionID)
+	if s != "" {
+		return s
+	}
+	return fmt.Sprintf("anon-%d", time.Now().UnixNano())
+}
+
+func nullableSQLString(value string) sql.NullString {
+	if strings.TrimSpace(value) == "" {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: strings.TrimSpace(value), Valid: true}
 }

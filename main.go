@@ -64,6 +64,7 @@ func main() {
 		log.Fatal("Error ensuring feedback tables:", err)
 	}
 	feedbackModel := models.NewFeedbackModel(db)
+	chatHistoryModel := models.NewChatHistoryModel(db)
 
 	jobCompanyModel := models.NewJobCompanyModel(db)
 	jobPostingModel := models.NewJobPostingModel(db)
@@ -82,6 +83,7 @@ func main() {
 	jobsService := services.NewJobIngestionService(db, logger)
 	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger)
 	handlers.SetResumeJobMatcherService(jobMatcherService)
+	handlers.SetChatHistoryModel(chatHistoryModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
 
 	// Initialize Stripe products (only run this once or on startup)
