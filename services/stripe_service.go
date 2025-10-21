@@ -274,11 +274,7 @@ func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, 
 		TaxIDCollection: &stripe.CheckoutSessionTaxIDCollectionParams{
 			Enabled: stripe.Bool(true),
 		},
-		CustomerUpdate: &stripe.CheckoutSessionCustomerUpdateParams{
-			Address: stripe.String("auto"),
-		},
 	}
-	params.AddExtra("subscription_data[automatic_tax][enabled]", "true")
 	params.AddMetadata("user_id", fmt.Sprintf("%d", userID))
 	params.AddMetadata("plan_id", fmt.Sprintf("%d", planID))
 
