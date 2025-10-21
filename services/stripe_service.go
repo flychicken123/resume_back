@@ -29,6 +29,8 @@ type stripePlan struct {
 	StripePriceID string
 }
 
+const defaultStripeTaxCode = "txcd_99999999" // Generic services tax code
+
 type StripeService struct {
 	db           *sql.DB
 	planCache    map[string]stripePlan
@@ -46,6 +48,14 @@ func NewStripeService(db *sql.DB) *StripeService {
 		db:        db,
 		planCache: make(map[string]stripePlan),
 	}
+}
+
+func getStripeProductTaxCode() string {
+	code := strings.TrimSpace(os.Getenv("STRIPE_PRODUCT_TAX_CODE"))
+	if code == "" {
+		return defaultStripeTaxCode
+	}
+	return code
 }
 
 func (s *StripeService) getStripePlans() ([]stripePlan, error) {
@@ -165,6 +175,7 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 		productParams := &stripe.ProductParams{
 			Name:        stripe.String(plan.DisplayName),
 			Description: stripe.String(fmt.Sprintf("%s - Resume Builder", plan.DisplayName)),
+			TaxCode:     stripe.String(getStripeProductTaxCode()),
 		}
 		productParams.AddMetadata("plan_name", plan.Name)
 
@@ -180,6 +191,7 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 			Recurring: &stripe.PriceRecurringParams{
 				Interval: stripe.String("month"),
 			},
+			TaxBehavior: stripe.String(string(stripe.PriceTaxBehaviorExclusive)),
 		}
 		priceParams.AddMetadata("plan_name", plan.Name)
 
@@ -203,6 +215,82 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 
 	return nil
 }
+
+func (s *StripeService) ensurePriceSupportsAutomaticTax(plan stripePlan) (string, error) {
+	if plan.StripePriceID == "" {
+		return "", fmt.Errorf("plan %s is missing stripe price id", plan.Name)
+	}
+
+	retrieveParams := &stripe.PriceParams{}
+	retrieveParams.AddExpand("product")
+	priceObj, err := price.Get(plan.StripePriceID, retrieveParams)
+	if err != nil {
+		return "", fmt.Errorf("failed to retrieve price %s: %w", plan.StripePriceID, err)
+	}
+
+	if priceObj == nil {
+		return "", fmt.Errorf("price %s not found", plan.StripePriceID)
+	}
+
+	if priceObj.Product == nil || priceObj.Product.ID == "" {
+		return "", fmt.Errorf("price %s has no associated product", plan.StripePriceID)
+	}
+
+	if priceObj.Product.TaxCode == nil || priceObj.Product.TaxCode.ID == "" {
+		if _, err := product.Update(priceObj.Product.ID, &stripe.ProductParams{
+			TaxCode: stripe.String(getStripeProductTaxCode()),
+		}); err != nil {
+			return "", fmt.Errorf("failed to update product tax code for %s: %w", priceObj.Product.ID, err)
+		}
+	}
+
+	if priceObj.TaxBehavior != stripe.PriceTaxBehaviorUnspecified && priceObj.TaxBehavior != "" {
+		return plan.StripePriceID, nil
+	}
+
+	params := &stripe.PriceParams{
+		Product:     stripe.String(priceObj.Product.ID),
+		UnitAmount:  stripe.Int64(priceObj.UnitAmount),
+		Currency:    stripe.String(string(priceObj.Currency)),
+		TaxBehavior: stripe.String(string(stripe.PriceTaxBehaviorExclusive)),
+	}
+
+	if priceObj.Recurring != nil && priceObj.Recurring.Interval != "" {
+		recurring := &stripe.PriceRecurringParams{
+			Interval: stripe.String(string(priceObj.Recurring.Interval)),
+		}
+		if priceObj.Recurring.IntervalCount > 0 {
+			recurring.IntervalCount = stripe.Int64(priceObj.Recurring.IntervalCount)
+		}
+		params.Recurring = recurring
+	}
+
+	params.AddMetadata("plan_name", plan.Name)
+
+	newPrice, err := price.New(params)
+	if err != nil {
+		return "", fmt.Errorf("failed to create updated price for plan %s: %w", plan.Name, err)
+	}
+
+	if _, err := s.db.Exec(`
+		UPDATE subscription_plans
+		SET stripe_price_id = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`, newPrice.ID, plan.ID); err != nil {
+		return "", fmt.Errorf("failed to persist new price for plan %s: %w", plan.Name, err)
+	}
+
+	s.cacheMu.Lock()
+	cached := s.planCache[plan.Name]
+	cached.StripePriceID = newPrice.ID
+	if newPrice.UnitAmount > 0 {
+		cached.PriceCents = newPrice.UnitAmount
+	}
+	s.planCache[plan.Name] = cached
+	s.cacheMu.Unlock()
+
+	return newPrice.ID, nil
+}
 func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, cancelURL string) (*stripe.CheckoutSession, error) {
 	// Get plan details
 	plan, err := s.getPlanByName(planName)
@@ -215,7 +303,11 @@ func (s *StripeService) CreateCheckoutSession(userID int, planName, successURL, 
 	}
 
 	planID := plan.ID
-	priceID := plan.StripePriceID
+	priceID, err := s.ensurePriceSupportsAutomaticTax(plan)
+	if err != nil {
+		return nil, fmt.Errorf("failed to prepare price for automatic tax: %w", err)
+	}
+	plan.StripePriceID = priceID
 
 	// Get user email
 	var email string
