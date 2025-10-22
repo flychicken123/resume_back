@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"fmt"
 	"net/http"
@@ -43,6 +44,8 @@ SELECT
     us.current_period_start,
     us.current_period_end,
     COALESCE(us.cancel_at_period_end, false) AS cancel_at_period_end,
+    u.marketing_opt_in,
+    u.signup_plan_preference,
     u.created_at,
     u.updated_at
 FROM users u
@@ -242,6 +245,95 @@ func (ac *AdminController) fetchUserMembership(userID int) (gin.H, error) {
 	return ac.scanMembership(row)
 }
 
+func (ac *AdminController) ExportUserEmails(c *gin.Context) {
+	includeAll := strings.EqualFold(c.Query("all"), "true")
+	format := strings.ToLower(strings.TrimSpace(c.DefaultQuery("format", "json")))
+
+	query := `SELECT email, COALESCE(name, ''), marketing_opt_in, COALESCE(signup_plan_preference, '') FROM users`
+	if !includeAll {
+		query += " WHERE marketing_opt_in = TRUE"
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := ac.db.Query(query)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load user emails"})
+		return
+	}
+	defer rows.Close()
+
+	type emailRecord struct {
+		Email                string `json:"email"`
+		Name                 string `json:"name,omitempty"`
+		MarketingOptIn       bool   `json:"marketing_opt_in"`
+		SignupPlanPreference string `json:"signup_plan_preference,omitempty"`
+	}
+
+	var records []emailRecord
+	for rows.Next() {
+		var (
+			email          string
+			name           sql.NullString
+			optIn          bool
+			planPreference sql.NullString
+		)
+		if err := rows.Scan(&email, &name, &optIn, &planPreference); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse user record"})
+			return
+		}
+		record := emailRecord{
+			Email:          email,
+			MarketingOptIn: optIn,
+		}
+		if name.Valid {
+			record.Name = name.String
+		}
+		if planPreference.Valid {
+			record.SignupPlanPreference = planPreference.String
+		}
+		records = append(records, record)
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read user emails"})
+		return
+	}
+
+	if format == "csv" {
+		var builder strings.Builder
+		writer := csv.NewWriter(&builder)
+		_ = writer.Write([]string{"email", "name", "marketing_opt_in", "signup_plan_preference"})
+		for _, record := range records {
+			row := []string{
+				record.Email,
+				record.Name,
+				fmt.Sprintf("%t", record.MarketingOptIn),
+				record.SignupPlanPreference,
+			}
+			_ = writer.Write(row)
+		}
+		writer.Flush()
+		if err := writer.Error(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build CSV"})
+			return
+		}
+
+		filename := "user-emails-opted-in.csv"
+		if includeAll {
+			filename = "user-emails-all.csv"
+		}
+		c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+		c.Data(http.StatusOK, "text/csv; charset=utf-8", []byte(builder.String()))
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"include_all": includeAll,
+		"count":       len(records),
+		"users":       records,
+	})
+}
+
 func (ac *AdminController) scanMembership(scanner rowScanner) (gin.H, error) {
 	var (
 		id                 int
@@ -261,6 +353,8 @@ func (ac *AdminController) scanMembership(scanner rowScanner) (gin.H, error) {
 		periodStart        sql.NullTime
 		periodEnd          sql.NullTime
 		cancelAtPeriodEnd  bool
+		marketingOptIn     bool
+		signupPlanPref     sql.NullString
 		createdAt          time.Time
 		updatedAt          time.Time
 	)
@@ -283,6 +377,8 @@ func (ac *AdminController) scanMembership(scanner rowScanner) (gin.H, error) {
 		&periodStart,
 		&periodEnd,
 		&cancelAtPeriodEnd,
+		&marketingOptIn,
+		&signupPlanPref,
 		&createdAt,
 		&updatedAt,
 	); err != nil {
@@ -333,6 +429,8 @@ func (ac *AdminController) scanMembership(scanner rowScanner) (gin.H, error) {
 		"current_period_start":   toTimeValue(periodStart),
 		"current_period_end":     toTimeValue(periodEnd),
 		"cancel_at_period_end":   cancelAtPeriodEnd,
+		"marketing_opt_in":       marketingOptIn,
+		"signup_plan_preference": toString(signupPlanPref),
 		"created_at":             createdAt,
 		"updated_at":             updatedAt,
 	}, nil

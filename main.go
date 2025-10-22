@@ -307,6 +307,7 @@ func main() {
 		{
 			admin.GET("/memberships/users", adminController.ListUsers)
 			admin.PUT("/memberships/users/:id", adminController.UpdateUserMembership)
+			admin.GET("/users/emails", adminController.ExportUserEmails)
 			admin.GET("/jobs/companies", jobsController.ListCompanies)
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
 			admin.POST("/jobs/companies/import", jobsController.ImportCompanies)

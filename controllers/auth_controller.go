@@ -3,6 +3,7 @@ package controllers
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
@@ -24,9 +25,11 @@ func NewAuthController(userModel *models.UserModel, jwtService *services.JWTServ
 }
 
 type RegisterRequest struct {
-	Email    string `json:"email" binding:"required,email"`
-	Password string `json:"password" binding:"required,min=6"`
-	Name     string `json:"name" binding:"required"`
+	Email          string `json:"email" binding:"required,email"`
+	Password       string `json:"password" binding:"required,min=6"`
+	Name           string `json:"name" binding:"required"`
+	MarketingOptIn bool   `json:"marketing_opt_in"`
+	PlanPreference string `json:"plan_preference"`
 }
 
 type LoginRequest struct {
@@ -71,8 +74,19 @@ func (c *AuthController) Register(ctx *gin.Context) {
 		return
 	}
 
+	planPreference := strings.TrimSpace(strings.ToLower(req.PlanPreference))
+	switch planPreference {
+	case "", "free", "premium", "ultimate":
+	default:
+		ctx.JSON(http.StatusBadRequest, AuthResponse{
+			Success: false,
+			Message: "Invalid plan_preference value",
+		})
+		return
+	}
+
 	// Create user
-	user, err := c.userModel.Create(req.Email, req.Name, string(hashedPassword))
+	user, err := c.userModel.Create(req.Email, req.Name, string(hashedPassword), req.MarketingOptIn, planPreference)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, AuthResponse{
 			Success: false,
@@ -95,10 +109,12 @@ func (c *AuthController) Register(ctx *gin.Context) {
 		Success: true,
 		Message: "Registration successful",
 		User: gin.H{
-			"id":       user.ID,
-			"email":    user.Email,
-			"name":     user.Name,
-			"is_admin": user.IsAdmin,
+			"id":                     user.ID,
+			"email":                  user.Email,
+			"name":                   user.Name,
+			"is_admin":               user.IsAdmin,
+			"marketing_opt_in":       user.MarketingOptIn,
+			"signup_plan_preference": user.SignupPlanPreference,
 		},
 		Token: token,
 	})
@@ -148,10 +164,12 @@ func (c *AuthController) Login(ctx *gin.Context) {
 		Success: true,
 		Message: "Login successful",
 		User: gin.H{
-			"id":       user.ID,
-			"email":    user.Email,
-			"name":     user.Name,
-			"is_admin": user.IsAdmin,
+			"id":                     user.ID,
+			"email":                  user.Email,
+			"name":                   user.Name,
+			"is_admin":               user.IsAdmin,
+			"marketing_opt_in":       user.MarketingOptIn,
+			"signup_plan_preference": user.SignupPlanPreference,
 		},
 		Token: token,
 	})
@@ -193,7 +211,7 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 		}
 
 		// Create user with Google OAuth provider
-		user, err = c.userModel.CreateWithProvider(req.Email, userName, "google_oauth_user", "google", req.GoogleID, req.Picture)
+		user, err = c.userModel.CreateWithProvider(req.Email, userName, "google_oauth_user", "google", req.GoogleID, req.Picture, false, "")
 		if err != nil {
 			// Log the actual error for debugging
 			fmt.Printf("Error creating Google user: %v\n", err)
@@ -233,10 +251,12 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 			Success: true,
 			Message: "Google account created and login successful",
 			User: gin.H{
-				"id":       user.ID,
-				"email":    user.Email,
-				"name":     user.Name,
-				"is_admin": user.IsAdmin,
+				"id":                     user.ID,
+				"email":                  user.Email,
+				"name":                   user.Name,
+				"is_admin":               user.IsAdmin,
+				"marketing_opt_in":       user.MarketingOptIn,
+				"signup_plan_preference": user.SignupPlanPreference,
 			},
 			Token: token,
 		})
@@ -245,10 +265,12 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 			Success: true,
 			Message: "Google login successful",
 			User: gin.H{
-				"id":       user.ID,
-				"email":    user.Email,
-				"name":     user.Name,
-				"is_admin": user.IsAdmin,
+				"id":                     user.ID,
+				"email":                  user.Email,
+				"name":                   user.Name,
+				"is_admin":               user.IsAdmin,
+				"marketing_opt_in":       user.MarketingOptIn,
+				"signup_plan_preference": user.SignupPlanPreference,
 			},
 			Token: token,
 		})
