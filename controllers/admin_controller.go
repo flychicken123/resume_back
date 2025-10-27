@@ -5,12 +5,14 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/lib/pq"
 )
 
 type rowScanner interface {
@@ -332,6 +334,297 @@ func (ac *AdminController) ExportUserEmails(c *gin.Context) {
 		"count":       len(records),
 		"users":       records,
 	})
+}
+
+func (ac *AdminController) GetExitSummary(c *gin.Context) {
+	days := 14
+	if rawDays := strings.TrimSpace(c.Query("days")); rawDays != "" {
+		parsed, err := strconv.Atoi(rawDays)
+		if err != nil || parsed < 1 || parsed > 365 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "days must be between 1 and 365"})
+			return
+		}
+		days = parsed
+	}
+
+	pageLimit := 10
+	if rawLimit := strings.TrimSpace(c.Query("limit")); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 || parsed > 50 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "limit must be between 1 and 50"})
+			return
+		}
+		pageLimit = parsed
+	}
+
+	homeReferrerLimit := 10
+	if rawHomeLimit := strings.TrimSpace(c.Query("home_referrer_limit")); rawHomeLimit != "" {
+		parsed, err := strconv.Atoi(rawHomeLimit)
+		if err != nil || parsed < 1 || parsed > 50 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "home_referrer_limit must be between 1 and 50"})
+			return
+		}
+		homeReferrerLimit = parsed
+	}
+
+	now := time.Now()
+	since := now.AddDate(0, 0, -days)
+
+	const pageSummaryQuery = `
+SELECT
+    page_path,
+    COUNT(*) AS exit_count,
+    AVG(NULLIF(session_duration_ms, 0)) AS avg_session_ms,
+    AVG(NULLIF(page_duration_ms, 0)) AS avg_page_ms,
+    AVG(NULLIF(last_step_delta_ms, 0)) AS avg_last_step_ms,
+    SUM(CASE WHEN referrer IS NULL OR TRIM(referrer) = '' THEN 1 ELSE 0 END) AS direct_exits
+FROM exit_events
+WHERE created_at >= $1
+GROUP BY page_path
+ORDER BY exit_count DESC
+LIMIT $2`
+
+	rows, err := ac.db.Query(pageSummaryQuery, since, pageLimit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load exit summary"})
+		return
+	}
+	defer rows.Close()
+
+	type reasonEntry struct {
+		Reason string  `json:"reason"`
+		Share  float64 `json:"share"`
+		Count  int     `json:"count"`
+	}
+
+	type pageSummary struct {
+		PagePath           string        `json:"page_path"`
+		ExitCount          int           `json:"exit_count"`
+		AvgSessionSeconds  float64       `json:"avg_session_seconds"`
+		AvgPageSeconds     float64       `json:"avg_page_seconds"`
+		AvgLastStepSeconds float64       `json:"avg_last_step_seconds"`
+		DirectExitRate     float64       `json:"direct_exit_rate"`
+		TopReasons         []reasonEntry `json:"top_reasons"`
+	}
+
+	var (
+		pageSummaries []pageSummary
+		pagePaths     []string
+		totalExits    int
+	)
+
+	for rows.Next() {
+		var (
+			pagePath        string
+			exitCount       int
+			avgSessionMs    sql.NullFloat64
+			avgPageMs       sql.NullFloat64
+			avgLastStepMs   sql.NullFloat64
+			directExitCount sql.NullInt64
+		)
+
+		if err := rows.Scan(
+			&pagePath,
+			&exitCount,
+			&avgSessionMs,
+			&avgPageMs,
+			&avgLastStepMs,
+			&directExitCount,
+		); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse exit summary"})
+			return
+		}
+
+		summary := pageSummary{
+			PagePath:  pagePath,
+			ExitCount: exitCount,
+		}
+
+		if avgSessionMs.Valid && avgSessionMs.Float64 > 0 {
+			summary.AvgSessionSeconds = roundToOneDecimal(avgSessionMs.Float64 / 1000)
+		}
+		if avgPageMs.Valid && avgPageMs.Float64 > 0 {
+			summary.AvgPageSeconds = roundToOneDecimal(avgPageMs.Float64 / 1000)
+		}
+		if avgLastStepMs.Valid && avgLastStepMs.Float64 > 0 {
+			summary.AvgLastStepSeconds = roundToOneDecimal(avgLastStepMs.Float64 / 1000)
+		}
+		if directExitCount.Valid && exitCount > 0 && directExitCount.Int64 > 0 {
+			summary.DirectExitRate = roundToOneDecimal(float64(directExitCount.Int64) / float64(exitCount) * 100)
+		}
+
+		pageSummaries = append(pageSummaries, summary)
+		pagePaths = append(pagePaths, pagePath)
+		totalExits += exitCount
+	}
+
+	if err := rows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read exit summary"})
+		return
+	}
+
+	if len(pageSummaries) == 0 {
+		c.JSON(http.StatusOK, gin.H{
+			"since":          since,
+			"until":          now,
+			"total_exits":    0,
+			"unique_pages":   0,
+			"page_summaries": []pageSummary{},
+			"home_referrers": []gin.H{},
+		})
+		return
+	}
+
+	const reasonQuery = `
+WITH reason_counts AS (
+    SELECT
+        page_path,
+        COALESCE(NULLIF(TRIM(reason), ''), 'unknown') AS reason,
+        COUNT(*) AS reason_count
+    FROM exit_events
+    WHERE created_at >= $1
+      AND page_path = ANY($2)
+    GROUP BY page_path, reason
+)
+SELECT
+    page_path,
+    reason,
+    reason_count,
+    ROW_NUMBER() OVER (PARTITION BY page_path ORDER BY reason_count DESC) AS reason_rank,
+    SUM(reason_count) OVER (PARTITION BY page_path) AS total_for_page
+FROM reason_counts
+ORDER BY page_path, reason_rank`
+
+	reasonRows, err := ac.db.Query(reasonQuery, since, pq.Array(pagePaths))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load exit reasons"})
+		return
+	}
+	defer reasonRows.Close()
+
+	const topReasonLimit = 3
+
+	type reasonAggregate struct {
+		Reason       string
+		Count        int
+		Rank         int
+		TotalForPage int
+	}
+
+	reasons := make(map[string][]reasonAggregate)
+	for reasonRows.Next() {
+		var (
+			pagePath     string
+			reason       string
+			count        int
+			rank         int
+			totalForPage int
+		)
+		if err := reasonRows.Scan(&pagePath, &reason, &count, &rank, &totalForPage); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse exit reasons"})
+			return
+		}
+		if rank <= topReasonLimit {
+			reasons[pagePath] = append(reasons[pagePath], reasonAggregate{
+				Reason:       reason,
+				Count:        count,
+				Rank:         rank,
+				TotalForPage: totalForPage,
+			})
+		}
+	}
+	if err := reasonRows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read exit reasons"})
+		return
+	}
+
+	for i, summary := range pageSummaries {
+		if reasonAggs, found := reasons[summary.PagePath]; found {
+			var entries []reasonEntry
+			for _, agg := range reasonAggs {
+				share := 0.0
+				if agg.TotalForPage > 0 {
+					share = roundToOneDecimal(float64(agg.Count) / float64(agg.TotalForPage) * 100)
+				}
+				entries = append(entries, reasonEntry{
+					Reason: agg.Reason,
+					Share:  share,
+					Count:  agg.Count,
+				})
+			}
+			pageSummaries[i].TopReasons = entries
+		}
+	}
+
+	const homeReferrerQuery = `
+SELECT
+    COALESCE(NULLIF(TRIM(referrer), ''), 'direct') AS referrer,
+    COUNT(*) AS exit_count,
+    AVG(NULLIF(page_duration_ms, 0)) AS avg_page_ms,
+    AVG(NULLIF(session_duration_ms, 0)) AS avg_session_ms
+FROM exit_events
+WHERE created_at >= $1 AND page_path = $2
+GROUP BY referrer
+ORDER BY exit_count DESC
+LIMIT $3`
+
+	refRows, err := ac.db.Query(homeReferrerQuery, since, "/", homeReferrerLimit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load home referrers"})
+		return
+	}
+	defer refRows.Close()
+
+	type referrerSummary struct {
+		Referrer          string  `json:"referrer"`
+		ExitCount         int     `json:"exit_count"`
+		AvgPageSeconds    float64 `json:"avg_page_seconds"`
+		AvgSessionSeconds float64 `json:"avg_session_seconds"`
+	}
+
+	var referrers []referrerSummary
+	for refRows.Next() {
+		var (
+			referrer     string
+			exitCount    int
+			avgPageMs    sql.NullFloat64
+			avgSessionMs sql.NullFloat64
+		)
+		if err := refRows.Scan(&referrer, &exitCount, &avgPageMs, &avgSessionMs); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse home referrers"})
+			return
+		}
+
+		summary := referrerSummary{
+			Referrer:  referrer,
+			ExitCount: exitCount,
+		}
+		if avgPageMs.Valid && avgPageMs.Float64 > 0 {
+			summary.AvgPageSeconds = roundToOneDecimal(avgPageMs.Float64 / 1000)
+		}
+		if avgSessionMs.Valid && avgSessionMs.Float64 > 0 {
+			summary.AvgSessionSeconds = roundToOneDecimal(avgSessionMs.Float64 / 1000)
+		}
+
+		referrers = append(referrers, summary)
+	}
+	if err := refRows.Err(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to read home referrers"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"since":          since,
+		"until":          now,
+		"total_exits":    totalExits,
+		"unique_pages":   len(pageSummaries),
+		"page_summaries": pageSummaries,
+		"home_referrers": referrers,
+	})
+}
+
+func roundToOneDecimal(value float64) float64 {
+	return math.Round(value*10) / 10
 }
 
 func (ac *AdminController) scanMembership(scanner rowScanner) (gin.H, error) {
