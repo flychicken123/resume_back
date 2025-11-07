@@ -85,6 +85,7 @@ func main() {
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
+	geoService := services.NewGeoService(time.Now().UTC())
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -98,6 +99,7 @@ func main() {
 	projectController := controllers.NewProjectController(projectModel)
 	subscriptionController := controllers.NewSubscriptionController(db, stripeService)
 	adminController := controllers.NewAdminController(db)
+	geoController := controllers.NewGeoController(geoService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -221,6 +223,7 @@ func main() {
 				"pdf_margins": "zero_margins_v2",
 			})
 		})
+		api.GET("/geo/answers", geoController.GetAnswers)
 
 		// Auth routes using new controllers
 		api.POST("/auth/register", authController.Register)
