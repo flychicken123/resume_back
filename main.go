@@ -86,6 +86,11 @@ func main() {
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
 	geoService := services.NewGeoService(time.Now().UTC())
+	if copilotAgent, err := services.NewCopilotAgent(); err != nil {
+		log.Printf("Warning: Copilot agent disabled: %v", err)
+	} else {
+		handlers.SetCopilotAgent(copilotAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -285,6 +290,7 @@ func main() {
 		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
 		protected.PUT("/resume/history/:id/rename", resumeController.RenameResume)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
+		protected.POST("/resume/copilot", handlers.ResumeCopilot)
 
 		// Project routes
 		protected.GET("/projects/resume/:resumeId", projectController.GetProjectsByResumeID)

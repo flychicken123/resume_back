@@ -243,15 +243,6 @@ def main():
 
     print(f"Successfully generated {'PDF' if is_pdf else 'HTML'} resume at {output_path}")
 
-if __name__ == '__main__':
-    main()
-
-
-
-
-
-
-
 def _locate_chrome_binary() -> str:
     """Try to locate a Chrome/Chromium/Edge binary across platforms.
 
@@ -318,3 +309,7 @@ def _locate_chrome_binary() -> str:
 
     # Fallback
     return 'chromium'
+
+
+if __name__ == '__main__':
+    main()
