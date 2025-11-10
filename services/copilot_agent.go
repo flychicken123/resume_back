@@ -35,5 +35,5 @@ func (a *CopilotAgent) RunPrompt(ctx context.Context, prompt string) (string, er
 	if a == nil || a.llm == nil {
 		return "", fmt.Errorf("copilot agent is not initialized")
 	}
-	return a.llm.Call(ctx, prompt)
+	return llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
 }
