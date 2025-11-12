@@ -105,6 +105,7 @@ func main() {
 	subscriptionController := controllers.NewSubscriptionController(db, stripeService)
 	adminController := controllers.NewAdminController(db)
 	geoController := controllers.NewGeoController(geoService)
+	dataAnalysisController := controllers.NewDataAnalysisController(jobPostingModel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -269,6 +270,7 @@ func main() {
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
 		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))
 		public.POST("/contact", handlers.CreateContactRequest(db, emailService))
+		public.GET("/analysis/job-count", dataAnalysisController.GetJobCount)
 
 		// Job automation endpoints removed - feature in development
 	}

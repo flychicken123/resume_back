@@ -573,6 +573,24 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
 	return postings, rows.Err()
 }
 
+func (m *JobPostingModel) CountActiveByKeyword(keyword string) (int, error) {
+	if keyword == "" {
+		return 0, fmt.Errorf("keyword required")
+	}
+	pattern := fmt.Sprintf("%%%s%%", strings.ToLower(keyword))
+	var count int
+	err := m.db.QueryRow(`
+        SELECT COUNT(*)
+        FROM job_postings
+        WHERE is_active = TRUE
+          AND LOWER(title) LIKE $1
+    `, pattern).Scan(&count)
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (m *JobPostingModel) DeactivateMissing(companyID int, activeExternalIDs []string, closedAt time.Time) (int64, error) {
 	if len(activeExternalIDs) == 0 {
 		const query = `
