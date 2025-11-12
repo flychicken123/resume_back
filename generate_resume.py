@@ -6,6 +6,13 @@ from subprocess import run
 import shutil
 from pathlib import Path
 
+
+def sanitize_text(value):
+    """Remove lone surrogate code points that cannot be encoded to UTF-8."""
+    if not isinstance(value, str):
+        value = str(value)
+    return "".join(ch for ch in value if not (0xD800 <= ord(ch) <= 0xDFFF))
+
 def get_system_info():
     """Get system info for debugging Docker vs local differences"""
     info = {}
@@ -32,6 +39,7 @@ def generate_html_resume(template_name, user_data, output_path):
     html_content = user_data.get('htmlContent', '')
     if not html_content:
         return False, "HTML content is required"
+    html_content = sanitize_text(html_content)
     try:
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(html_content)
