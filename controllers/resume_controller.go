@@ -165,20 +165,6 @@ func (c *ResumeController) RenameResume(ctx *gin.Context) {
 	})
 }
 
-func sanitizeFilename(name string) string {
-	clean := strings.TrimSpace(name)
-	if clean == "" {
-		return "uploaded.pdf"
-	}
-	base := filepath.Base(clean)
-	base = strings.ReplaceAll(base, " ", "_")
-	base = strings.ReplaceAll(base, "..", "")
-	if !strings.HasSuffix(strings.ToLower(base), ".pdf") {
-		base = base + ".pdf"
-	}
-	return base
-}
-
 func (c *ResumeController) UploadHistoryPDF(ctx *gin.Context) {
 	userIDVal, exists := ctx.Get("user_id")
 	if !exists {
