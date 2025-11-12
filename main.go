@@ -289,6 +289,7 @@ func main() {
 		protected.GET("/resume/history", resumeController.GetHistory)
 		protected.DELETE("/resume/history/:id", resumeController.DeleteHistory)
 		protected.PUT("/resume/history/:id/rename", resumeController.RenameResume)
+		protected.POST("/resume/history/upload", resumeController.UploadHistoryPDF)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
 		protected.POST("/resume/copilot", handlers.ResumeCopilot)
 

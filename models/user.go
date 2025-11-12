@@ -57,7 +57,7 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 
 	planPreference = strings.ToLower(strings.TrimSpace(planPreference))
 	if planPreference == "" {
-		planPreference = ""
+		planPreference = "free"
 	}
 
 	user := &User{}

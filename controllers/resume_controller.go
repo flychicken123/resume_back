@@ -3,7 +3,12 @@ package controllers
 import (
 	"database/sql"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -157,6 +162,99 @@ func (c *ResumeController) RenameResume(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "Resume renamed successfully",
+	})
+}
+
+func sanitizeFilename(name string) string {
+	clean := strings.TrimSpace(name)
+	if clean == "" {
+		return "uploaded.pdf"
+	}
+	base := filepath.Base(clean)
+	base = strings.ReplaceAll(base, " ", "_")
+	base = strings.ReplaceAll(base, "..", "")
+	if !strings.HasSuffix(strings.ToLower(base), ".pdf") {
+		base = base + ".pdf"
+	}
+	return base
+}
+
+func (c *ResumeController) UploadHistoryPDF(ctx *gin.Context) {
+	userIDVal, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+	emailVal, hasEmail := ctx.Get("user_email")
+	email := ""
+	if hasEmail {
+		email = strings.ToLower(fmt.Sprint(emailVal))
+	}
+	if email != "harwtalk@gmail.com" {
+		ctx.JSON(http.StatusForbidden, gin.H{"error": "Upload is currently limited to administrators."})
+		return
+	}
+	file, err := ctx.FormFile("file")
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "PDF file is required"})
+		return
+	}
+	if strings.ToLower(filepath.Ext(file.Filename)) != ".pdf" {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Only PDF files are allowed"})
+		return
+	}
+	src, err := file.Open()
+	if err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Unable to read uploaded file"})
+		return
+	}
+	defer src.Close()
+
+	tempFile, err := os.CreateTemp("", "resume-history-upload-*.pdf")
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Unable to prepare file upload"})
+		return
+	}
+	defer func() {
+		tempFile.Close()
+		os.Remove(tempFile.Name())
+	}()
+
+	if _, err := io.Copy(tempFile, src); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to copy uploaded file"})
+		return
+	}
+	if err := tempFile.Close(); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to finalize uploaded file"})
+		return
+	}
+
+	if c.resumeService == nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Resume service unavailable"})
+		return
+	}
+
+	filename := c.resumeService.GenerateUniqueFilename(".pdf")
+	s3URL, err := c.resumeService.UploadPDF(tempFile.Name(), filename)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store PDF"})
+		return
+	}
+
+	displayName := strings.TrimSpace(file.Filename)
+	if displayName == "" {
+		displayName = fmt.Sprintf("Uploaded Resume %s", time.Now().Format("Jan 2 2006 15:04"))
+	}
+	record, err := c.resumeHistoryModel.Create(userIDVal.(int), displayName, s3URL)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record resume history"})
+		return
+	}
+	_ = c.resumeHistoryModel.CleanupOldResumes(userIDVal.(int), 3)
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"history": record,
 	})
 }
 
