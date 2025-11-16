@@ -52,7 +52,7 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 		return nil, err
 	}
 
-	endpoint := fmt.Sprintf("https://api.lever.co/v0/postings/%s", url.PathEscape(slug))
+	endpoint := fmt.Sprintf("https://api.lever.co/v0/postings/%s?mode=json&limit=500", url.PathEscape(slug))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("lever returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("lever returned status %d for slug %s", resp.StatusCode, slug)
 	}
 
 	var payload []leverJob
@@ -75,7 +75,7 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 
 	results := make([]*models.JobPosting, 0, len(payload))
 	for _, job := range payload {
-		posting, err := p.transformJob(company.ID, job)
+		posting, err := p.transformJob(company.ID, slug, job)
 		if err != nil {
 			p.logger.Warn("skipping lever job", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
 			continue
@@ -116,7 +116,7 @@ func (p *LeverProvider) resolveCompanySlug(company *models.JobCompany) (string, 
 	return slug, nil
 }
 
-func (p *LeverProvider) transformJob(companyID int, job leverJob) (*models.JobPosting, error) {
+func (p *LeverProvider) transformJob(companyID int, companySlug string, job leverJob) (*models.JobPosting, error) {
 	if strings.TrimSpace(job.ID) == "" || strings.TrimSpace(job.Text) == "" {
 		return nil, fmt.Errorf("missing job id or title")
 	}
@@ -128,7 +128,7 @@ func (p *LeverProvider) transformJob(companyID int, job leverJob) (*models.JobPo
 	description := extractLeverDescription(job.Descriptions)
 
 	postedAt := parseLeverTime(job.CreatedAt)
-	jobURL := firstNonEmpty(strings.TrimSpace(job.HostedURL), fmt.Sprintf("https://jobs.lever.co/%s/%s", url.PathEscape(job.ID), job.ID))
+	jobURL := firstNonEmpty(strings.TrimSpace(job.HostedURL), fmt.Sprintf("https://jobs.lever.co/%s/%s", url.PathEscape(companySlug), url.PathEscape(job.ID)))
 	applyURL := strings.TrimSpace(job.ApplyURL)
 	if applyURL == "" {
 		applyURL = jobURL
