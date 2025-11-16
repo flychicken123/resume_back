@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -56,6 +58,72 @@ func TestGenerateResume_InvalidJSON(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.Contains(t, response, "error")
+}
+
+func TestGenerateResume_Success(t *testing.T) {
+	origGenerator := htmlResumeGenerator
+	t.Cleanup(func() {
+		htmlResumeGenerator = origGenerator
+	})
+
+	called := false
+	htmlResumeGenerator = func(templateName string, userData map[string]interface{}, outputPath string) error {
+		called = true
+		if templateName != defaultTemplateSlug {
+			t.Fatalf("expected default template %s, got %s", defaultTemplateSlug, templateName)
+		}
+		return os.WriteFile(outputPath, []byte("<html>ok</html>"), 0o644)
+	}
+
+	wd, err := os.Getwd()
+	assert.NoError(t, err)
+
+	tmpDir := t.TempDir()
+	assert.NoError(t, os.Chdir(tmpDir))
+	t.Cleanup(func() {
+		_ = os.Chdir(wd)
+	})
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.POST("/api/resume/generate", GenerateResume)
+
+	body := map[string]interface{}{
+		"name":       "Jane Doe",
+		"email":      "jane@example.com",
+		"phone":      "123-456-7890",
+		"summary":    "Product-focused engineer",
+		"experience": "Built things",
+		"education":  "BS Computer Science",
+		"skills":     []string{"Go", "React"},
+	}
+	payload, err := json.Marshal(body)
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/resume/generate", bytes.NewBuffer(payload))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.True(t, called, "expected HTML generator to be invoked")
+
+	var resp map[string]interface{}
+	assert.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "Resume generated successfully.", resp["message"])
+
+	filePath, ok := resp["filePath"].(string)
+	if !ok {
+		t.Fatalf("expected filePath string, got %v", resp["filePath"])
+	}
+	assert.NotEmpty(t, filePath)
+
+	relativePath := strings.TrimPrefix(filePath, "/")
+	fullPath := filepath.FromSlash(relativePath)
+	_, err = os.Stat(fullPath)
+	assert.NoError(t, err, "expected generated resume file to exist")
 }
 
 func TestOptimizeExperience_InvalidJSON(t *testing.T) {

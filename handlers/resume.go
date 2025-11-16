@@ -36,7 +36,10 @@ type ResumeRequest struct {
 	HtmlContent    string   `json:"htmlContent"` // HTML content from live preview
 }
 
-var resumeJobMatcher services.ResumeJobMatcher
+var (
+	resumeJobMatcher    services.ResumeJobMatcher
+	htmlResumeGenerator = generateHTMLResumeWithPython
+)
 
 // SetResumeJobMatcherService injects the matcher service used for per-resume job suggestions.
 func SetResumeJobMatcherService(matcher services.ResumeJobMatcher) {
@@ -90,7 +93,7 @@ func GenerateResume(c *gin.Context) {
 	templateFormat := normalizeTemplateFormat(req.Format)
 
 	// Generate HTML resume using Python
-	if err := generateHTMLResumeWithPython(templateFormat, userData, filepath); err != nil {
+	if err := htmlResumeGenerator(templateFormat, userData, filepath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
