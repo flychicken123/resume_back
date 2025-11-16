@@ -85,7 +85,7 @@ func (p *WorkdayProvider) FetchJobs(ctx context.Context, company *models.JobComp
 	var postings []*models.JobPosting
 
 	for {
-		batch, count, err := p.fetchPage(ctx, company.ID, endpoint, offset, pageSize)
+		batch, count, err := p.fetchPage(ctx, company, endpoint, offset, pageSize)
 		if err != nil {
 			return nil, err
 		}
@@ -163,7 +163,11 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 	return strings.TrimSpace(tenant), strings.TrimSpace(site)
 }
 
-func (p *WorkdayProvider) fetchPage(ctx context.Context, companyID int, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
+func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobCompany, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
+	companyID := 0
+	if company != nil {
+		companyID = company.ID
+	}
 	reqBody := workdayRequest{
 		Limit:         limit,
 		Offset:        offset,
@@ -180,8 +184,19 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, companyID int, endpoint
 		return nil, 0, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", "Mozilla/5.0 WorkdayClient")
+	req.Header.Set("Accept", "application/json, text/plain, */*")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	req.Header.Set("X-Workday-Client", "job-search")
+	if company != nil && company.CareersURL != "" {
+		req.Header.Set("Referer", company.CareersURL)
+		if parsedRef, err := url.Parse(company.CareersURL); err == nil && parsedRef.Host != "" {
+			req.Header.Set("Origin", fmt.Sprintf("https://%s", parsedRef.Host))
+		}
+	} else if parsedEndpoint, err := url.Parse(endpoint); err == nil && parsedEndpoint.Host != "" {
+		req.Header.Set("Origin", fmt.Sprintf("https://%s", parsedEndpoint.Host))
+		req.Header.Set("Referer", fmt.Sprintf("https://%s", parsedEndpoint.Host))
+	}
 
 	resp, err := p.client.Do(req)
 	if err != nil {
