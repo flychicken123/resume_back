@@ -3,6 +3,7 @@ package controllers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -251,20 +252,22 @@ func (sc *SubscriptionController) CancelSubscription(c *gin.Context) {
 		return
 	}
 
-	// Update subscription to cancel at period end
-	_, err := sc.db.Exec(`
-		UPDATE user_subscriptions
-		SET cancel_at_period_end = true,
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE user_id = $1 AND status = 'active'
-	`, userID)
-
+	sub, err := sc.stripeService.CancelUserSubscription(userID)
 	if err != nil {
+		if errors.Is(err, services.ErrNoActiveSubscription) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No active subscription to cancel"})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to cancel subscription"})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "Subscription will be canceled at the end of the current period"})
+	c.JSON(http.StatusOK, gin.H{
+		"message":              "Subscription will be canceled at the end of the current period",
+		"status":               sub.Status,
+		"cancel_at_period_end": sub.CancelAtPeriodEnd,
+		"current_period_end":   time.Unix(sub.CurrentPeriodEnd, 0),
+	})
 }
 
 // GetUsageStats returns usage statistics for the user

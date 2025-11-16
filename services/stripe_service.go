@@ -3,6 +3,7 @@ package services
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -37,6 +38,8 @@ type StripeService struct {
 	cacheMu      sync.RWMutex
 	lastPlanSync time.Time
 }
+
+var ErrNoActiveSubscription = errors.New("no active subscription to cancel")
 
 func NewStripeService(db *sql.DB) *StripeService {
 	// Set Stripe API key from environment
@@ -508,6 +511,59 @@ func (s *StripeService) ChangeSubscriptionPlan(userID int, planName string) (*st
 		WHERE user_id = $4
 	`, plan.ID, time.Unix(updated.CurrentPeriodStart, 0), time.Unix(updated.CurrentPeriodEnd, 0), userID); err != nil {
 		return nil, fmt.Errorf("failed to update subscription record: %w", err)
+	}
+
+	return updated, nil
+}
+
+// CancelUserSubscription schedules cancellation at period end in Stripe and syncs our records.
+func (s *StripeService) CancelUserSubscription(userID int) (*stripe.Subscription, error) {
+	var stripeSubID string
+	err := s.db.QueryRow(`
+		SELECT stripe_subscription_id
+		FROM user_subscriptions
+		WHERE user_id = $1 AND stripe_subscription_id IS NOT NULL
+		ORDER BY updated_at DESC
+		LIMIT 1
+	`, userID).Scan(&stripeSubID)
+	if err == sql.ErrNoRows || strings.TrimSpace(stripeSubID) == "" {
+		return nil, ErrNoActiveSubscription
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to locate active subscription: %w", err)
+	}
+
+	params := &stripe.SubscriptionParams{
+		CancelAtPeriodEnd: stripe.Bool(true),
+	}
+	updated, err := subscription.Update(stripeSubID, params)
+	if err != nil {
+		return nil, fmt.Errorf("failed to schedule Stripe cancellation: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		UPDATE user_subscriptions
+		SET status = $1,
+		    cancel_at_period_end = $2,
+		    current_period_start = $3,
+		    current_period_end = $4,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = $5
+	`, updated.Status,
+		updated.CancelAtPeriodEnd,
+		time.Unix(updated.CurrentPeriodStart, 0),
+		time.Unix(updated.CurrentPeriodEnd, 0),
+		userID); err != nil {
+		return nil, fmt.Errorf("failed to update subscription record: %w", err)
+	}
+
+	if _, err := s.db.Exec(`
+		UPDATE users
+		SET subscription_status = $1,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2
+	`, updated.Status, userID); err != nil {
+		return nil, fmt.Errorf("failed to update user status: %w", err)
 	}
 
 	return updated, nil
