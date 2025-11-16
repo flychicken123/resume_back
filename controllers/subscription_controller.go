@@ -82,28 +82,47 @@ func (sc *SubscriptionController) GetCurrentSubscription(c *gin.Context) {
 	}
 
 	var subscription struct {
-		PlanName     string  `json:"plan_name"`
-		DisplayName  string  `json:"display_name"`
-		Price        float64 `json:"price"`
-		Status       string  `json:"status"`
-		ResumeLimit  int     `json:"resume_limit"`
-		ResumePeriod string  `json:"resume_period"`
+		PlanName           string     `json:"plan_name"`
+		DisplayName        string     `json:"display_name"`
+		Price              float64    `json:"price"`
+		Status             string     `json:"status"`
+		ResumeLimit        int        `json:"resume_limit"`
+		ResumePeriod       string     `json:"resume_period"`
+		CancelAtPeriodEnd  bool       `json:"cancel_at_period_end"`
+		CurrentPeriodStart *time.Time `json:"current_period_start"`
+		CurrentPeriodEnd   *time.Time `json:"current_period_end"`
 	}
+
+	var periodStart sql.NullTime
+	var periodEnd sql.NullTime
 
 	err := sc.db.QueryRow(`
 		SELECT sp.name, sp.display_name, sp.price,
-		       COALESCE(us.status, 'free'), sp.resume_limit, sp.resume_period
+		       COALESCE(us.status, 'free'), sp.resume_limit, sp.resume_period,
+		       COALESCE(us.cancel_at_period_end, false) AS cancel_at_period_end,
+		       us.current_period_start,
+		       us.current_period_end
 		FROM users u
 		LEFT JOIN subscription_plans sp ON sp.id = COALESCE(u.subscription_plan_id, 1)
 		LEFT JOIN user_subscriptions us ON us.user_id = u.id
 		WHERE u.id = $1
 	`, userID).Scan(&subscription.PlanName, &subscription.DisplayName,
 		&subscription.Price, &subscription.Status, &subscription.ResumeLimit,
-		&subscription.ResumePeriod)
+		&subscription.ResumePeriod, &subscription.CancelAtPeriodEnd,
+		&periodStart, &periodEnd)
 
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch subscription"})
 		return
+	}
+
+	if periodStart.Valid {
+		start := periodStart.Time
+		subscription.CurrentPeriodStart = &start
+	}
+	if periodEnd.Valid {
+		end := periodEnd.Time
+		subscription.CurrentPeriodEnd = &end
 	}
 
 	// Get usage information (with fallback for errors)
