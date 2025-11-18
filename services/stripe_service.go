@@ -631,36 +631,194 @@ func (s *StripeService) HandleWebhook(payload []byte, signature string) error {
 	return nil
 }
 
-// handleCheckoutCompleted processes successful checkout
-func (s *StripeService) handleCheckoutCompleted(session *stripe.CheckoutSession) error {
-	userID := session.Metadata["user_id"]
-	planID := session.Metadata["plan_id"]
+func parseMetadataInt(value string) (int, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, nil
+	}
+	id, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	return id, nil
+}
 
-	// Create customer if needed
-	if session.Customer == nil {
-		customerParams := &stripe.CustomerParams{
-			Email: stripe.String(session.CustomerEmail),
+func (s *StripeService) resolveCheckoutUserID(checkoutSession *stripe.CheckoutSession, customerID string) (int, error) {
+	if checkoutSession.Metadata != nil {
+		if id, err := parseMetadataInt(checkoutSession.Metadata["user_id"]); err != nil {
+			return 0, fmt.Errorf("invalid user_id metadata: %w", err)
+		} else if id > 0 {
+			return id, nil
 		}
-		customerParams.AddMetadata("user_id", userID)
-		cust, err := customer.New(customerParams)
-		if err != nil {
-			return err
-		}
-		session.Customer = &stripe.Customer{ID: cust.ID}
 	}
 
-	// Update user with customer ID
+	if customerID != "" {
+		var userID int
+		err := s.db.QueryRow(`SELECT id FROM users WHERE stripe_customer_id = $1`, customerID).Scan(&userID)
+		if err == nil {
+			return userID, nil
+		}
+		if err != sql.ErrNoRows {
+			return 0, fmt.Errorf("failed to lookup user by customer id: %w", err)
+		}
+	}
+
+	if email := strings.TrimSpace(checkoutSession.CustomerEmail); email != "" {
+		var userID int
+		err := s.db.QueryRow(`SELECT id FROM users WHERE LOWER(email) = LOWER($1)`, email).Scan(&userID)
+		if err == nil {
+			return userID, nil
+		}
+		if err != sql.ErrNoRows {
+			return 0, fmt.Errorf("failed to lookup user by email: %w", err)
+		}
+	}
+
+	return 0, fmt.Errorf("unable to determine user for checkout session %s", checkoutSession.ID)
+}
+
+func (s *StripeService) lookupCheckoutPriceID(sessionID string) (string, error) {
+	if sessionID == "" {
+		return "", nil
+	}
+
+	params := &stripe.CheckoutSessionListLineItemsParams{
+		Session: stripe.String(sessionID),
+	}
+	params.Limit = stripe.Int64(1)
+	iter := session.ListLineItems(params)
+	for iter.Next() {
+		line := iter.LineItem()
+		if line != nil && line.Price != nil {
+			return line.Price.ID, nil
+		}
+	}
+	if err := iter.Err(); err != nil {
+		return "", err
+	}
+	return "", nil
+}
+
+func (s *StripeService) resolveCheckoutPlanID(checkoutSession *stripe.CheckoutSession) (int, error) {
+	if checkoutSession.Metadata != nil {
+		if id, err := parseMetadataInt(checkoutSession.Metadata["plan_id"]); err != nil {
+			return 0, fmt.Errorf("invalid plan_id metadata: %w", err)
+		} else if id > 0 {
+			return id, nil
+		}
+	}
+
+	priceID, err := s.lookupCheckoutPriceID(checkoutSession.ID)
+	if err != nil {
+		return 0, fmt.Errorf("failed to resolve checkout price: %w", err)
+	}
+	if priceID == "" {
+		return 0, fmt.Errorf("unable to resolve plan for checkout session %s", checkoutSession.ID)
+	}
+
+	if plan, found, err := s.getPlanByPriceID(priceID); err != nil {
+		return 0, err
+	} else if found {
+		return plan.ID, nil
+	}
+
+	var planID int
+	if err := s.db.QueryRow(`SELECT id FROM subscription_plans WHERE stripe_price_id = $1`, priceID).Scan(&planID); err == nil {
+		return planID, nil
+	} else if err != sql.ErrNoRows {
+		return 0, fmt.Errorf("failed to lookup plan for price %s: %w", priceID, err)
+	}
+
+	return 0, fmt.Errorf("no subscription plan configured for price %s", priceID)
+}
+
+func (s *StripeService) ensureCheckoutCustomerID(checkoutSession *stripe.CheckoutSession, userID int, customerID string) (string, error) {
+	if customerID != "" {
+		return customerID, nil
+	}
+
+	var existing string
+	if err := s.db.QueryRow(`SELECT stripe_customer_id FROM users WHERE id = $1`, userID).Scan(&existing); err == nil && existing != "" {
+		if checkoutSession.Customer == nil {
+			checkoutSession.Customer = &stripe.Customer{ID: existing}
+		} else {
+			checkoutSession.Customer.ID = existing
+		}
+		return existing, nil
+	} else if err != nil && err != sql.ErrNoRows {
+		return "", fmt.Errorf("failed to lookup existing stripe customer: %w", err)
+	}
+
+	email := strings.TrimSpace(checkoutSession.CustomerEmail)
+	if email == "" {
+		if err := s.db.QueryRow(`SELECT email FROM users WHERE id = $1`, userID).Scan(&email); err != nil {
+			if err == sql.ErrNoRows {
+				email = ""
+			} else {
+				return "", fmt.Errorf("failed to load user email: %w", err)
+			}
+		}
+	}
+	if email == "" {
+		return "", fmt.Errorf("missing email for user %d to create Stripe customer", userID)
+	}
+
+	customerParams := &stripe.CustomerParams{
+		Email: stripe.String(email),
+	}
+	customerParams.AddMetadata("user_id", fmt.Sprintf("%d", userID))
+	cust, err := customer.New(customerParams)
+	if err != nil {
+		return "", fmt.Errorf("failed to create stripe customer: %v", err)
+	}
+	checkoutSession.Customer = &stripe.Customer{ID: cust.ID}
+	return cust.ID, nil
+}
+
+// handleCheckoutCompleted processes successful checkout
+func (s *StripeService) handleCheckoutCompleted(checkoutSession *stripe.CheckoutSession) error {
+	if checkoutSession == nil {
+		return fmt.Errorf("checkout session payload is empty")
+	}
+
+	customerID := ""
+	if checkoutSession.Customer != nil {
+		customerID = checkoutSession.Customer.ID
+	}
+
+	userID, err := s.resolveCheckoutUserID(checkoutSession, customerID)
+	if err != nil {
+		return err
+	}
+
+	planID, err := s.resolveCheckoutPlanID(checkoutSession)
+	if err != nil {
+		return err
+	}
+
+	customerID, err = s.ensureCheckoutCustomerID(checkoutSession, userID, customerID)
+	if err != nil {
+		return err
+	}
+
+	subscriptionID := ""
+	if checkoutSession.Subscription != nil {
+		subscriptionID = checkoutSession.Subscription.ID
+	}
+
+	periodStart := time.Now()
+	periodEnd := periodStart.AddDate(0, 1, 0)
+
 	if _, err := s.db.Exec(`
 		UPDATE users
 		SET stripe_customer_id = $1,
 		    subscription_plan_id = $2,
 		    subscription_status = 'active'
 		WHERE id = $3
-	`, session.Customer.ID, planID, userID); err != nil {
+	`, customerID, planID, userID); err != nil {
 		return err
 	}
 
-	// Create subscription record
 	if _, err := s.db.Exec(`
 		INSERT INTO user_subscriptions (
 			user_id, plan_id, stripe_subscription_id, stripe_customer_id,
@@ -673,13 +831,13 @@ func (s *StripeService) handleCheckoutCompleted(session *stripe.CheckoutSession)
 			current_period_start = $6,
 			current_period_end = $7,
 			updated_at = CURRENT_TIMESTAMP
-	`, userID, planID, session.Subscription.ID, session.Customer.ID,
-		"active", time.Now(), time.Now().AddDate(0, 1, 0)); err != nil {
+	`, userID, planID, subscriptionID, customerID,
+		"active", periodStart, periodEnd); err != nil {
 		return err
 	}
 
-	if session.Subscription != nil && session.Subscription.ID != "" {
-		if _, err := subscription.Update(session.Subscription.ID, &stripe.SubscriptionParams{
+	if subscriptionID != "" {
+		if _, err := subscription.Update(subscriptionID, &stripe.SubscriptionParams{
 			AutomaticTax: &stripe.SubscriptionAutomaticTaxParams{
 				Enabled: stripe.Bool(true),
 			},
