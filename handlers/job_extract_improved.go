@@ -39,6 +39,18 @@ func ImprovedExtractJobDescription(c *gin.Context) {
 		return
 	}
 
+	// Handle Ashby job postings via embedded JSON
+	if strings.Contains(req.URL, "jobs.ashbyhq.com") {
+		if desc, title, company, err := extractAshbyJob(req.URL); err == nil && strings.TrimSpace(desc) != "" {
+			c.JSON(http.StatusOK, JobExtractResponse{
+				Description: desc,
+				Title:       title,
+				Company:     company,
+			})
+			return
+		}
+	}
+
 	// Check if it's a LinkedIn URL that requires login
 	if strings.Contains(req.URL, "linkedin.com") && !strings.Contains(req.URL, "/public/") {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -426,6 +438,136 @@ func extractCoreJobDescription(htmlContent string) string {
 	}
 
 	return strings.TrimSpace(finalResult)
+}
+
+func extractAshbyJob(jobURL string) (description, title, company string, err error) {
+	req, err := http.NewRequest(http.MethodGet, jobURL, nil)
+	if err != nil {
+		return "", "", "", err
+	}
+	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; HiHiredBot/1.0)")
+	req.Header.Set("Accept", "text/html,application/xhtml+xml")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", "", "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		return "", "", "", fmt.Errorf("ashby page returned %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", "", "", fmt.Errorf("read ashby page: %w", err)
+	}
+
+	re := regexp.MustCompile(`(?s)window\.__appData\s*=\s*({.*?});`)
+	matches := re.FindSubmatch(body)
+	if len(matches) < 2 {
+		return "", "", "", fmt.Errorf("ashby metadata not found")
+	}
+
+	var payload struct {
+		Organization *struct {
+			Name string `json:"name"`
+		} `json:"organization"`
+		Posting *struct {
+			Title           string `json:"title"`
+			DescriptionHTML string `json:"descriptionHtml"`
+			Sections        []struct {
+				Title    string `json:"title"`
+				BodyHTML string `json:"bodyHtml"`
+				BodyText string `json:"bodyText"`
+			} `json:"sections"`
+			HiringTeam *struct {
+				OrganizationName string `json:"organizationName"`
+			} `json:"hiringTeam"`
+		} `json:"posting"`
+	}
+
+	if err := json.Unmarshal(matches[1], &payload); err != nil {
+		return "", "", "", fmt.Errorf("parse ashby metadata: %w", err)
+	}
+	if payload.Posting == nil {
+		return "", "", "", fmt.Errorf("ashby posting data missing")
+	}
+
+	desc := cleanHTMLToText(payload.Posting.DescriptionHTML)
+	if strings.TrimSpace(desc) == "" {
+		desc = buildAshbyDescription(payload.Posting.Sections)
+	}
+	if strings.TrimSpace(desc) == "" {
+		desc = payload.Posting.Title
+	}
+
+	company = ""
+	if payload.Organization != nil && strings.TrimSpace(payload.Organization.Name) != "" {
+		company = strings.TrimSpace(payload.Organization.Name)
+	} else if payload.Posting.HiringTeam != nil && strings.TrimSpace(payload.Posting.HiringTeam.OrganizationName) != "" {
+		company = strings.TrimSpace(payload.Posting.HiringTeam.OrganizationName)
+	} else {
+		company = humanizeSlug(ashbySlugFromURL(jobURL))
+	}
+
+	return strings.TrimSpace(desc), strings.TrimSpace(payload.Posting.Title), company, nil
+}
+
+func buildAshbyDescription(sections []struct {
+	Title    string `json:"title"`
+	BodyHTML string `json:"bodyHtml"`
+	BodyText string `json:"bodyText"`
+}) string {
+	var builder strings.Builder
+	for _, section := range sections {
+		content := cleanHTMLToText(section.BodyHTML)
+		if strings.TrimSpace(content) == "" && strings.TrimSpace(section.BodyText) != "" {
+			content = section.BodyText
+		}
+		if strings.TrimSpace(content) == "" {
+			continue
+		}
+		if builder.Len() > 0 {
+			builder.WriteString("\n\n")
+		}
+		if strings.TrimSpace(section.Title) != "" {
+			builder.WriteString(strings.TrimSpace(section.Title))
+			builder.WriteString("\n")
+		}
+		builder.WriteString(strings.TrimSpace(content))
+	}
+	return builder.String()
+}
+
+func ashbySlugFromURL(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	segments := strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' })
+	if len(segments) == 0 {
+		return ""
+	}
+	return segments[0]
+}
+
+func humanizeSlug(slug string) string {
+	if slug == "" {
+		return ""
+	}
+	parts := strings.FieldsFunc(slug, func(r rune) bool {
+		return r == '-' || r == '_' || r == ' ' || r == '.'
+	})
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		lower := strings.ToLower(part)
+		parts[i] = strings.ToUpper(lower[:1]) + lower[1:]
+	}
+	return strings.Join(parts, " ")
 }
 
 // extractGreenhouseJobData fetches via Greenhouse API and returns structured fields
