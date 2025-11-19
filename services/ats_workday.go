@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"resumeai/models"
@@ -16,9 +18,17 @@ import (
 )
 
 type WorkdayProvider struct {
-	client *http.Client
-	logger *utils.Logger
+	client         *http.Client
+	logger         *utils.Logger
+	userAgent      string
+	sessionCookies sync.Map
 }
+
+const (
+	workdayClientHeader = "job-search"
+	defaultLocaleHeader = "en-US,en;q=0.9"
+	defaultUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+)
 
 type workdayRequest struct {
 	Limit         int                 `json:"limit"`
@@ -66,12 +76,24 @@ type workdayJobDescription struct {
 
 func NewWorkdayProvider(client *http.Client, logger *utils.Logger) *WorkdayProvider {
 	if client == nil {
-		client = &http.Client{Timeout: 25 * time.Second}
+		jar, _ := cookiejar.New(nil)
+		client = &http.Client{
+			Timeout: 25 * time.Second,
+			Jar:     jar,
+		}
+	} else if client.Jar == nil {
+		if jar, err := cookiejar.New(nil); err == nil {
+			client.Jar = jar
+		}
 	}
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
-	return &WorkdayProvider{client: client, logger: logger}
+	return &WorkdayProvider{
+		client:    client,
+		logger:    logger,
+		userAgent: defaultUserAgent,
+	}
 }
 
 func (p *WorkdayProvider) FetchJobs(ctx context.Context, company *models.JobCompany) ([]*models.JobPosting, error) {
@@ -164,6 +186,11 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 }
 
 func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobCompany, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
+	cookieHeader, err := p.warmUpSession(ctx, endpoint, company)
+	if err != nil {
+		return nil, 0, fmt.Errorf("workday warmup failed: %w", err)
+	}
+
 	companyID := 0
 	if company != nil {
 		companyID = company.ID
@@ -183,19 +210,9 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 	if err != nil {
 		return nil, 0, err
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Accept", "application/json, text/plain, */*")
-	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
-	req.Header.Set("X-Workday-Client", "job-search")
-	if company != nil && company.CareersURL != "" {
-		req.Header.Set("Referer", company.CareersURL)
-		if parsedRef, err := url.Parse(company.CareersURL); err == nil && parsedRef.Host != "" {
-			req.Header.Set("Origin", fmt.Sprintf("https://%s", parsedRef.Host))
-		}
-	} else if parsedEndpoint, err := url.Parse(endpoint); err == nil && parsedEndpoint.Host != "" {
-		req.Header.Set("Origin", fmt.Sprintf("https://%s", parsedEndpoint.Host))
-		req.Header.Set("Referer", fmt.Sprintf("https://%s", parsedEndpoint.Host))
+	p.setCommonHeaders(req, endpoint, company, true)
+	if strings.TrimSpace(cookieHeader) != "" {
+		req.Header.Set("Cookie", cookieHeader)
 	}
 
 	resp, err := p.client.Do(req)
@@ -340,4 +357,72 @@ func buildWorkdayJobURL(endpoint, externalPath string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
+}
+
+func (p *WorkdayProvider) warmUpSession(ctx context.Context, endpoint string, company *models.JobCompany) (string, error) {
+	if cached, ok := p.sessionCookies.Load(endpoint); ok {
+		if header, valid := cached.(string); valid {
+			return header, nil
+		}
+	}
+
+	target := endpoint
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, nil)
+	if err != nil {
+		return "", err
+	}
+	p.setCommonHeaders(req, target, company, false)
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	if jar := p.client.Jar; jar != nil {
+		if u, err := url.Parse(endpoint); err == nil {
+			jar.SetCookies(u, resp.Cookies())
+		}
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	cookieHeader := buildCookieHeader(resp.Cookies())
+	p.sessionCookies.Store(endpoint, cookieHeader)
+	return cookieHeader, nil
+}
+
+func (p *WorkdayProvider) setCommonHeaders(req *http.Request, endpoint string, company *models.JobCompany, includeContentType bool) {
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Accept-Language", defaultLocaleHeader)
+	req.Header.Set("User-Agent", p.userAgent)
+	req.Header.Set("X-Workday-Client", workdayClientHeader)
+	if includeContentType {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
+		origin := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		req.Header.Set("Origin", origin)
+		referer := origin
+		if company != nil && strings.TrimSpace(company.CareersURL) != "" {
+			referer = company.CareersURL
+		} else {
+			referer = origin
+		}
+		req.Header.Set("Referer", referer)
+	}
+}
+
+func buildCookieHeader(cookies []*http.Cookie) string {
+	if len(cookies) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(cookies))
+	for _, cookie := range cookies {
+		if cookie == nil || strings.TrimSpace(cookie.Name) == "" {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
+	}
+	return strings.Join(parts, "; ")
 }
