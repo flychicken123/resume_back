@@ -65,6 +65,10 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
+		if resp.StatusCode == http.StatusNotFound {
+			p.logger.Warn("lever slug not found, returning no jobs", map[string]interface{}{"slug": slug, "company_id": company.ID})
+			return []*models.JobPosting{}, nil
+		}
 		return nil, fmt.Errorf("lever returned status %d for slug %s", resp.StatusCode, slug)
 	}
 
