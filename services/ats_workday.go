@@ -378,13 +378,15 @@ func (p *WorkdayProvider) warmUpSession(ctx context.Context, endpoint string, co
 	if err != nil {
 		return "", err
 	}
+	defer resp.Body.Close()
 	if jar := p.client.Jar; jar != nil {
 		if u, err := url.Parse(endpoint); err == nil {
 			jar.SetCookies(u, resp.Cookies())
 		}
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		p.logger.Warn("error discarding response body during warmup", map[string]interface{}{"endpoint": endpoint, "error": err.Error()})
+	}
 
 	cookieHeader := buildCookieHeader(resp.Cookies())
 	p.sessionCookies.Store(endpoint, cookieHeader)
@@ -406,8 +408,6 @@ func (p *WorkdayProvider) setCommonHeaders(req *http.Request, endpoint string, c
 		referer := origin
 		if company != nil && strings.TrimSpace(company.CareersURL) != "" {
 			referer = company.CareersURL
-		} else {
-			referer = origin
 		}
 		req.Header.Set("Referer", referer)
 	}
