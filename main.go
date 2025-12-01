@@ -66,10 +66,14 @@ func main() {
 	feedbackModel := models.NewFeedbackModel(db)
 	chatHistoryModel := models.NewChatHistoryModel(db)
 
+	if err := models.EnsureExperimentSchema(db); err != nil {
+		log.Fatal("Error ensuring experiment tables:", err)
+	}
 	jobCompanyModel := models.NewJobCompanyModel(db)
 	jobPostingModel := models.NewJobPostingModel(db)
 	jobSyncModel := models.NewJobSyncRunModel(db)
 	jobMatchModel := models.NewResumeJobMatchModel(db)
+	experimentModel := models.NewExperimentModel(db)
 
 	// Initialize services
 	jwtService := services.NewJWTService(appConfig.JWTSecret)
@@ -81,6 +85,7 @@ func main() {
 	stripeService := services.NewStripeService(db)
 	emailService := services.NewEmailService()
 	jobsService := services.NewJobIngestionService(db, logger)
+	experimentService := services.NewExperimentService(experimentModel)
 	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger)
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
@@ -106,6 +111,7 @@ func main() {
 	adminController := controllers.NewAdminController(db)
 	geoController := controllers.NewGeoController(geoService)
 	dataAnalysisController := controllers.NewDataAnalysisController(jobPostingModel)
+	experimentController := controllers.NewExperimentController(experimentService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -160,7 +166,7 @@ func main() {
 		}
 		c.Header("Access-Control-Allow-Origin", origin)
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, Content-Length")
+		c.Header("Access-Control-Allow-Headers", "Origin, Content-Type, Accept, Authorization, X-Requested-With, Content-Length, X-Experiment-User")
 		c.Header("Access-Control-Allow-Credentials", "true")
 		c.Header("Access-Control-Max-Age", "86400")
 
@@ -237,6 +243,8 @@ func main() {
 		api.POST("/auth/google", authController.GoogleLogin)
 		api.POST("/auth/logout", handlers.LogoutUser())
 		api.GET("/jobs", jobsController.ListJobs)
+		api.POST("/experiments/assign", experimentController.AssignVariant)
+		api.POST("/experiments/event", experimentController.TrackEvent)
 	}
 
 	// Public routes (no auth required) - keep using handlers for now
@@ -327,6 +335,10 @@ func main() {
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 			admin.PATCH("/jobs/companies/:id/status", jobsController.UpdateCompanyStatus)
 			admin.GET("/analytics/exit-summary", adminController.GetExitSummary)
+			admin.GET("/experiments", experimentController.ListExperiments)
+			admin.POST("/experiments", experimentController.CreateOrUpdateExperiment)
+			admin.GET("/experiments/:key/metrics", experimentController.GetExperimentMetrics)
+			admin.DELETE("/experiments/:key", experimentController.DeleteExperiment)
 		}
 	}
 
