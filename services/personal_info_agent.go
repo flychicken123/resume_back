@@ -86,14 +86,8 @@ Text:
 
 func sanitizeLLMJSON(value string) string {
 	trimmed := strings.TrimSpace(value)
-	if strings.HasPrefix(trimmed, "```json") {
-		trimmed = strings.TrimPrefix(trimmed, "```json")
-	}
-	if strings.HasPrefix(trimmed, "```") {
-		trimmed = strings.TrimPrefix(trimmed, "```")
-	}
-	if strings.HasSuffix(trimmed, "```") {
-		trimmed = strings.TrimSuffix(trimmed, "```")
-	}
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
 	return strings.TrimSpace(trimmed)
 }
