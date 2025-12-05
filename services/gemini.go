@@ -652,6 +652,178 @@ IMPORTANT: Provide specific, actionable feedback. Use bullet points for clarity.
 Format your response with clear sections and specific recommendations.`, resumeText, jobContext)
 }
 
+// JobReRankCandidate captures the minimal view of a job needed for LLM
+// re-ranking of job matches.
+type JobReRankCandidate struct {
+	Index       int
+	JobID       int64
+	Title       string
+	Company     string
+	Location    string
+	Department  string
+	RemoteType  string
+	Description string
+	BaseScore   float64
+}
+
+// BuildJobReRankingPrompt builds a prompt asking the LLM to assign a relevance
+// score (0–10) to each of the provided job candidates for the given resume
+// context. The intent is to use these scores as a soft re-ranker on top of the
+// existing heuristic scoring.
+func BuildJobReRankingPrompt(input ResumeJobMatchInput, jobs []JobReRankCandidate) string {
+	var resumeBuilder strings.Builder
+
+	if strings.TrimSpace(input.Position) != "" {
+		resumeBuilder.WriteString("Target Position: ")
+		resumeBuilder.WriteString(strings.TrimSpace(input.Position))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.Summary) != "" {
+		resumeBuilder.WriteString("Summary: ")
+		resumeBuilder.WriteString(strings.TrimSpace(input.Summary))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.Experience) != "" {
+		resumeBuilder.WriteString("\nExperience:\n")
+		resumeBuilder.WriteString(strings.TrimSpace(input.Experience))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.Education) != "" {
+		resumeBuilder.WriteString("\nEducation:\n")
+		resumeBuilder.WriteString(strings.TrimSpace(input.Education))
+		resumeBuilder.WriteString("\n")
+	}
+	if len(input.Skills) > 0 {
+		resumeBuilder.WriteString("\nSkills: ")
+		resumeBuilder.WriteString(strings.Join(input.Skills, ", "))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.PreferredLocation) != "" {
+		resumeBuilder.WriteString("\nPreferred Location: ")
+		resumeBuilder.WriteString(strings.TrimSpace(input.PreferredLocation))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.JobDescription) != "" {
+		resumeBuilder.WriteString("\nTarget Job Description (if provided by user):\n")
+		resumeBuilder.WriteString(strings.TrimSpace(input.JobDescription))
+		resumeBuilder.WriteString("\n")
+	}
+
+	resumeBlock := resumeBuilder.String()
+
+	var jobsBuilder strings.Builder
+	for _, job := range jobs {
+		jobsBuilder.WriteString(fmt.Sprintf("Job %d:\n", job.Index))
+		if strings.TrimSpace(job.Title) != "" {
+			jobsBuilder.WriteString("  Title: ")
+			jobsBuilder.WriteString(strings.TrimSpace(job.Title))
+			jobsBuilder.WriteString("\n")
+		}
+		if strings.TrimSpace(job.Company) != "" {
+			jobsBuilder.WriteString("  Company: ")
+			jobsBuilder.WriteString(strings.TrimSpace(job.Company))
+			jobsBuilder.WriteString("\n")
+		}
+		if strings.TrimSpace(job.Location) != "" {
+			jobsBuilder.WriteString("  Location: ")
+			jobsBuilder.WriteString(strings.TrimSpace(job.Location))
+			jobsBuilder.WriteString("\n")
+		}
+		if strings.TrimSpace(job.Department) != "" {
+			jobsBuilder.WriteString("  Department: ")
+			jobsBuilder.WriteString(strings.TrimSpace(job.Department))
+			jobsBuilder.WriteString("\n")
+		}
+		if strings.TrimSpace(job.RemoteType) != "" {
+			jobsBuilder.WriteString("  Remote Type: ")
+			jobsBuilder.WriteString(strings.TrimSpace(job.RemoteType))
+			jobsBuilder.WriteString("\n")
+		}
+		if job.BaseScore > 0 {
+			jobsBuilder.WriteString(fmt.Sprintf("  Baseline Match Score: %.2f\n", job.BaseScore))
+		}
+		if trimmed := strings.TrimSpace(job.Description); trimmed != "" {
+			jobsBuilder.WriteString("  Description: ")
+			jobsBuilder.WriteString(trimmed)
+			jobsBuilder.WriteString("\n")
+		}
+		jobsBuilder.WriteString("\n")
+	}
+
+	return fmt.Sprintf(`You are an expert career coach and job matching assistant.
+
+The system has already computed baseline match scores between a candidate's resume and several job postings.
+Your task is to look at the resume context and the list of jobs, then assign an additional
+"llm_score" between 0 and 10 (higher is better) for each job, reflecting how strong the fit is.
+
+You should value:
+- Clear overlap between the candidate's skills/experience and the job's responsibilities and stack
+- Alignment between seniority level and scope of work
+- Location and remote preferences when they are mentioned
+- Overall coherence between the resume and job description
+
+--- RESUME CONTEXT ---
+%s
+
+--- JOB CANDIDATES ---
+%s
+
+Return ONLY valid JSON using this exact shape. Include an entry for every job index shown above:
+{
+  "scores": [
+    { "index": 1, "llm_score": 8.7 },
+    { "index": 2, "llm_score": 6.3 }
+  ]
+}
+
+- "index" MUST match the Job N index from the list above.
+- "llm_score" MUST be a number between 0 and 10.
+- Do not include any other fields or text outside this JSON.`, resumeBlock, jobsBuilder.String())
+}
+
+// ParseJobReRankingScores interprets the LLM JSON response for job re-ranking
+// and returns a map from job index (1-based) to an LLM score in the range
+// [0, 10]. If parsing fails, it returns an empty map.
+func ParseJobReRankingScores(raw string, jobCount int) map[int]float64 {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return map[int]float64{}
+	}
+
+	// Strip common markdown fences if present.
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	type item struct {
+		Index    int     `json:"index"`
+		LLMScore float64 `json:"llm_score"`
+	}
+	var wrapper struct {
+		Scores []item `json:"scores"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &wrapper); err != nil {
+		return map[int]float64{}
+	}
+
+	out := make(map[int]float64, len(wrapper.Scores))
+	for _, s := range wrapper.Scores {
+		if s.Index <= 0 || s.Index > jobCount {
+			continue
+		}
+		score := s.LLMScore
+		if score < 0 {
+			score = 0
+		}
+		if score > 10 {
+			score = 10
+		}
+		out[s.Index] = score
+	}
+	return out
+}
+
 // BuildJobFitExplanationPrompt builds a prompt that asks the LLM to explain
 // why a particular job match is a good fit for the current resume.
 func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[string]interface{}) string {

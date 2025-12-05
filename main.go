@@ -86,16 +86,22 @@ func main() {
 	emailService := services.NewEmailService()
 	jobsService := services.NewJobIngestionService(db, logger)
 	experimentService := services.NewExperimentService(experimentModel)
-	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger)
+
+	// Initialize the LangChain-backed copilot agent once and share it between
+	// the job matcher (for re-ranking) and the copilot handlers.
+	var copilotAgent *services.CopilotAgent
+	if agent, err := services.NewCopilotAgent(); err != nil {
+		log.Printf("Warning: Copilot agent disabled: %v", err)
+	} else {
+		copilotAgent = agent
+		handlers.SetCopilotAgent(agent)
+	}
+
+	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger, copilotAgent)
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
 	geoService := services.NewGeoService(time.Now().UTC())
-	if copilotAgent, err := services.NewCopilotAgent(); err != nil {
-		log.Printf("Warning: Copilot agent disabled: %v", err)
-	} else {
-		handlers.SetCopilotAgent(copilotAgent)
-	}
 	if jobIntentAgent, err := services.NewJobIntentAgent(); err != nil {
 		log.Printf("Warning: Job intent agent disabled: %v", err)
 	} else {

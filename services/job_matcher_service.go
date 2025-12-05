@@ -36,14 +36,20 @@ type jobMatcherService struct {
 	postings *models.JobPostingModel
 	matches  *models.ResumeJobMatchModel
 	logger   *utils.Logger
+	copilot  *CopilotAgent
 }
 
 // NewJobMatcherService wires a job matcher service.
-func NewJobMatcherService(postings *models.JobPostingModel, matches *models.ResumeJobMatchModel, logger *utils.Logger) ResumeJobMatcher {
+func NewJobMatcherService(postings *models.JobPostingModel, matches *models.ResumeJobMatchModel, logger *utils.Logger, copilot *CopilotAgent) ResumeJobMatcher {
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
-	return &jobMatcherService{postings: postings, matches: matches, logger: logger}
+	return &jobMatcherService{
+		postings: postings,
+		matches:  matches,
+		logger:   logger,
+		copilot:  copilot,
+	}
 }
 
 type scoredJob struct {
@@ -64,6 +70,13 @@ var (
 	senioritySeniorKeywords = []string{"senior", "sr", "staff"}
 	seniorityEntryKeywords  = []string{"junior", "jr", "associate", "entry", "graduate"}
 	seniorityInternKeywords = []string{"intern", "internship", "co-op", "coop", "trainee", "apprentice"}
+)
+
+const (
+	llmReRankTopK   = 20
+	llmReRankAlpha  = 0.7
+	llmReRankBeta   = 0.3
+	llmReRankTimeout = 10 * time.Second
 )
 
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
@@ -134,6 +147,11 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	if maxResults <= 0 {
 		maxResults = 25
 	}
+
+	// Apply LangChain-based re-ranking on the top K matches (before trimming).
+	s.applyLLMReRank(ctx, input, scored, maxResults)
+
+	// Trim to the requested maximum number of results after re-ranking.
 	if len(scored) > maxResults {
 		scored = scored[:maxResults]
 	}
@@ -472,4 +490,81 @@ func countTokenOverlap(a, b []string) int {
 		}
 	}
 	return overlap
+}
+
+// applyLLMReRank uses the LangChain-backed copilot agent (if available) to
+// re-rank the top K matches based on a richer understanding of the resume and
+// job descriptions. It keeps the existing heuristic score as a baseline and
+// blends it with an LLM-provided score.
+func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobMatchInput, scored []scoredJob, maxResults int) {
+	if s.copilot == nil {
+		return
+	}
+	if len(scored) == 0 {
+		return
+	}
+
+	k := llmReRankTopK
+	if maxResults > 0 && maxResults < k {
+		k = maxResults
+	}
+	if len(scored) < k {
+		k = len(scored)
+	}
+	if k <= 1 {
+		return
+	}
+
+	candidates := make([]JobReRankCandidate, k)
+	for i := 0; i < k; i++ {
+		job := scored[i].posting
+		candidates[i] = JobReRankCandidate{
+			Index:       i + 1,
+			JobID:       job.ID,
+			Title:       job.Title,
+			Company:     "",
+			Location:    job.Location,
+			Department:  job.Department,
+			RemoteType:  job.RemoteType,
+			Description: job.Description,
+			BaseScore:   scored[i].score,
+		}
+	}
+
+	prompt := BuildJobReRankingPrompt(input, candidates)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, llmReRankTimeout)
+	defer cancel()
+
+	raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
+	if err != nil {
+		s.logger.Warn("job re-rank LLM failed", map[string]interface{}{"error": err.Error()})
+		return
+	}
+
+	llmScores := ParseJobReRankingScores(raw, len(candidates))
+	if len(llmScores) == 0 {
+		return
+	}
+
+	for i := 0; i < k; i++ {
+		base := scored[i].score
+		llmScore, ok := llmScores[i+1]
+		if !ok {
+			continue
+		}
+		combined := llmReRankAlpha*base + llmReRankBeta*llmScore
+		if combined < 0 {
+			combined = 0
+		}
+		scored[i].score = math.Round(combined*100) / 100
+	}
+
+	// Re-sort only the top K segment by the new combined score, while preserving
+	// the original tie-breaker by recency.
+	sort.Slice(scored[:k], func(i, j int) bool {
+		if scored[i].score == scored[j].score {
+			return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
+		}
+		return scored[i].score > scored[j].score
+	})
 }
