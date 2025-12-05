@@ -96,6 +96,21 @@ func main() {
 	} else {
 		handlers.SetCopilotAgent(copilotAgent)
 	}
+	if jobIntentAgent, err := services.NewJobIntentAgent(); err != nil {
+		log.Printf("Warning: Job intent agent disabled: %v", err)
+	} else {
+		handlers.SetJobIntentAgent(jobIntentAgent)
+	}
+	if personalAgent, err := services.NewPersonalInfoAgent(); err != nil {
+		log.Printf("Warning: Personal info agent disabled: %v", err)
+	} else {
+		handlers.SetPersonalInfoAgent(personalAgent)
+	}
+	if templatePreferenceAgent, err := services.NewTemplatePreferenceAgent(); err != nil {
+		log.Printf("Warning: Template preference agent disabled: %v", err)
+	} else {
+		handlers.SetTemplatePreferenceAgent(templatePreferenceAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -274,6 +289,9 @@ func main() {
 		// Job extraction endpoint
 		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
 		public.POST("/assistant/chat", handlers.ChatAssistant)
+		public.POST("/assistant/personal-info", handlers.ParsePersonalInfo)
+		public.POST("/assistant/job-intent", handlers.ParseJobIntent)
+		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
 		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))

@@ -206,15 +206,35 @@ func detectLoginPage(html string) bool {
 	}
 
 	htmlLower := strings.ToLower(html)
-	matchCount := 0
 
+	// Require at least one strong password-related hint before we treat a page
+	// as a login wall. This avoids misclassifying public pages that simply have
+	// a "Sign in" link in the header (like many career sites).
+	passwordHints := []string{
+		"password",
+		"forgot password",
+		"remember me",
+	}
+	hasPasswordHint := false
+	for _, hint := range passwordHints {
+		if strings.Contains(htmlLower, hint) {
+			hasPasswordHint = true
+			break
+		}
+	}
+	if !hasPasswordHint {
+		return false
+	}
+
+	matchCount := 0
 	for _, indicator := range loginIndicators {
 		if strings.Contains(htmlLower, indicator) {
 			matchCount++
 		}
 	}
 
-	// If we find 3 or more login-related terms, it's likely a login page
+	// If we find 3 or more login-related terms (including a password hint),
+	// it's likely a real login page rather than a public job posting.
 	return matchCount >= 3
 }
 
@@ -303,10 +323,6 @@ func extractGenericJob(html string) string {
 		matches := re.FindStringSubmatch(html)
 		if len(matches) > 1 {
 			result = cleanHTMLToText(matches[1])
-			// Limit to reasonable size for a job description
-			if len(result) > 10000 {
-				result = result[:10000] + "..."
-			}
 		}
 	}
 
@@ -430,11 +446,6 @@ func extractCoreJobDescription(htmlContent string) string {
 	finalResult := result.String()
 	if finalResult == "" {
 		finalResult = fullText
-	}
-
-	// Limit to reasonable length
-	if len(finalResult) > 3000 {
-		finalResult = finalResult[:3000] + "..."
 	}
 
 	return strings.TrimSpace(finalResult)
@@ -603,7 +614,29 @@ func extractGreenhouseJobData(jobURL string) (description, title, company, locat
 		}
 	}
 
-	// If we don't have both job ID and board name, return empty
+	// If we don't yet have both job ID and board name, try to infer them from common Greenhouse path formats
+	if jobID == "" || boardName == "" {
+		segments := strings.FieldsFunc(parsedURL.Path, func(r rune) bool { return r == '/' })
+		// Handle job-boards.greenhouse.io/<board>/jobs/<id>
+		if len(segments) >= 3 && segments[1] == "jobs" {
+			if boardName == "" {
+				boardName = segments[0]
+			}
+			if jobID == "" {
+				jobID = segments[2]
+			}
+		} else if len(segments) >= 4 && segments[0] == "boards" && segments[2] == "jobs" {
+			// Handle boards.greenhouse.io/boards/<board>/jobs/<id> style URLs
+			if boardName == "" {
+				boardName = segments[1]
+			}
+			if jobID == "" {
+				jobID = segments[3]
+			}
+		}
+	}
+
+	// If we still don't have both job ID and board name, return empty
 	if jobID == "" || boardName == "" {
 		return "", "", "", ""
 	}
