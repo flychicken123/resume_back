@@ -282,6 +282,7 @@ func main() {
 		// New final step AI endpoints
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
+		public.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
 
 		// Resume parsing (no limit needed)
 		public.POST("/resume/parse", handlers.ParseResume)
