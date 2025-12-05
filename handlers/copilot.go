@@ -382,15 +382,9 @@ func parseJobFitReasons(raw string) []string {
 	}
 
 	// Strip common markdown fences if present.
-	if strings.HasPrefix(trimmed, "```json") {
-		trimmed = strings.TrimPrefix(trimmed, "```json")
-	}
-	if strings.HasPrefix(trimmed, "```") {
-		trimmed = strings.TrimPrefix(trimmed, "```")
-	}
-	if strings.HasSuffix(trimmed, "```") {
-		trimmed = strings.TrimSuffix(trimmed, "```")
-	}
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
 	trimmed = strings.TrimSpace(trimmed)
 
 	// First try JSON with the expected schema.
