@@ -741,6 +741,104 @@ Sincerely,
 IMPORTANT: Return the complete cover letter ready to send. Make it compelling and specific to this opportunity.`, name, experience, skills, summary, companyContext, jobContext, name)
 }
 
+// BuildRecommendationLetterPrompt builds a prompt for generating a third-party
+// recommendation letter (reference letter) about the candidate instead of a
+// first-person cover letter written by the candidate.
+func BuildRecommendationLetterPrompt(resumeData map[string]interface{}, jobDescription, companyName, position string) string {
+	// Reuse the same extraction logic as the cover letter prompt.
+	name := ""
+	if n, ok := resumeData["name"].(string); ok {
+		name = n
+	}
+
+	experience := ""
+	if experiences, ok := resumeData["experiences"].([]interface{}); ok && len(experiences) > 0 {
+		if expMap, ok := experiences[0].(map[string]interface{}); ok {
+			if jobTitle, ok := expMap["jobTitle"].(string); ok {
+				experience = jobTitle
+			}
+			if company, ok := expMap["company"].(string); ok && company != "" {
+				if experience != "" {
+					experience += " at " + company
+				} else {
+					experience = company
+				}
+			}
+		}
+	}
+
+	skills := ""
+	if s, ok := resumeData["skills"].(string); ok {
+		skills = s
+	}
+
+	summary := ""
+	if s, ok := resumeData["summary"].(string); ok {
+		summary = s
+	}
+
+	targetRole := strings.TrimSpace(position)
+	if targetRole == "" && jobDescription != "" {
+		// Best-effort: if the combined job description contains a "Position:" line,
+		// pull it out for the prompt.
+		lines := strings.Split(jobDescription, "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "Position:") {
+				targetRole = strings.TrimSpace(strings.TrimPrefix(line, "Position:"))
+				break
+			}
+		}
+	}
+
+	companyContext := ""
+	if companyName != "" {
+		companyContext = fmt.Sprintf("The target company is %s. ", companyName)
+	}
+
+	jobContext := ""
+	if jobDescription != "" {
+		jobContext = fmt.Sprintf(`
+
+Job Description:
+%s
+
+When appropriate, align the recommendation to this role and its requirements.`, jobDescription)
+	}
+
+	roleSnippet := ""
+	if targetRole != "" {
+		roleSnippet = fmt.Sprintf(" for the %s position", targetRole)
+	}
+
+	return fmt.Sprintf(`You are an expert hiring manager and professional reference letter writer.
+
+Create a compelling third-party recommendation letter for this candidate%[1]s:
+
+Candidate Name: %[2]s
+Current/Recent Experience: %[3]s
+Key Skills: %[4]s
+Professional Summary: %[5]s
+
+%[6]s%[7]s
+
+Write the letter FROM THE PERSPECTIVE of a credible former manager or senior colleague who has worked closely with the candidate.
+
+Requirements:
+- Use a professional, supportive tone.
+- Describe how you know the candidate and for how long.
+- Highlight 2–3 concrete projects, impacts, or achievements with specific details or metrics where possible.
+- Emphasize strengths, work ethic, collaboration, and problem-solving.
+- If job description context is provided, connect the candidate's strengths to that role.
+- Close with a strong endorsement and offer to provide further information.
+
+Formatting:
+- Use standard business letter formatting and paragraphs.
+- Do NOT write in the first person as the candidate; always write as the recommender.
+
+Return the complete recommendation letter ready to send.`, roleSnippet, name, experience, skills, summary, companyContext, jobContext)
+}
+
 // FetchAndProcessURL fetches content from a URL and processes it with AI
 func FetchAndProcessURL(url string, prompt string) (string, error) {
 	// Create HTTP client with timeout

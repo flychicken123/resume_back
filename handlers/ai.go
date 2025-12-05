@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -160,6 +161,8 @@ type CoverLetterRequest struct {
 	ResumeData     map[string]interface{} `json:"resumeData" binding:"required"`
 	JobDescription string                 `json:"jobDescription"`
 	CompanyName    string                 `json:"companyName"`
+	Position       string                 `json:"position"`
+	LetterType     string                 `json:"letterType"`
 }
 
 type CoverLetterResponse struct {
@@ -174,11 +177,19 @@ func GenerateCoverLetter(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for cover letter generation
-	prompt := services.BuildCoverLetterPrompt(req.ResumeData, req.JobDescription, req.CompanyName)
+	// Decide which letter style to generate based on requested type.
+	letterType := strings.ToLower(strings.TrimSpace(req.LetterType))
+	var prompt string
+	switch letterType {
+	case "third_party", "third-party", "recommendation", "3rd_party", "3rd":
+		prompt = services.BuildRecommendationLetterPrompt(req.ResumeData, req.JobDescription, req.CompanyName, req.Position)
+	default:
+		// Default to first-party cover letter if unspecified or unknown.
+		prompt = services.BuildCoverLetterPrompt(req.ResumeData, req.JobDescription, req.CompanyName)
+	}
 
-	// Call AI service to generate cover letter
-	coverLetter, err := services.CallGeminiWithAPIKey(prompt)
+	// Call LangChain-based copilot agent to generate the letter
+	coverLetter, err := runCopilotPrompt(c.Request.Context(), prompt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
