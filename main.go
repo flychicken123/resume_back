@@ -283,6 +283,7 @@ func main() {
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
 		public.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
+		public.POST("/skills/categorize", handlers.CategorizeSkills)
 
 		// Resume parsing (no limit needed)
 		public.POST("/resume/parse", handlers.ParseResume)

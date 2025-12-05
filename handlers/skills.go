@@ -27,6 +27,12 @@ type AutoSkillsResponse struct {
 	Message    string   `json:"message"`
 }
 
+// SkillCategory represents a logical grouping of skills such as "Cloud" or "Languages".
+type SkillCategory struct {
+	Name   string   `json:"name"`
+	Skills []string `json:"skills"`
+}
+
 // AutoGenerateSkills uses the LangChain-backed copilot agent to read the user’s
 // current resume data and extract a clean, de-duplicated list of skills.
 func AutoGenerateSkills(c *gin.Context) {
@@ -80,6 +86,86 @@ func AutoGenerateSkills(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Skills extracted successfully", response)
+}
+
+// CategorizeSkillsRequest is the payload sent from the frontend to bucket existing skills.
+type CategorizeSkillsRequest struct {
+	SkillsText     string `json:"skillsText" binding:"required"`
+	JobDescription string `json:"jobDescription"`
+}
+
+// CategorizeSkillsResponse contains grouped categories and a flattened text representation.
+type CategorizeSkillsResponse struct {
+	Categories    []SkillCategory `json:"categories"`
+	FormattedText string          `json:"formattedText"`
+	Message       string          `json:"message"`
+}
+
+// CategorizeSkills uses the LangChain-backed copilot agent to group skills into buckets
+// like "Cloud", "Languages", etc., and returns both structured data and a single-line
+// string suitable for the Skills textbox.
+func CategorizeSkills(c *gin.Context) {
+	var req CategorizeSkillsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+
+	skillsText := strings.TrimSpace(req.SkillsText)
+	if skillsText == "" {
+		utils.BadRequestError(c, "skillsText is required for categorization", nil)
+		return
+	}
+
+	prompt := buildSkillsCategorizationPrompt(skillsText, req.JobDescription)
+	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
+	if err != nil {
+		utils.InternalServerError(c, "Failed to categorize skills", err)
+		return
+	}
+
+	categories, err := parseCategoriesFromLLM(raw)
+	if err != nil {
+		utils.InternalServerError(c, "Failed to interpret skill categories from AI", err)
+		return
+	}
+
+	// Build a compact representation like:
+	// "Cloud: Azure, AWS"
+	// <blank line>
+	// "Languages: Go, Python"
+	var parts []string
+	for _, cat := range categories {
+		if cat.Name == "" || len(cat.Skills) == 0 {
+			continue
+		}
+		var cleaned []string
+		for _, s := range cat.Skills {
+			trimmed := strings.TrimSpace(s)
+			if trimmed != "" {
+				cleaned = append(cleaned, trimmed)
+			}
+		}
+		if len(cleaned) == 0 {
+			continue
+		}
+		parts = append(parts, cat.Name+": "+strings.Join(cleaned, ", "))
+	}
+
+	// Fallback: if the AI returned nothing useful, keep original text.
+	// Use a blank line between records so the textarea is easier to read.
+	formatted := strings.TrimSpace(strings.Join(parts, "\n\n"))
+	if formatted == "" {
+		formatted = skillsText
+	}
+
+	response := CategorizeSkillsResponse{
+		Categories:    categories,
+		FormattedText: formatted,
+		Message:       "Skills categorized successfully.",
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Skills categorized successfully", response)
 }
 
 // buildSkillsExtractionPrompt converts the loosely-typed resumeData map into a
@@ -269,6 +355,48 @@ RESUME DATA:
 Now return ONLY the JSON object with the "skills" array.`
 }
 
+// buildSkillsCategorizationPrompt asks the LangChain model to group the user's skills
+// into clear, recruiter-friendly buckets.
+func buildSkillsCategorizationPrompt(skillsText, jobDescription string) string {
+	base := strings.TrimSpace(skillsText)
+	jd := strings.TrimSpace(jobDescription)
+
+	jobContext := ""
+	if jd != "" {
+		jobContext = "\n\nTARGET JOB DESCRIPTION:\n" + jd
+	}
+
+	return `You are an expert technical recruiter and resume specialist.
+
+The user has provided this raw skills list (comma separated, line separated, or mixed):
+` + base + jobContext + `
+
+Your task is to group these skills into clear, recruiter-friendly categories.
+
+Return ONLY valid JSON using exactly this schema:
+{
+  "categories": [
+    {
+      "name": "Cloud",
+      "skills": ["AWS", "Azure", "GCP"]
+    },
+    {
+      "name": "Languages",
+      "skills": ["Go", "Python", "Java"]
+    }
+  ]
+}
+
+Guidelines:
+- Use concise category names such as "Cloud", "Languages", "Frameworks", "DevOps", "Databases", "Testing", "Data & Analytics", etc.
+- Each skill must appear in at least one category; if you are unsure, place it in a reasonable catch-all like "Other" or "General".
+- Do NOT invent new skills that are not present in the input.
+- Consolidate near-duplicates (e.g., "Golang" and "Go" -> "Go").
+- If a skill naturally belongs in multiple categories, include it in the single most appropriate one.
+
+Now return ONLY the JSON object with the "categories" array.`
+}
+
 // parseSkillsFromLLM attempts to interpret the LLM output as the JSON shape
 // described in buildSkillsExtractionPrompt. It is resilient to markdown fences
 // and falls back to comma/line splitting if JSON parsing fails.
@@ -327,6 +455,48 @@ func parseSkillsFromLLM(raw string) ([]string, error) {
 	}
 
 	return candidates, nil
+}
+
+// parseCategoriesFromLLM attempts to interpret the LLM output as
+// { "categories": [ { "name": "...", "skills": ["..."] }, ... ] }.
+// If parsing fails, it returns an empty slice (the caller can fall back).
+func parseCategoriesFromLLM(raw string) ([]SkillCategory, error) {
+	trimmed := strings.TrimSpace(raw)
+
+	// Strip markdown fences if present.
+	if strings.HasPrefix(trimmed, "```json") {
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```")
+	}
+	if strings.HasSuffix(trimmed, "```") {
+		trimmed = strings.TrimSuffix(trimmed, "```")
+	}
+	trimmed = strings.TrimSpace(trimmed)
+
+	type categoriesWrapper struct {
+		Categories []SkillCategory `json:"categories"`
+	}
+
+	var wrapper categoriesWrapper
+	if err := json.Unmarshal([]byte(trimmed), &wrapper); err == nil && len(wrapper.Categories) > 0 {
+		return wrapper.Categories, nil
+	}
+
+	// If the model returned only a flat skills list, reuse parseSkillsFromLLM
+	// and wrap them in a single "General" category.
+	skills, err := parseSkillsFromLLM(trimmed)
+	if err != nil || len(skills) == 0 {
+		return []SkillCategory{}, nil
+	}
+
+	return []SkillCategory{
+		{
+			Name:   "General",
+			Skills: skills,
+		},
+	}, nil
 }
 
 // toOrdinal converts an integer index (1-based) into a simple human-readable
