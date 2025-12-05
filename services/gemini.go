@@ -652,6 +652,160 @@ IMPORTANT: Provide specific, actionable feedback. Use bullet points for clarity.
 Format your response with clear sections and specific recommendations.`, resumeText, jobContext)
 }
 
+// BuildJobFitExplanationPrompt builds a prompt that asks the LLM to explain
+// why a particular job match is a good fit for the current resume.
+func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[string]interface{}) string {
+	var sb strings.Builder
+
+	name, _ := resumeData["name"].(string)
+	email, _ := resumeData["email"].(string)
+	phone, _ := resumeData["phone"].(string)
+	summary, _ := resumeData["summary"].(string)
+
+	if name != "" {
+		sb.WriteString("Name: ")
+		sb.WriteString(name)
+		sb.WriteString("\n")
+	}
+	if email != "" {
+		sb.WriteString("Email: ")
+		sb.WriteString(email)
+		sb.WriteString("\n")
+	}
+	if phone != "" {
+		sb.WriteString("Phone: ")
+		sb.WriteString(phone)
+		sb.WriteString("\n")
+	}
+	if summary != "" {
+		sb.WriteString("\nSummary: ")
+		sb.WriteString(summary)
+		sb.WriteString("\n")
+	}
+
+	if experiences, ok := resumeData["experiences"].([]interface{}); ok && len(experiences) > 0 {
+		sb.WriteString("\nExperience:\n")
+		for i, exp := range experiences {
+			expMap, ok := exp.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			sb.WriteString(fmt.Sprintf("Experience %d:\n", i+1))
+			if v, ok := expMap["jobTitle"].(string); ok && strings.TrimSpace(v) != "" {
+				sb.WriteString("  Job Title: ")
+				sb.WriteString(strings.TrimSpace(v))
+				sb.WriteString("\n")
+			}
+			if v, ok := expMap["company"].(string); ok && strings.TrimSpace(v) != "" {
+				sb.WriteString("  Company: ")
+				sb.WriteString(strings.TrimSpace(v))
+				sb.WriteString("\n")
+			}
+			if v, ok := expMap["description"].(string); ok && strings.TrimSpace(v) != "" {
+				sb.WriteString("  Description: ")
+				sb.WriteString(strings.TrimSpace(v))
+				sb.WriteString("\n")
+			}
+		}
+	}
+
+	if skills, ok := resumeData["skills"].(string); ok && strings.TrimSpace(skills) != "" {
+		sb.WriteString("\nSkills: ")
+		sb.WriteString(strings.TrimSpace(skills))
+		sb.WriteString("\n")
+	}
+
+	resumeBlock := sb.String()
+
+	jobTitle, _ := match["job_title"].(string)
+	companyName, _ := match["company_name"].(string)
+	jobLocation, _ := match["job_location"].(string)
+	jobDepartment, _ := match["job_department"].(string)
+	jobRemoteType, _ := match["job_remote_type"].(string)
+	employmentType, _ := match["job_employment_type"].(string)
+	jobDescription, _ := match["job_description"].(string)
+
+	score := ""
+	if rawScore, ok := match["match_score"]; ok {
+		switch v := rawScore.(type) {
+		case float64:
+			score = fmt.Sprintf("%.1f", v)
+		case float32:
+			score = fmt.Sprintf("%.1f", v)
+		case int:
+			score = fmt.Sprintf("%d", v)
+		}
+	}
+
+	var jobBuilder strings.Builder
+	if jobTitle != "" {
+		jobBuilder.WriteString("Job Title: ")
+		jobBuilder.WriteString(jobTitle)
+		jobBuilder.WriteString("\n")
+	}
+	if companyName != "" {
+		jobBuilder.WriteString("Company: ")
+		jobBuilder.WriteString(companyName)
+		jobBuilder.WriteString("\n")
+	}
+	if jobLocation != "" {
+		jobBuilder.WriteString("Location: ")
+		jobBuilder.WriteString(jobLocation)
+		jobBuilder.WriteString("\n")
+	}
+	if jobDepartment != "" {
+		jobBuilder.WriteString("Department: ")
+		jobBuilder.WriteString(jobDepartment)
+		jobBuilder.WriteString("\n")
+	}
+	if jobRemoteType != "" {
+		jobBuilder.WriteString("Remote Type: ")
+		jobBuilder.WriteString(jobRemoteType)
+		jobBuilder.WriteString("\n")
+	}
+	if employmentType != "" {
+		jobBuilder.WriteString("Employment Type: ")
+		jobBuilder.WriteString(employmentType)
+		jobBuilder.WriteString("\n")
+	}
+	if score != "" {
+		jobBuilder.WriteString("Match Score: ")
+		jobBuilder.WriteString(score)
+		jobBuilder.WriteString("\n")
+	}
+	if trimmed := strings.TrimSpace(jobDescription); trimmed != "" {
+		jobBuilder.WriteString("\nJob Description:\n")
+		jobBuilder.WriteString(trimmed)
+		jobBuilder.WriteString("\n")
+	}
+
+	jobBlock := jobBuilder.String()
+
+	return fmt.Sprintf(`You are an expert career coach who explains job matches to candidates in clear, concrete language.
+
+Below is the candidate's resume context, followed by a single job match from an AI job matching engine.
+
+--- RESUME CONTEXT ---
+%s
+
+--- JOB MATCH ---
+%s
+
+Write 3 to 6 short, specific reasons why this job is a good fit for the candidate.
+Each reason must:
+- Directly connect something in the resume (skills, experience, accomplishments, or goals) to something in the job (title, stack, responsibilities, or environment).
+- Avoid generic fluff like "this is a great fit" or "you are qualified"; instead, mention concrete overlaps.
+- Be one sentence, written in a positive, candidate-facing tone.
+
+Return ONLY valid JSON in this exact shape:
+{
+  "reasons": [
+    "Reason 1 ...",
+    "Reason 2 ..."
+  ]
+}`, resumeBlock, jobBlock)
+}
+
 // Cover letter prompt
 func BuildCoverLetterPrompt(resumeData map[string]interface{}, jobDescription, companyName string) string {
 	// Extract key information from resume

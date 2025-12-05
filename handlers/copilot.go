@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"resumeai/services"
@@ -63,6 +64,18 @@ type CopilotPlanResponse struct {
 	ActionPlan          []string                      `json:"actionPlan,omitempty"`
 }
 
+// JobFitExplanationRequest is used to ask the copilot for "Why it's a fit" reasons
+// for a single job match and the current resume data.
+type JobFitExplanationRequest struct {
+	ResumeData map[string]interface{} `json:"resumeData" binding:"required"`
+	Match      map[string]interface{} `json:"match" binding:"required"`
+}
+
+type JobFitExplanationResponse struct {
+	Reasons []string `json:"reasons"`
+	Message string   `json:"message"`
+}
+
 // ResumeCopilot orchestrates multiple AI passes to deliver a guided plan for the resume builder.
 func ResumeCopilot(c *gin.Context) {
 	userID := c.GetInt("user_id")
@@ -89,6 +102,45 @@ func ResumeCopilot(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "AI copilot plan generated", plan)
+}
+
+// ExplainJobFit uses the LangChain copilot agent to generate a short list of
+// natural-language reasons why a particular job match is a good fit for the
+// current resume data.
+func ExplainJobFit(c *gin.Context) {
+	userID := c.GetInt("user_id")
+	if userID == 0 {
+		utils.UnauthorizedError(c, "User not authenticated")
+		return
+	}
+
+	var req JobFitExplanationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+
+	prompt := services.BuildJobFitExplanationPrompt(req.ResumeData, req.Match)
+	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
+	if err != nil {
+		// Fall back to a simple generic reason if AI is unavailable.
+		fallback := []string{"This role aligns with the experience and skills saved in your resume."}
+		utils.SuccessResponse(c, http.StatusOK, "Job fit explanation fallback", JobFitExplanationResponse{
+			Reasons: fallback,
+			Message: "AI explanation unavailable; using fallback.",
+		})
+		return
+	}
+
+	reasons := parseJobFitReasons(raw)
+	if len(reasons) == 0 {
+		reasons = []string{"This role aligns with the experience and skills saved in your resume."}
+	}
+
+	utils.SuccessResponse(c, http.StatusOK, "Job fit explanation generated", JobFitExplanationResponse{
+		Reasons: reasons,
+		Message: "Job fit explanation generated.",
+	})
 }
 
 func isCopilotRequestEmpty(req *CopilotRequest) bool {
@@ -319,6 +371,69 @@ func extractActionItems(advice string) []string {
 	}
 
 	return items
+}
+
+// parseJobFitReasons attempts to interpret the LLM output as either
+// { "reasons": ["...", "..."] } JSON or a simple newline/bullet list.
+func parseJobFitReasons(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+
+	// Strip common markdown fences if present.
+	if strings.HasPrefix(trimmed, "```json") {
+		trimmed = strings.TrimPrefix(trimmed, "```json")
+	}
+	if strings.HasPrefix(trimmed, "```") {
+		trimmed = strings.TrimPrefix(trimmed, "```")
+	}
+	if strings.HasSuffix(trimmed, "```") {
+		trimmed = strings.TrimSuffix(trimmed, "```")
+	}
+	trimmed = strings.TrimSpace(trimmed)
+
+	// First try JSON with the expected schema.
+	var wrapper struct {
+		Reasons []string `json:"reasons"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &wrapper); err == nil && len(wrapper.Reasons) > 0 {
+		out := make([]string, 0, len(wrapper.Reasons))
+		for _, r := range wrapper.Reasons {
+			r = strings.TrimSpace(r)
+			if r != "" {
+				out = append(out, r)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// Fallback: treat the response as plain text lines with optional bullets.
+	var reasons []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Remove common "Reason X:" prefixes if present.
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "reason") && strings.Contains(line, ":") {
+			parts := strings.SplitN(line, ":", 2)
+			line = strings.TrimSpace(parts[1])
+			if line == "" {
+				continue
+			}
+		}
+		line = trimBulletPrefix(line)
+		line = strings.TrimSpace(line)
+		if line != "" {
+			reasons = append(reasons, line)
+		}
+	}
+
+	return reasons
 }
 
 func isBulletLine(line string) bool {

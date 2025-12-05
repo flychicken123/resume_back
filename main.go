@@ -322,6 +322,7 @@ func main() {
 		protected.POST("/resume/history/upload", resumeController.UploadHistoryPDF)
 		protected.GET("/resume/download/:filename", resumeController.DownloadResume)
 		protected.POST("/resume/copilot", handlers.ResumeCopilot)
+		protected.POST("/jobs/explain-fit", handlers.ExplainJobFit)
 
 		// Project routes
 		protected.GET("/projects/resume/:resumeId", projectController.GetProjectsByResumeID)
