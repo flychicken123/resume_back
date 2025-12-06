@@ -1053,6 +1053,8 @@ Please write a professional cover letter that:
 - Customize based on the job requirements
 - Make it genuine and authentic
 - Include proper business letter formatting
+- Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project and its goals]".
+- If you don't know specific project names or details, describe them naturally (for example, "one of my recent infrastructure projects") instead of leaving blanks.
 
 **Format:**
 [Date]
@@ -1157,6 +1159,8 @@ Requirements:
 - Emphasize strengths, work ethic, collaboration, and problem-solving.
 - If job description context is provided, connect the candidate's strengths to that role.
 - Close with a strong endorsement and offer to provide further information.
+- Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project and its goals]".
+- If you don't know specific project names or details, describe them naturally (for example, "a complex data platform migration project") instead of leaving blanks.
 
 Formatting:
 - Use standard business letter formatting and paragraphs.
