@@ -1,0 +1,150 @@
+package services
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/googleai"
+)
+
+// ExperienceAgent wraps an LLM client to extract structured work experience
+// (including per-role projects) from natural language.
+type ExperienceAgent struct {
+	llm llms.Model
+}
+
+// ExperienceProject represents a single project within a role.
+type ExperienceProject struct {
+	ProjectName  string `json:"projectName"`
+	Description  string `json:"description"`
+	Technologies string `json:"technologies"`
+	ProjectURL   string `json:"projectUrl"`
+}
+
+// ExperienceRecord represents a structured work experience entry aligned with
+// the resume builder's Experience model.
+type ExperienceRecord struct {
+	JobTitle         string             `json:"jobTitle"`
+	Company          string             `json:"company"`
+	City             string             `json:"city"`
+	State            string             `json:"state"`
+	StartDate        string             `json:"startDate"`
+	EndDate          string             `json:"endDate"`
+	CurrentlyWorking bool               `json:"currentlyWorking"`
+	Description      string             `json:"description"`
+	ProjectsForRole  []ExperienceProject `json:"projectsForRole"`
+}
+
+// ExperienceParseResult is the top-level payload returned by the agent.
+type ExperienceParseResult struct {
+	Experiences []ExperienceRecord `json:"experiences"`
+}
+
+// NewExperienceAgent constructs a LangChain-backed agent using the GEMINI_API_KEY.
+func NewExperienceAgent() (*ExperienceAgent, error) {
+	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	if apiKey == "" {
+		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	}
+
+	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	if err != nil {
+		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for experience agent: %w", err)
+	}
+
+	return &ExperienceAgent{llm: llm}, nil
+}
+
+// ExtractExperiences converts free-form text into a list of structured
+// experiences, each with optional projects, using the LLM.
+func (a *ExperienceAgent) ExtractExperiences(ctx context.Context, input string) (ExperienceParseResult, error) {
+	if a == nil || a.llm == nil {
+		return ExperienceParseResult{}, fmt.Errorf("experience agent is not initialized")
+	}
+
+	prompt := fmt.Sprintf(`You are an assistant that extracts structured WORK EXPERIENCE from natural language.
+
+Your goal is to turn the user's text into one or more experience entries that match this JSON schema:
+
+{
+  "experiences": [
+    {
+      "jobTitle": "<job title or empty string if unknown>",
+      "company": "<company name or empty string>",
+      "city": "<city or empty string>",
+      "state": "<state/region or empty string>",
+      "startDate": "<start date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
+      "endDate": "<end date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
+      "currentlyWorking": <true if this is the current role, otherwise false>,
+      "description": "<1-3 sentence summary of responsibilities and impact for this role>",
+      "projectsForRole": [
+        {
+          "projectName": "<short project name or label>",
+          "description": "<optional one-sentence description; empty string if not provided>",
+          "technologies": "<optional technologies/tools; empty string if not provided>",
+          "projectUrl": "<URL if explicitly provided in the text, otherwise empty string>"
+        }
+      ]
+    }
+  ]
+}
+
+CRITICAL RULES:
+- Never invent employers, dates, or projects that are not implied by the text.
+- If the text clearly mentions multiple jobs (e.g., Microsoft then Amazon), create multiple entries in "experiences".
+- If dates are approximate (e.g., "from 2018 to 2025"), use a best-effort YYYY-MM (e.g., "2018-07") or just the year; if you truly can't infer, use an empty string.
+- For location like "Redmond WA", split into city "Redmond" and state "WA" when possible.
+- For project lists like "project a, project b, project c", create one entry per project in "projectsForRole" with those as projectName values.
+- If you can't infer a project description/technologies, leave those fields as empty strings rather than inventing details.
+- Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project]".
+- If you don't know specific project names or details, describe them naturally (for example, "an internal cost analytics platform") instead of leaving blanks or bracketed prompts.
+
+OUTPUT FORMAT:
+- Return ONLY a single JSON object matching the schema above.
+- Do not include any explanations, comments, or additional top-level fields.
+
+User text:
+%s`, input)
+
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	if err != nil {
+		return ExperienceParseResult{}, err
+	}
+
+	clean := sanitizeLLMJSON(raw)
+
+	var result ExperienceParseResult
+	if err := json.Unmarshal([]byte(clean), &result); err != nil {
+		return ExperienceParseResult{}, fmt.Errorf("failed to parse experience JSON: %w", err)
+	}
+
+	// Basic normalization: trim spaces and ensure non-nil slices.
+	for i := range result.Experiences {
+		exp := &result.Experiences[i]
+		exp.JobTitle = strings.TrimSpace(exp.JobTitle)
+		exp.Company = strings.TrimSpace(exp.Company)
+		exp.City = strings.TrimSpace(exp.City)
+		exp.State = strings.TrimSpace(exp.State)
+		exp.StartDate = strings.TrimSpace(exp.StartDate)
+		exp.EndDate = strings.TrimSpace(exp.EndDate)
+		exp.Description = strings.TrimSpace(exp.Description)
+		if exp.ProjectsForRole == nil {
+			exp.ProjectsForRole = []ExperienceProject{}
+		} else {
+			for j := range exp.ProjectsForRole {
+				proj := &exp.ProjectsForRole[j]
+				proj.ProjectName = strings.TrimSpace(proj.ProjectName)
+				proj.Description = strings.TrimSpace(proj.Description)
+				proj.Technologies = strings.TrimSpace(proj.Technologies)
+				proj.ProjectURL = strings.TrimSpace(proj.ProjectURL)
+			}
+		}
+	}
+
+	return result, nil
+}
+

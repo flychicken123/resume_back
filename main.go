@@ -90,6 +90,7 @@ func main() {
 	// Initialize the LangChain-backed copilot agent once and share it between
 	// the job matcher (for re-ranking) and the copilot handlers.
 	var copilotAgent *services.CopilotAgent
+	var experienceAgent *services.ExperienceAgent
 	if agent, err := services.NewCopilotAgent(); err != nil {
 		log.Printf("Warning: Copilot agent disabled: %v", err)
 	} else {
@@ -111,6 +112,12 @@ func main() {
 		log.Printf("Warning: Personal info agent disabled: %v", err)
 	} else {
 		handlers.SetPersonalInfoAgent(personalAgent)
+	}
+	if agent, err := services.NewExperienceAgent(); err != nil {
+		log.Printf("Warning: Experience agent disabled: %v", err)
+	} else {
+		experienceAgent = agent
+		handlers.SetExperienceAgent(experienceAgent)
 	}
 	if templatePreferenceAgent, err := services.NewTemplatePreferenceAgent(); err != nil {
 		log.Printf("Warning: Template preference agent disabled: %v", err)
@@ -299,6 +306,7 @@ func main() {
 		public.POST("/assistant/chat", handlers.ChatAssistant)
 		public.POST("/assistant/personal-info", handlers.ParsePersonalInfo)
 		public.POST("/assistant/job-intent", handlers.ParseJobIntent)
+		public.POST("/assistant/experience", handlers.ParseExperience)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
