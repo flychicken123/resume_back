@@ -20,11 +20,17 @@ CREATE TABLE users (
 CREATE TABLE resumes (
     id SERIAL PRIMARY KEY,
     user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    resume_name VARCHAR(255) NOT NULL DEFAULT 'User Resume',
     name VARCHAR(255) NOT NULL,
     email VARCHAR(255),
     phone VARCHAR(100),
     summary TEXT,
     skills TEXT,
+    skills_categorized TEXT,
+    experience TEXT,
+    education TEXT,
+    job_description TEXT,
+    location VARCHAR(255),
     selected_format VARCHAR(50) DEFAULT 'classic-professional',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -93,6 +99,7 @@ CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_google_id ON users(google_id);
 CREATE INDEX idx_users_auth_provider ON users(auth_provider);
 CREATE INDEX idx_resumes_user_id ON resumes(user_id);
+CREATE UNIQUE INDEX idx_resumes_user_unique ON resumes(user_id);
 CREATE INDEX idx_experiences_resume_id ON experiences(resume_id);
 CREATE INDEX idx_education_resume_id ON education(resume_id);
 CREATE INDEX idx_projects_resume_id ON projects(resume_id);

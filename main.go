@@ -59,6 +59,7 @@ func main() {
 	userModel := models.NewUserModel(db)
 	resumeHistoryModel := models.NewResumeHistoryModel(db)
 	resumeModel := models.NewResumeModel(db)
+	handlers.SetResumeProfileStore(resumeModel)
 	projectModel := models.NewProjectModel(db)
 	if err := models.EnsureFeedbackSchema(db); err != nil {
 		log.Fatal("Error ensuring feedback tables:", err)

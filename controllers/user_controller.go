@@ -1,8 +1,11 @@
 package controllers
 
 import (
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -117,15 +120,37 @@ func (c *UserController) SaveUserData(ctx *gin.Context) {
 	}
 
 	var req struct {
-		Summary json.RawMessage `json:"summary"`
-		Skills  json.RawMessage `json:"skills"`
+		Data              json.RawMessage `json:"data"`
+		Name              string          `json:"name"`
+		Email             string          `json:"email"`
+		Phone             string          `json:"phone"`
+		Summary           string          `json:"summary"`
+		Skills            []string        `json:"skills"`
+		SkillsCategorized string          `json:"skillsCategorized"`
+		SelectedFormat    string          `json:"selectedFormat"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
 		return
 	}
 
-	err := c.resumeModel.Save(userID.(int), "User Resume", req.Summary, req.Skills)
+	input := models.ResumeProfileSaveInput{
+		Name:              req.Name,
+		Email:             req.Email,
+		Phone:             req.Phone,
+		Summary:           req.Summary,
+		Experience:        stringFromAnyOrJSON(req.Data, "experience"),
+		Education:         stringFromAnyOrJSON(req.Data, "education"),
+		JobDescription:    stringFromAnyOrJSON(req.Data, "jobDescription"),
+		Location:          stringFromAnyOrJSON(req.Data, "location"),
+		Skills:            req.Skills,
+		SkillsCategorized: req.SkillsCategorized,
+		SelectedFormat:    req.SelectedFormat,
+		ProfileJSON:       req.Data,
+	}
+	models.MergeProfileFieldsFromJSON(req.Data, &input)
+
+	_, err := c.resumeModel.SaveProfile(ctx.Request.Context(), userID.(int), input)
 	if err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save user data"})
 		return
@@ -146,22 +171,59 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 
 	resume, err := c.resumeModel.GetByUserID(userID.(int))
 	if err != nil {
-		// If no resume found, return empty data
-		ctx.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data": gin.H{
-				"summary": json.RawMessage("{}"),
-				"skills":  json.RawMessage("{}"),
-			},
-		})
+		if errors.Is(err, sql.ErrNoRows) {
+			ctx.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"data":    json.RawMessage(`{}`),
+			})
+			return
+		}
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load user data"})
+		return
+	}
+
+	experiences, err := c.resumeModel.GetExperiencesByResumeID(resume.ID)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load experience data"})
 		return
 	}
 
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"summary": resume.Summary,
-			"skills":  resume.Skills,
+			"summary":          resume.Summary,
+			"skills":           resume.Skills,
+			"skillsCategorized": resume.SkillsCategorized,
+			"experiences":      experiences,
+			"experience":       resume.Experience,
+			"education":        resume.Education,
+			"jobDescription":   resume.JobDescription,
+			"location":         resume.Location,
+			"selectedFormat":   resume.SelectedFormat,
 		},
 	})
+}
+
+// stringFromAnyOrJSON extracts a field from raw JSON and marshals non-strings.
+func stringFromAnyOrJSON(raw json.RawMessage, key string) string {
+	if len(raw) == 0 || key == "" {
+		return ""
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	val, ok := m[key]
+	if !ok && key == "experience" {
+		val, ok = m["experiences"]
+	}
+	if ok {
+		if s, ok := val.(string); ok {
+			return strings.TrimSpace(s)
+		}
+		if b, err := json.Marshal(val); err == nil {
+			return strings.TrimSpace(string(b))
+		}
+	}
+	return ""
 }

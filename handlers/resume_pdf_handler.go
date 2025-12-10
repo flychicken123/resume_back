@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -34,6 +35,14 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		}
 
 		fmt.Printf("DEBUG: Authenticated user - ID: %d, Email: %s\n", userIDInt, userEmailStr)
+
+		rawResumeData := strings.TrimSpace(c.PostForm("resumeData"))
+		var resumeData json.RawMessage
+		if rawResumeData != "" && json.Valid([]byte(rawResumeData)) {
+			resumeData = json.RawMessage(rawResumeData)
+		} else if rawResumeData != "" {
+			fmt.Printf("resumeData payload is not valid JSON (len=%d)\n", len(rawResumeData))
+		}
 
 		// Expect a multipart form file field named 'html'
 		file, err := c.FormFile("html")
@@ -71,6 +80,17 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		}
 		if err := generatePDFResumeWithPython(defaultTemplateSlug, userData, pdfPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		saveInput := models.ResumeProfileSaveInput{
+			Name:           c.PostForm("name"),
+			Email:          c.PostForm("email"),
+			Phone:          c.PostForm("phone"),
+			SelectedFormat: c.PostForm("format"),
+		}
+		if err := persistResumeProfileFromJSON(c, resumeData, saveInput); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save resume data"})
 			return
 		}
 

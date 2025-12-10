@@ -21,19 +21,22 @@ import (
 )
 
 type ResumeRequest struct {
-	Position       string   `json:"position"`
-	Name           string   `json:"name"`
-	Email          string   `json:"email"`
-	Phone          string   `json:"phone"`
-	Summary        string   `json:"summary"`
-	Experience     string   `json:"experience"`
-	Education      string   `json:"education"`
-	JobDescription string   `json:"jobDescription"`
-	Location       string   `json:"location"`
-	Skills         []string `json:"skills"`
-	Format         string   `json:"format"`
-	Engine         string   `json:"engine"`
-	HtmlContent    string   `json:"htmlContent"` // HTML content from live preview
+	Position          string          `json:"position"`
+	Name              string          `json:"name"`
+	Email             string          `json:"email"`
+	Phone             string          `json:"phone"`
+	Summary           string          `json:"summary"`
+	Experiences       []interface{}   `json:"experiences"`
+	Experience        string          `json:"experience"`
+	Education         string          `json:"education"`
+	JobDescription    string          `json:"jobDescription"`
+	Location          string          `json:"location"`
+	Skills            []string        `json:"skills"`
+	SkillsCategorized string          `json:"skillsCategorized"`
+	Format            string          `json:"format"`
+	Engine            string          `json:"engine"`
+	HtmlContent       string          `json:"htmlContent"` // HTML content from live preview
+	ResumeData        json.RawMessage `json:"resumeData"`
 }
 
 var (
@@ -147,6 +150,11 @@ func GenerateResume(c *gin.Context) {
 	if len(jobMatches) > 0 {
 		response["jobMatches"] = jobMatches
 		response["topMatch"] = jobMatches[0]
+	}
+
+	if err := persistResumeProfileFromRequest(c, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save resume data"})
+		return
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -267,6 +275,11 @@ func GeneratePDFResume(c *gin.Context) {
 	// Generate PDF via Python + wkhtmltopdf
 	if err := generatePDFResumeWithPython(templateSlug, userData, pdfPath); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := persistResumeProfileFromRequest(c, req); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save resume data"})
 		return
 	}
 
