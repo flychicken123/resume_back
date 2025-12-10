@@ -433,11 +433,11 @@ func stringFromAny(v interface{}) string {
 		return strings.TrimSpace(val)
 	case []byte:
 		return strings.TrimSpace(string(val))
-	case fmt.Stringer:
+	case json.Number:
 		return strings.TrimSpace(val.String())
 	case float64:
 		return strings.TrimSpace(strconv.FormatFloat(val, 'f', -1, 64))
-	case json.Number:
+	case fmt.Stringer:
 		return strings.TrimSpace(val.String())
 	default:
 		return ""
@@ -590,7 +590,7 @@ func (m *ResumeModel) replaceExperiences(ctx context.Context, resumeID int, expe
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, `DELETE FROM experiences WHERE resume_id = $1`, resumeID); err != nil {
 		return err
