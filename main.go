@@ -145,6 +145,8 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	jobsService.StartScheduler(ctx, 24*time.Hour)
+	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
+	jobMatchNotifier.Start(ctx, 100*time.Hour)
 	go func() {
 		if err := jobsService.SyncAllCompanies(ctx); err != nil {
 			logger.Warn("initial job sync failed", map[string]interface{}{"error": err.Error()})
@@ -347,6 +349,7 @@ func main() {
 
 		protected.POST("/jobs/matches", jobsController.ComputeMatches)
 		protected.GET("/jobs/matches", jobsController.ListMatchedJobs)
+		protected.GET("/jobs/:id", jobsController.GetJobByID)
 
 		// Subscription routes
 		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)

@@ -104,11 +104,14 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	resumeText := strings.ToLower(strings.TrimSpace(sourceText))
 	keywords := extractKeywords(resumeText, 40)
 	preferredLocation := strings.ToLower(strings.TrimSpace(input.PreferredLocation))
+	if preferredLocation == "" {
+		preferredLocation = "united states"
+	}
 	candidateLevel := determineCandidateSeniority(input.Position, sourceText)
 
 	scored := make([]scoredJob, 0, len(jobs))
 	for _, job := range jobs {
-		if !utils.IsSupportedJobLocation(job.Location, job.RemoteType) {
+		if !locationCompatible(preferredLocation, job) {
 			continue
 		}
 
@@ -173,6 +176,31 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		return nil, err
 	}
 	return results, nil
+}
+
+func locationCompatible(preferred string, job *models.JobPosting) bool {
+	if job == nil {
+		return false
+	}
+	loc := job.Location
+	remote := job.RemoteType
+	combined := strings.ToLower(strings.TrimSpace(loc + " " + remote))
+	preferred = strings.ToLower(strings.TrimSpace(preferred))
+
+	// If user provided a preference, require either a match or remote.
+	if preferred != "" {
+		if strings.Contains(combined, preferred) {
+			return true
+		}
+		if strings.Contains(combined, "remote") {
+			return true
+		}
+		// Fall back to supported geos to avoid obviously bad suggestions.
+		return utils.IsSupportedJobLocation(loc, remote)
+	}
+
+	// No preference provided: use broad supported geos filter.
+	return utils.IsSupportedJobLocation(loc, remote)
 }
 
 // ErrInvalidUserID indicates the caller failed to provide a user id.

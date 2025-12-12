@@ -33,6 +33,13 @@ type Resume struct {
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
 
+// ResumeWithUser carries a resume along with its owning user's contact info.
+type ResumeWithUser struct {
+	Resume         Resume
+	UserEmail      string
+	UserName       string
+}
+
 // ResumeProfileSaveInput captures the complete resume payload we store per user.
 type ResumeProfileSaveInput struct {
 	Name              string
@@ -185,6 +192,67 @@ func (m *ResumeModel) GetSummary(userID int) (json.RawMessage, error) {
 	query := `SELECT summary FROM resumes WHERE user_id = $1`
 	err := m.DB.QueryRow(query, userID).Scan(&summaryVal)
 	return toRawMessage(summaryVal), err
+}
+
+// ListWithUsers returns all resumes with their owning user's contact info.
+func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
+	rows, err := m.DB.Query(`
+		SELECT r.id, r.user_id, r.name, r.email, r.phone, r.summary, r.skills, r.selected_format,
+		       r.skills_categorized, r.experience, r.education, r.job_description, r.location,
+		       r.created_at, r.updated_at,
+		       u.email AS user_email, u.name AS user_name
+		FROM resumes r
+		JOIN users u ON u.id = r.user_id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []*ResumeWithUser
+	for rows.Next() {
+		var resume Resume
+		var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
+		var userEmail, userName string
+
+		if err := rows.Scan(
+			&resume.ID,
+			&resume.UserID,
+			&resume.Name,
+			&resume.Email,
+			&resume.Phone,
+			&summaryVal,
+			&skillsVal,
+			&resume.SelectedFormat,
+			&skillsCatVal,
+			&experienceVal,
+			&educationVal,
+			&jobDescVal,
+			&locationVal,
+			&resume.CreatedAt,
+			&resume.UpdatedAt,
+			&userEmail,
+			&userName,
+		); err != nil {
+			return nil, err
+		}
+
+		resume.Summary = toRawMessage(summaryVal)
+		resume.Skills = toRawMessage(skillsVal)
+		resume.SkillsCategorized = stringFromAny(skillsCatVal)
+		resume.Experience = stringFromAny(experienceVal)
+		resume.Education = stringFromAny(educationVal)
+		resume.JobDescription = stringFromAny(jobDescVal)
+		resume.Location = stringFromAny(locationVal)
+
+		results = append(results, &ResumeWithUser{
+			Resume:         resume,
+			UserEmail:      userEmail,
+			UserName:       userName,
+		})
+	}
+
+	return results, rows.Err()
 }
 
 func (m *ResumeModel) saveProfileWithResumeName(ctx context.Context, resume *Resume, userID int, name, email, phone, summary string, skillsJSON json.RawMessage, skillsCategorized, experience, education, jobDescription, location, selectedFormat string) error {

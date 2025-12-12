@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"database/sql"
 	"errors"
 	"math"
 	"net/http"
@@ -34,6 +35,53 @@ func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPo
 		ingest:    ingest,
 		importer:  services.NewCompanyImportService(companies),
 	}
+}
+
+// GetJobByID returns a single job posting with company name.
+func (jc *JobsController) GetJobByID(c *gin.Context) {
+	idStr := strings.TrimSpace(c.Param("id"))
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+		return
+	}
+
+	posting, companyName, err := jc.postings.GetByID(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load job"})
+		return
+	}
+
+	response := gin.H{
+		"id":               posting.ID,
+		"company_id":       posting.CompanyID,
+		"external_job_id":  posting.ExternalJobID,
+		"title":            posting.Title,
+		"location":         posting.Location,
+		"remote_type":      posting.RemoteType,
+		"department":       posting.Department,
+		"employment_type":  posting.EmploymentType,
+		"job_url":          posting.JobURL,
+		"application_url":  posting.ApplicationURL,
+		"description":      posting.Description,
+		"salary_min":       posting.SalaryMin,
+		"salary_max":       posting.SalaryMax,
+		"salary_currency":  posting.SalaryCurrency,
+		"posted_at":        posting.PostedAt,
+		"first_seen_at":    posting.FirstSeenAt,
+		"last_seen_at":     posting.LastSeenAt,
+		"closed_at":        posting.ClosedAt,
+		"is_active":        posting.IsActive,
+	}
+	if companyName != nil {
+		response["company_name"] = *companyName
+	}
+
+	c.JSON(http.StatusOK, response)
 }
 
 func (jc *JobsController) ListCompanies(c *gin.Context) {

@@ -3,6 +3,7 @@ package models
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -404,6 +405,71 @@ type JobPostingModel struct {
 
 func NewJobPostingModel(db *sql.DB) *JobPostingModel {
 	return &JobPostingModel{db: db}
+}
+
+// GetByID fetches a single job posting with its company name.
+func (m *JobPostingModel) GetByID(id int64) (*JobPosting, *string, error) {
+	if id <= 0 {
+		return nil, nil, fmt.Errorf("invalid job id")
+	}
+
+	query := `
+        SELECT p.id, p.company_id, p.external_job_id, p.title,
+               COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+               COALESCE(p.department, ''), COALESCE(p.employment_type, ''),
+               p.job_url, COALESCE(p.application_url, ''),
+               COALESCE(p.description, ''), p.salary_min, p.salary_max, COALESCE(p.salary_currency, ''),
+               p.posted_at, p.first_seen_at, p.last_seen_at, p.closed_at, p.is_active,
+               c.name as company_name
+        FROM job_postings p
+        LEFT JOIN job_companies c ON c.id = p.company_id
+        WHERE p.id = $1
+    `
+
+	row := m.db.QueryRow(query, id)
+	var posting JobPosting
+	var postedAt sql.NullTime
+	var closedAt sql.NullTime
+	var companyName sql.NullString
+	if err := row.Scan(
+		&posting.ID,
+		&posting.CompanyID,
+		&posting.ExternalJobID,
+		&posting.Title,
+		&posting.Location,
+		&posting.RemoteType,
+		&posting.Department,
+		&posting.EmploymentType,
+		&posting.JobURL,
+		&posting.ApplicationURL,
+		&posting.Description,
+		&posting.SalaryMin,
+		&posting.SalaryMax,
+		&posting.SalaryCurrency,
+		&postedAt,
+		&posting.FirstSeenAt,
+		&posting.LastSeenAt,
+		&closedAt,
+		&posting.IsActive,
+		&companyName,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, err
+		}
+		return nil, nil, err
+	}
+	if postedAt.Valid {
+		posting.PostedAt = &postedAt.Time
+	}
+	if closedAt.Valid {
+		posting.ClosedAt = &closedAt.Time
+	}
+	var namePtr *string
+	if companyName.Valid {
+		name := companyName.String
+		namePtr = &name
+	}
+	return &posting, namePtr, nil
 }
 
 // Upsert creates or updates a job posting and refreshes last_seen_at
