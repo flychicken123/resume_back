@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -63,23 +64,49 @@ func NewGreenhouseProvider(client *http.Client, logger *utils.Logger) *Greenhous
 func (p *GreenhouseProvider) FetchJobs(ctx context.Context, company *models.JobCompany) ([]*models.JobPosting, error) {
 	token, err := p.resolveBoardToken(company)
 	if err != nil {
-		return nil, err
+		if fallback, fallbackErr := p.resolveBoardTokenViaRedirect(ctx, company); fallbackErr == nil {
+			token = fallback
+		} else {
+			return nil, err
+		}
 	}
 
-	endpoint := fmt.Sprintf("https://boards-api.greenhouse.io/v1/boards/%s/jobs?content=true&per_page=500", url.PathEscape(token))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
+	fetch := func(token string) (*http.Response, error) {
+		endpoint := fmt.Sprintf("https://boards-api.greenhouse.io/v1/boards/%s/jobs?content=true&per_page=500", url.PathEscape(token))
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		return p.client.Do(req)
 	}
 
-	resp, err := p.client.Do(req)
+	resp, err := fetch(token)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("greenhouse returned status %d", resp.StatusCode)
+		if resp.StatusCode == http.StatusNotFound {
+			if fallback, fallbackErr := p.resolveBoardTokenViaRedirect(ctx, company); fallbackErr == nil && fallback != "" && fallback != token {
+				_ = resp.Body.Close()
+				resp, err = fetch(fallback)
+				if err != nil {
+					return nil, err
+				}
+				defer resp.Body.Close()
+				if resp.StatusCode < 400 {
+					token = fallback
+				} else {
+					return nil, fmt.Errorf("greenhouse returned status %d", resp.StatusCode)
+				}
+			} else {
+				return nil, fmt.Errorf("greenhouse returned status %d", resp.StatusCode)
+			}
+		} else {
+			return nil, fmt.Errorf("greenhouse returned status %d", resp.StatusCode)
+		}
 	}
 
 	var payload greenhouseJobResponse
@@ -101,41 +128,115 @@ func (p *GreenhouseProvider) FetchJobs(ctx context.Context, company *models.JobC
 
 func (p *GreenhouseProvider) resolveBoardToken(company *models.JobCompany) (string, error) {
 	if company.ExternalIdentifier != nil && strings.TrimSpace(*company.ExternalIdentifier) != "" {
-		return strings.TrimSpace(*company.ExternalIdentifier), nil
+		token := strings.TrimSpace(*company.ExternalIdentifier)
+		if greenhouseLooksLikeJobID(token) {
+			return "", errors.New("greenhouse board token is required for company")
+		}
+		return token, nil
 	}
 	if company.CareersURL != "" {
-		if parsed, err := url.Parse(company.CareersURL); err == nil {
-			query := parsed.Query()
-			for _, key := range []string{"for", "board", "token", "company"} {
-				if token := strings.TrimSpace(query.Get(key)); token != "" {
-					return token, nil
-				}
-			}
+		return greenhouseTokenFromURL(company.CareersURL)
+	}
+	return "", errors.New("greenhouse board token is required for company")
+}
 
-			segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-			for i := 0; i < len(segments); i++ {
-				if strings.EqualFold(segments[i], "jobs") && i > 0 {
-					if token := strings.TrimSpace(segments[i-1]); token != "" {
-						return token, nil
-					}
-				}
-			}
+func (p *GreenhouseProvider) resolveBoardTokenViaRedirect(ctx context.Context, company *models.JobCompany) (string, error) {
+	if company == nil || strings.TrimSpace(company.CareersURL) == "" {
+		return "", errors.New("greenhouse careers_url is required for company")
+	}
 
-			for i := len(segments) - 1; i >= 0; i-- {
-				token := strings.TrimSpace(segments[i])
-				if token == "" {
-					continue
-				}
-				switch strings.ToLower(token) {
-				case "jobs", "job", "embed", "job_board":
-					continue
-				default:
-					return token, nil
-				}
+	target := strings.TrimSpace(company.CareersURL)
+	if !strings.HasPrefix(strings.ToLower(target), "http://") && !strings.HasPrefix(strings.ToLower(target), "https://") {
+		target = "https://" + target
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+
+	if resp.Request == nil || resp.Request.URL == nil {
+		return "", errors.New("greenhouse redirect resolution returned no final URL")
+	}
+
+	return greenhouseTokenFromURL(resp.Request.URL.String())
+}
+
+func greenhouseTokenFromURL(rawURL string) (string, error) {
+	trimmed := strings.TrimSpace(rawURL)
+	if trimmed == "" {
+		return "", errors.New("greenhouse board token is required for company")
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", err
+	}
+	if parsed.Host == "" {
+		if withScheme, err := url.Parse("https://" + trimmed); err == nil {
+			parsed = withScheme
+		}
+	}
+	if strings.Contains(strings.ToLower(parsed.Host), "grnh.se") {
+		return "", errors.New("greenhouse board token is required for company")
+	}
+
+	query := parsed.Query()
+	for _, key := range []string{"for", "board", "token", "company"} {
+		if token := strings.TrimSpace(query.Get(key)); token != "" && !greenhouseLooksLikeJobID(token) {
+			return token, nil
+		}
+	}
+
+	segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i := 0; i < len(segments); i++ {
+		if strings.EqualFold(segments[i], "jobs") && i > 0 {
+			if token := strings.TrimSpace(segments[i-1]); token != "" && !greenhouseLooksLikeJobID(token) {
+				return token, nil
 			}
 		}
 	}
+
+	for i := len(segments) - 1; i >= 0; i-- {
+		token := strings.TrimSpace(segments[i])
+		if token == "" {
+			continue
+		}
+		if i > 0 && strings.EqualFold(segments[i-1], "jobs") && greenhouseLooksLikeJobID(token) {
+			continue
+		}
+		switch strings.ToLower(token) {
+		case "jobs", "job", "embed", "job_board":
+			continue
+		}
+		if greenhouseLooksLikeJobID(token) {
+			continue
+		}
+		return token, nil
+	}
+
 	return "", errors.New("greenhouse board token is required for company")
+}
+
+func greenhouseLooksLikeJobID(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	for _, r := range trimmed {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *GreenhouseProvider) transformJob(companyID int, job greenhouseJob) (*models.JobPosting, error) {

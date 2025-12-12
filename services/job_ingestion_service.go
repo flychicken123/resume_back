@@ -105,7 +105,16 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	providerKey := strings.ToLower(strings.TrimSpace(company.ATSProvider))
 	provider, ok := s.providers[providerKey]
 	if !ok {
-		return nil, fmt.Errorf("no ATS provider registered for %s", company.ATSProvider)
+		missingErr := fmt.Errorf("no ATS provider registered for %s", company.ATSProvider)
+		s.logger.Error("job sync run failed", missingErr, map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider})
+
+		syncedAt := s.clock()
+		truncated := truncateErrorMessage(missingErr.Error(), 512)
+		if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, "failed", truncated); err != nil {
+			s.logger.Warn("failed recording sync failure", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
+		}
+
+		return nil, missingErr
 	}
 
 	run, err := s.syncRunModel.Start(company.ID)
