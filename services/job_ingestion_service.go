@@ -29,6 +29,35 @@ func (e *UnsupportedATSProviderError) Error() string {
 	return fmt.Sprintf("unsupported ATS provider: %s", strings.TrimSpace(e.Provider))
 }
 
+func shouldLogSyncFailureAsError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var unsupported *UnsupportedATSProviderError
+	if errors.As(err, &unsupported) {
+		return false
+	}
+
+	msg := strings.ToLower(err.Error())
+	softMarkers := []string{
+		" returned status 403",
+		" returned status 404",
+		" returned status 429",
+		" could not determine ",
+		" could not derive ",
+		" board token is required",
+		" context deadline exceeded",
+		" client.timeout exceeded",
+	}
+	for _, marker := range softMarkers {
+		if strings.Contains(msg, marker) {
+			return false
+		}
+	}
+
+	return true
+}
+
 // JobSyncBatchResult captures the aggregate outcome of syncing multiple companies
 type JobSyncBatchResult struct {
 	TotalCompanies   int                    `json:"total_companies"`
@@ -137,7 +166,11 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 		if finishErr != nil {
 			msg = finishErr.Error()
 			truncated := truncateErrorMessage(msg, 512)
-			s.logger.Error("job sync run failed", finishErr, map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider})
+			if shouldLogSyncFailureAsError(finishErr) {
+				s.logger.Error("job sync run failed", finishErr, map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider})
+			} else {
+				s.logger.Warn("job sync run failed", map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider, "error": finishErr.Error()})
+			}
 			if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, status, truncated); err != nil {
 				s.logger.Warn("failed recording sync failure", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
 			}
@@ -245,7 +278,6 @@ func (s *JobIngestionService) SyncAllCompaniesWithSummary(ctx context.Context) (
 			result.Error = syncErr.Error()
 			batch.Failed++
 			batch.CompanyResults = append(batch.CompanyResults, result)
-			s.logger.Error("company sync failed", syncErr, map[string]interface{}{"company_id": company.ID})
 			continue
 		}
 
@@ -319,7 +351,9 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 			if errors.As(err, &unsupported) {
 				continue
 			}
-			s.logger.Error("scheduled company sync failed", err, map[string]interface{}{"company_id": company.ID})
+			if shouldLogSyncFailureAsError(err) {
+				s.logger.Error("scheduled company sync failed", err, map[string]interface{}{"company_id": company.ID})
+			}
 		}
 	}
 

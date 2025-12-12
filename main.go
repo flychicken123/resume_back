@@ -147,11 +147,6 @@ func main() {
 	jobsService.StartScheduler(ctx, 24*time.Hour)
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
 	jobMatchNotifier.Start(ctx, 100*time.Hour)
-	go func() {
-		if err := jobsService.SyncAllCompanies(ctx); err != nil {
-			logger.Warn("initial job sync failed", map[string]interface{}{"error": err.Error()})
-		}
-	}()
 
 	r := gin.New()
 	r.Use(gin.Logger())
