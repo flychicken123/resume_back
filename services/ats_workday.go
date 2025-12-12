@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -28,6 +29,11 @@ const (
 	workdayClientHeader = "job-search"
 	defaultLocaleHeader = "en-US,en;q=0.9"
 	defaultUserAgent    = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36"
+)
+
+var (
+	workdayHostSuffixRx  = regexp.MustCompile(`(?i)(-wd\d+|wd\d+)$`)
+	workdayLocaleSegment = regexp.MustCompile(`(?i)^[a-z]{2}[-_][a-z]{2}$`)
 )
 
 type workdayRequest struct {
@@ -126,12 +132,33 @@ func (p *WorkdayProvider) buildEndpoint(company *models.JobCompany) (string, err
 		return "", fmt.Errorf("careers_url required for workday company %s", company.Name)
 	}
 
+	if company.ExternalIdentifier != nil {
+		if raw := strings.TrimSpace(*company.ExternalIdentifier); strings.HasPrefix(strings.ToLower(raw), "http://") || strings.HasPrefix(strings.ToLower(raw), "https://") {
+			if parsed, err := url.Parse(raw); err == nil && parsed.Host != "" {
+				return p.endpointFromURL(parsed, company)
+			}
+		}
+	}
+
 	parsed, err := url.Parse(company.CareersURL)
 	if err != nil {
 		return "", fmt.Errorf("invalid careers_url for %s: %w", company.Name, err)
 	}
+	if parsed.Host == "" {
+		if withScheme, err := url.Parse("https://" + strings.TrimSpace(company.CareersURL)); err == nil {
+			parsed = withScheme
+		}
+	}
 
-	host := parsed.Host
+	if resolved, err := p.resolveRedirectTarget(company, parsed); err == nil && resolved != nil {
+		parsed = resolved
+	}
+
+	return p.endpointFromURL(parsed, company)
+}
+
+func (p *WorkdayProvider) endpointFromURL(parsed *url.URL, company *models.JobCompany) (string, error) {
+	host := strings.TrimSpace(parsed.Host)
 	if host == "" {
 		return "", fmt.Errorf("could not determine workday host for %s", company.Name)
 	}
@@ -144,6 +171,40 @@ func (p *WorkdayProvider) buildEndpoint(company *models.JobCompany) (string, err
 	return fmt.Sprintf("https://%s/wday/cxs/%s/%s/jobs", host, tenant, site), nil
 }
 
+func (p *WorkdayProvider) resolveRedirectTarget(company *models.JobCompany, parsed *url.URL) (*url.URL, error) {
+	if parsed == nil || parsed.Host == "" {
+		return nil, fmt.Errorf("invalid url")
+	}
+	lowerHost := strings.ToLower(parsed.Host)
+	if strings.Contains(lowerHost, "myworkdayjobs.com") || strings.Contains(lowerHost, "workday") {
+		return nil, fmt.Errorf("already a workday host")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	p.setCommonHeaders(req, parsed.String(), company, false)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+
+	finalURL := resp.Request.URL
+	if finalURL == nil || finalURL.Host == "" {
+		return nil, fmt.Errorf("no final url")
+	}
+	finalHost := strings.ToLower(finalURL.Host)
+	if strings.Contains(finalHost, "myworkdayjobs.com") || strings.Contains(finalHost, "workday") {
+		return finalURL, nil
+	}
+	return nil, fmt.Errorf("redirect target not workday")
+}
+
 func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.JobCompany) (string, string) {
 	if company.ExternalIdentifier != nil {
 		parts := strings.FieldsFunc(strings.TrimSpace(*company.ExternalIdentifier), func(r rune) bool { return r == ':' || r == '/' || r == '|' })
@@ -152,16 +213,24 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 		}
 	}
 
-	tenant := ""
-	if hostParts := strings.Split(parsed.Host, "."); len(hostParts) > 0 {
-		tenant = strings.TrimSuffix(hostParts[0], "-wd")
-		if strings.Contains(tenant, "wd") {
-			tenant = strings.Split(tenant, ".")[0]
+	pathSegments := strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' })
+	for i := 0; i+4 < len(pathSegments); i++ {
+		if strings.EqualFold(pathSegments[i], "wday") && strings.EqualFold(pathSegments[i+1], "cxs") {
+			tenant := strings.TrimSpace(pathSegments[i+2])
+			site := strings.TrimSpace(pathSegments[i+3])
+			if tenant != "" && site != "" {
+				return tenant, site
+			}
 		}
-		tenant = strings.Split(tenant, "-")[0]
 	}
 
-	pathSegments := strings.FieldsFunc(parsed.Path, func(r rune) bool { return r == '/' })
+	tenant := ""
+	if hostParts := strings.Split(parsed.Host, "."); len(hostParts) > 0 {
+		tenant = strings.TrimSpace(hostParts[0])
+		tenant = workdayHostSuffixRx.ReplaceAllString(tenant, "")
+		tenant = strings.TrimSuffix(tenant, "-")
+	}
+
 	site := ""
 	for i, segment := range pathSegments {
 		lower := strings.ToLower(segment)
@@ -174,11 +243,19 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 	}
 
 	if site == "" && len(pathSegments) > 0 {
-		for _, segment := range pathSegments {
-			if len(segment) > 0 && !strings.Contains(segment, "-") {
-				site = segment
-				break
+		for i := len(pathSegments) - 1; i >= 0; i-- {
+			segment := strings.TrimSpace(pathSegments[i])
+			if segment == "" {
+				continue
 			}
+			if workdayLocaleSegment.MatchString(segment) {
+				continue
+			}
+			if strings.EqualFold(segment, "global") {
+				continue
+			}
+			site = segment
+			break
 		}
 	}
 
@@ -188,7 +265,16 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobCompany, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
 	cookieHeader, err := p.warmUpSession(ctx, endpoint, company)
 	if err != nil {
-		return nil, 0, fmt.Errorf("workday warmup failed: %w", err)
+		p.logger.Warn("workday warmup failed; continuing without cookies", map[string]interface{}{
+			"company_id": func() int {
+				if company == nil {
+					return 0
+				}
+				return company.ID
+			}(),
+			"error": err.Error(),
+		})
+		cookieHeader = ""
 	}
 
 	companyID := 0
@@ -234,7 +320,11 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 		if snippet == "" {
 			snippet = "<empty body>"
 		}
-		return nil, 0, fmt.Errorf("workday returned status %d: %s", resp.StatusCode, snippet)
+		careersURL := ""
+		if company != nil {
+			careersURL = company.CareersURL
+		}
+		return nil, 0, fmt.Errorf("workday returned status %d (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
 	}
 
 	var payload workdayJobResponse
@@ -367,28 +457,35 @@ func (p *WorkdayProvider) warmUpSession(ctx context.Context, endpoint string, co
 	}
 
 	target := endpoint
+	if company != nil && strings.TrimSpace(company.CareersURL) != "" {
+		target = strings.TrimSpace(company.CareersURL)
+		if parsed, err := url.Parse(target); err == nil && parsed.Host == "" {
+			target = "https://" + target
+		}
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead, target, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return "", err
 	}
 	p.setCommonHeaders(req, target, company, false)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if jar := p.client.Jar; jar != nil {
-		if u, err := url.Parse(endpoint); err == nil {
-			jar.SetCookies(u, resp.Cookies())
-		}
-	}
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)); err != nil {
 		p.logger.Warn("error discarding response body during warmup", map[string]interface{}{"endpoint": endpoint, "error": err.Error()})
 	}
 
-	cookieHeader := buildCookieHeader(resp.Cookies())
+	cookieHeader := ""
+	if jar := p.client.Jar; jar != nil {
+		if u, err := url.Parse(endpoint); err == nil {
+			cookieHeader = buildCookieHeader(jar.Cookies(u))
+		}
+	}
 	p.sessionCookies.Store(endpoint, cookieHeader)
 	return cookieHeader, nil
 }

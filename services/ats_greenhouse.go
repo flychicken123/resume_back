@@ -105,10 +105,31 @@ func (p *GreenhouseProvider) resolveBoardToken(company *models.JobCompany) (stri
 	}
 	if company.CareersURL != "" {
 		if parsed, err := url.Parse(company.CareersURL); err == nil {
+			query := parsed.Query()
+			for _, key := range []string{"for", "board", "token", "company"} {
+				if token := strings.TrimSpace(query.Get(key)); token != "" {
+					return token, nil
+				}
+			}
+
 			segments := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-			if len(segments) > 0 {
-				token := segments[len(segments)-1]
-				if token != "" {
+			for i := 0; i < len(segments); i++ {
+				if strings.EqualFold(segments[i], "jobs") && i > 0 {
+					if token := strings.TrimSpace(segments[i-1]); token != "" {
+						return token, nil
+					}
+				}
+			}
+
+			for i := len(segments) - 1; i >= 0; i-- {
+				token := strings.TrimSpace(segments[i])
+				if token == "" {
+					continue
+				}
+				switch strings.ToLower(token) {
+				case "jobs", "job", "embed", "job_board":
+					continue
+				default:
 					return token, nil
 				}
 			}
