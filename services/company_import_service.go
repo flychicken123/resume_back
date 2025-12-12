@@ -67,7 +67,7 @@ func (s *CompanyImportService) ImportCSV(reader io.Reader) (*CompanyImportSummar
 		}
 	}
 
-	required := []string{"name", "careers_url", "ats_provider"}
+	required := []string{"name", "careers_url"}
 	for _, field := range required {
 		if _, ok := fieldIndex[field]; !ok {
 			return nil, fmt.Errorf("%w: missing required column '%s'", ErrCompanyImportInvalidFormat, field)
@@ -173,9 +173,14 @@ func buildCompanyFromValues(values map[string]string) (*models.JobCompany, error
 	if careers == "" {
 		return nil, fmt.Errorf("missing careers_url")
 	}
-	if provider == "" {
-		return nil, fmt.Errorf("missing ats_provider")
+
+	if provider == "" || strings.EqualFold(provider, "auto") {
+		provider = DetectATSProvider(careers)
 	}
+	if provider == "" {
+		return nil, fmt.Errorf("missing ats_provider and unable to infer from careers_url")
+	}
+	provider = strings.ToLower(provider)
 
 	website := strings.TrimSpace(values["website_url"])
 

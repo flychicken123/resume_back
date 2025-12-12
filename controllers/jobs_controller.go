@@ -144,7 +144,7 @@ type createCompanyRequest struct {
 	Name                string  `json:"name" binding:"required"`
 	WebsiteURL          string  `json:"website_url"`
 	CareersURL          string  `json:"careers_url" binding:"required"`
-	ATSProvider         string  `json:"ats_provider" binding:"required"`
+	ATSProvider         string  `json:"ats_provider"`
 	ExternalIdentifier  *string `json:"external_identifier"`
 	SyncIntervalMinutes *int    `json:"sync_interval_minutes"`
 	IsActive            *bool   `json:"is_active"`
@@ -160,10 +160,19 @@ func (jc *JobsController) CreateCompany(c *gin.Context) {
 	name := strings.TrimSpace(req.Name)
 	careers := strings.TrimSpace(req.CareersURL)
 	provider := strings.TrimSpace(req.ATSProvider)
-	if name == "" || careers == "" || provider == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name, careers_url, and ats_provider are required"})
+	if name == "" || careers == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "name and careers_url are required"})
 		return
 	}
+
+	if provider == "" || strings.EqualFold(provider, "auto") {
+		provider = services.DetectATSProvider(careers)
+	}
+	if provider == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unable to infer ats_provider; please provide it explicitly"})
+		return
+	}
+	provider = strings.ToLower(provider)
 
 	interval := 1440
 	if req.SyncIntervalMinutes != nil && *req.SyncIntervalMinutes > 0 {
