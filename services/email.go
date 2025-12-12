@@ -90,10 +90,16 @@ func (s *EmailService) sendEmail(recipients []string, subject, body string, isHT
 		contentType = "text/html"
 	}
 
-	msg := []byte(fmt.Sprintf("Subject: %s\r\n", subject) +
-		"MIME-Version: 1.0\r\n" +
-		fmt.Sprintf("Content-Type: %s; charset=\"utf-8\"\r\n\r\n", contentType) +
-		body + "\r\n")
+	fromHeader := s.buildFromHeader()
+	headers := []string{
+		fmt.Sprintf("From: %s", fromHeader),
+		fmt.Sprintf("To: %s", strings.Join(recipients, ", ")),
+		fmt.Sprintf("Subject: %s", subject),
+		"MIME-Version: 1.0",
+		fmt.Sprintf("Content-Type: %s; charset=\"utf-8\"", contentType),
+	}
+
+	msg := []byte(strings.Join(headers, "\r\n") + "\r\n\r\n" + body + "\r\n")
 
 	if s.useSSL {
 		return s.sendMailImplicitTLS(recipients, msg)
@@ -126,7 +132,7 @@ func (s *EmailService) sendMailStartTLS(recipients []string, msg []byte) error {
 		}
 	}
 
-	if err := client.Mail(s.from); err != nil {
+	if err := client.Mail(s.fromAddress()); err != nil {
 		return err
 	}
 	for _, r := range recipients {
@@ -171,7 +177,7 @@ func (s *EmailService) sendMailImplicitTLS(recipients []string, msg []byte) erro
 		}
 	}
 
-	if err := client.Mail(s.from); err != nil {
+	if err := client.Mail(s.fromAddress()); err != nil {
 		return err
 	}
 	for _, r := range recipients {
@@ -190,4 +196,18 @@ func (s *EmailService) sendMailImplicitTLS(recipients []string, msg []byte) erro
 		return err
 	}
 	return client.Quit()
+}
+
+func (s *EmailService) buildFromHeader() string {
+	from := s.fromAddress()
+	display := "HiHired"
+	return fmt.Sprintf("%s <%s>", display, from)
+}
+
+func (s *EmailService) fromAddress() string {
+	from := strings.TrimSpace(s.from)
+	if from == "" || !strings.Contains(strings.ToLower(from), "hihired.org") {
+		from = "no-reply@hihired.org"
+	}
+	return from
 }
