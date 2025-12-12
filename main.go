@@ -84,7 +84,7 @@ func main() {
 	}
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
-	emailService := services.NewEmailService()
+	emailService := services.NewEmailService(logger)
 	jobsService := services.NewJobIngestionService(db, logger)
 	experimentService := services.NewExperimentService(experimentModel)
 
