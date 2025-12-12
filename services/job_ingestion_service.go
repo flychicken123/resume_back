@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,6 +18,15 @@ type JobSyncResult struct {
 	JobsCreated int
 	JobsUpdated int
 	JobsClosed  int
+}
+
+type UnsupportedATSProviderError struct {
+	CompanyID int
+	Provider  string
+}
+
+func (e *UnsupportedATSProviderError) Error() string {
+	return fmt.Sprintf("unsupported ATS provider: %s", strings.TrimSpace(e.Provider))
 }
 
 // JobSyncBatchResult captures the aggregate outcome of syncing multiple companies
@@ -105,16 +115,14 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	providerKey := strings.ToLower(strings.TrimSpace(company.ATSProvider))
 	provider, ok := s.providers[providerKey]
 	if !ok {
-		missingErr := fmt.Errorf("no ATS provider registered for %s", company.ATSProvider)
-		s.logger.Error("job sync run failed", missingErr, map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider})
-
+		unsupportedErr := &UnsupportedATSProviderError{CompanyID: company.ID, Provider: company.ATSProvider}
 		syncedAt := s.clock()
-		truncated := truncateErrorMessage(missingErr.Error(), 512)
-		if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, "failed", truncated); err != nil {
+		truncated := truncateErrorMessage(unsupportedErr.Error(), 512)
+		if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, "unsupported_provider", truncated); err != nil {
 			s.logger.Warn("failed recording sync failure", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
 		}
 
-		return nil, missingErr
+		return nil, unsupportedErr
 	}
 
 	run, err := s.syncRunModel.Start(company.ID)
@@ -225,6 +233,14 @@ func (s *JobIngestionService) SyncAllCompaniesWithSummary(ctx context.Context) (
 		batch.Ran++
 		syncResult, syncErr := s.SyncCompany(ctx, company.ID)
 		if syncErr != nil {
+			var unsupported *UnsupportedATSProviderError
+			if errors.As(syncErr, &unsupported) {
+				result.Status = "unsupported_provider"
+				result.Error = syncErr.Error()
+				batch.Failed++
+				batch.CompanyResults = append(batch.CompanyResults, result)
+				continue
+			}
 			result.Status = "failed"
 			result.Error = syncErr.Error()
 			batch.Failed++
@@ -299,6 +315,10 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 		}
 
 		if _, err := s.SyncCompany(ctx, company.ID); err != nil {
+			var unsupported *UnsupportedATSProviderError
+			if errors.As(err, &unsupported) {
+				continue
+			}
 			s.logger.Error("scheduled company sync failed", err, map[string]interface{}{"company_id": company.ID})
 		}
 	}
