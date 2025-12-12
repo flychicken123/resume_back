@@ -346,18 +346,6 @@ func renderJobCard(match *models.ResumeJobMatchRecord) string {
 `, linkStart, titleWithCompany(title, company), linkEnd, location, desc, tailorURL)
 }
 
-func leadingBadge(title, company string) string {
-	seed := title
-	if seed == "" {
-		seed = company
-	}
-	if seed == "" {
-		return "J"
-	}
-	runes := []rune(seed)
-	return strings.ToUpper(string(runes[0]))
-}
-
 func titleWithCompany(title, company string) string {
 	if title == "" {
 		return company
@@ -390,19 +378,6 @@ func truncate(s string, max int) string {
 	}
 	runes := []rune(s)
 	return string(runes[:max-1]) + "…"
-}
-
-func jobIcon(badge string) string {
-	return fmt.Sprintf(`
-      <div style="width:42px; height:42px; border-radius:10px; background:linear-gradient(135deg,#eef2ff,#dbeafe); border:1px solid #e5e7eb; display:flex; align-items:center; justify-content:center; position:relative; overflow:hidden;">
-        <svg width="28" height="28" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" style="position:absolute; opacity:0.35;">
-          <path d="M9 7V6C9 4.89543 9.89543 4 11 4H13C14.1046 4 15 4.89543 15 6V7" stroke="#1d4ed8" stroke-width="1.5" stroke-linecap="round"/>
-          <rect x="4" y="7" width="16" height="12" rx="2" stroke="#1d4ed8" stroke-width="1.5"/>
-          <path d="M4 11H20" stroke="#1d4ed8" stroke-width="1.5" stroke-linecap="round"/>
-        </svg>
-        <div style="position:relative; font-weight:700; color:#1d4ed8; font-size:14px; letter-spacing:0.3px;">%s</div>
-      </div>
-`, htmlEscape(badge))
 }
 
 func buildTailorURL(jobPostingID int64) string {
