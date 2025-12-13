@@ -64,10 +64,10 @@ func NewGreenhouseProvider(client *http.Client, logger *utils.Logger) *Greenhous
 func (p *GreenhouseProvider) FetchJobs(ctx context.Context, company *models.JobCompany) ([]*models.JobPosting, error) {
 	token, err := p.resolveBoardToken(company)
 	if err != nil {
-		if fallback, fallbackErr := p.resolveBoardTokenViaRedirect(ctx, company); fallbackErr == nil {
-			token = fallback
-		} else {
-			return nil, err
+		originalErr := err
+		token, err = p.resolveBoardTokenViaRedirect(ctx, company)
+		if err != nil {
+			return nil, originalErr
 		}
 	}
 

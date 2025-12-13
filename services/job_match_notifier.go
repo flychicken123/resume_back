@@ -50,7 +50,11 @@ func (n *JobMatchNotifier) loop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	n.runOnce(ctx)
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("JOB_MATCH_NOTIFIER_RUN_ON_STARTUP")), "true") {
+		n.runOnce(ctx)
+	} else {
+		n.logger.Info("job match notifier startup run disabled", nil)
+	}
 
 	for {
 		select {

@@ -20,25 +20,39 @@ type EmailService struct {
 	username string
 	password string
 	from     string
+	supportTo string
 	enabled  bool
 	useSSL   bool
 	logger   *utils.Logger
 }
 
 func NewEmailService(logger *utils.Logger) *EmailService {
-	host := os.Getenv("SMTP_HOST")
-	portStr := os.Getenv("SMTP_PORT")
-	username := os.Getenv("SMTP_USERNAME")
+	host := strings.TrimSpace(os.Getenv("SMTP_HOST"))
+	portStr := strings.TrimSpace(os.Getenv("SMTP_PORT"))
+	username := strings.TrimSpace(os.Getenv("SMTP_USERNAME"))
 	password := os.Getenv("SMTP_PASSWORD")
-	from := os.Getenv("SUPPORT_EMAIL")
-	useSSL := strings.EqualFold(os.Getenv("SMTP_SSL"), "true")
+	supportEmail := strings.TrimSpace(os.Getenv("SUPPORT_EMAIL"))
+	from := strings.TrimSpace(os.Getenv("EMAIL_FROM"))
+	if from == "" {
+		from = supportEmail
+	}
+	supportTo := strings.TrimSpace(os.Getenv("SUPPORT_EMAIL_TO"))
+	if supportTo == "" {
+		supportTo = supportEmail
+	}
 
 	port := 465 // default to implicit SSL unless overridden
 	if parsed, err := strconv.Atoi(portStr); err == nil && parsed > 0 {
 		port = parsed
 	}
 
-	enabled := host != "" && port != 0 && username != "" && password != "" && from != ""
+	sslEnv := strings.TrimSpace(os.Getenv("SMTP_SSL"))
+	useSSL := strings.EqualFold(sslEnv, "true")
+	if sslEnv == "" && port == 465 {
+		useSSL = true
+	}
+
+	enabled := host != "" && port != 0 && username != "" && password != "" && from != "" && supportTo != ""
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
@@ -49,6 +63,7 @@ func NewEmailService(logger *utils.Logger) *EmailService {
 		username: username,
 		password: password,
 		from:     from,
+		supportTo: supportTo,
 		enabled:  enabled,
 		useSSL:   useSSL,
 		logger:   logger,
@@ -63,7 +78,11 @@ func (s *EmailService) SendSupportEmail(subject, body string) error {
 	if !s.Enabled() {
 		return fmt.Errorf("email service not configured")
 	}
-	return s.sendEmail([]string{s.from}, subject, body, false, "support")
+	recipient := strings.TrimSpace(s.supportTo)
+	if recipient == "" {
+		return errors.New("missing support recipient")
+	}
+	return s.sendEmail([]string{recipient}, subject, body, false, "support")
 }
 
 func (s *EmailService) SendEmail(to string, subject, body string) error {
@@ -93,6 +112,11 @@ func (s *EmailService) sendEmail(recipients []string, subject, body string, isHT
 	if !s.Enabled() {
 		return fmt.Errorf("email service not configured")
 	}
+	cleaned, err := sanitizeRecipients(recipients)
+	if err != nil {
+		return err
+	}
+	recipients = cleaned
 
 	start := time.Now()
 	contentType := "text/plain"
@@ -242,7 +266,10 @@ func (s *EmailService) buildFromHeader() string {
 
 func (s *EmailService) fromAddress() string {
 	from := strings.TrimSpace(s.from)
-	if from == "" || !strings.Contains(strings.ToLower(from), "hihired.org") {
+	if from == "" {
+		from = strings.TrimSpace(s.username)
+	}
+	if from == "" || !strings.Contains(from, "@") {
 		from = "no-reply@hihired.org"
 	}
 	return from
@@ -269,6 +296,21 @@ func (s *EmailService) baseLogData(recipients []string, subject string, isHTML b
 		data["to"] = maskRecipients(recipients)
 	}
 	return data
+}
+
+func sanitizeRecipients(recipients []string) ([]string, error) {
+	cleaned := make([]string, 0, len(recipients))
+	for _, recipient := range recipients {
+		value := strings.TrimSpace(recipient)
+		if value == "" {
+			continue
+		}
+		cleaned = append(cleaned, value)
+	}
+	if len(cleaned) == 0 {
+		return nil, errors.New("missing recipients")
+	}
+	return cleaned, nil
 }
 
 func recipientDomains(recipients []string) []string {
