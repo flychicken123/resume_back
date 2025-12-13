@@ -1,14 +1,18 @@
 package services
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/tmc/langchaingo/llms"
+	"github.com/tmc/langchaingo/llms/googleai"
 )
 
 type GeminiRequest struct {
@@ -40,109 +44,41 @@ type Experience struct {
 	Tasks    string `json:"tasks"`
 }
 
+var (
+	langChainOnce  sync.Once
+	langChainErr   error
+	langChainModel llms.Model
+)
+
+func getLangChainModel() (llms.Model, error) {
+	langChainOnce.Do(func() {
+		apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+		if apiKey == "" {
+			langChainErr = fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+			return
+		}
+
+		opts := []googleai.Option{googleai.WithAPIKey(apiKey)}
+
+		llm, err := googleai.New(context.Background(), opts...)
+		if err != nil {
+			langChainErr = fmt.Errorf("failed to initialize LangChain GoogleAI client: %w", err)
+			return
+		}
+
+		langChainModel = llm
+	})
+
+	return langChainModel, langChainErr
+}
+
 func CallGeminiWithAPIKey(prompt string) (string, error) {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	llm, err := getLangChainModel()
+	if err != nil {
+		return "", err
 	}
 
-	baseURL := strings.TrimRight(os.Getenv("GEMINI_API_BASE_URL"), "/")
-	if baseURL == "" {
-		baseURL = "https://generativelanguage.googleapis.com"
-	}
-
-	modelEnv := strings.TrimSpace(os.Getenv("GEMINI_MODEL"))
-	versionEnv := strings.TrimSpace(os.Getenv("GEMINI_API_VERSION"))
-
-	var candidates [][2]string
-	if modelEnv != "" {
-		if versionEnv != "" {
-			candidates = append(candidates, [2]string{versionEnv, modelEnv})
-		} else {
-			candidates = append(candidates,
-				[2]string{"v1beta", modelEnv},
-				[2]string{"v1", modelEnv},
-			)
-		}
-	} else {
-		candidates = append(candidates,
-			[2]string{"v1", "gemini-2.5-pro"},
-			[2]string{"v1beta", "gemini-2.5-pro"},
-			[2]string{"v1", "gemini-2.0-pro"},
-			[2]string{"v1beta", "gemini-2.0-pro"},
-		)
-	}
-
-	var lastErr error
-	for _, cand := range candidates {
-		version := cand[0]
-		model := cand[1]
-		endpoint := fmt.Sprintf("%s/%s/models/%s:generateContent?key=%s", baseURL, version, model, apiKey)
-
-		body := GeminiRequest{
-			Contents: []Content{
-				{
-					Role:  "user",
-					Parts: []Part{{Text: prompt}},
-				},
-			},
-		}
-
-		jsonBody, err := json.Marshal(body)
-		if err != nil {
-			return "", err
-		}
-
-		req, err := http.NewRequest("POST", endpoint, bytes.NewBuffer(jsonBody))
-		if err != nil {
-			return "", err
-		}
-		req.Header.Set("Content-Type", "application/json")
-
-		client := &http.Client{}
-		resp, err := client.Do(req)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-
-		func() {
-			defer resp.Body.Close()
-			if resp.StatusCode != http.StatusOK {
-				b, _ := io.ReadAll(resp.Body)
-				lastErr = fmt.Errorf("gemini api error (status: %d, model: %s, version: %s): %s", resp.StatusCode, model, version, string(b))
-				return
-			}
-
-			var gemResp GeminiResponse
-			if err := json.NewDecoder(resp.Body).Decode(&gemResp); err != nil {
-				lastErr = err
-				return
-			}
-
-			if len(gemResp.Candidates) == 0 || len(gemResp.Candidates[0].Content.Parts) == 0 {
-				lastErr = fmt.Errorf("no predictions returned (model: %s, version: %s)", model, version)
-				return
-			}
-
-			prompt = gemResp.Candidates[0].Content.Parts[0].Text
-			lastErr = nil
-		}()
-
-		if lastErr == nil {
-			return prompt, nil
-		}
-
-		errStr := strings.ToLower(lastErr.Error())
-		if !strings.Contains(errStr, "404") && !strings.Contains(errStr, "not_found") {
-			break
-		}
-	}
-
-	if lastErr != nil {
-		return "", lastErr
-	}
-	return "", fmt.Errorf("gemini api: unknown error")
+	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
 }
 
 func BuildResumePrompt(name, email, phone, summary, experience, education string, skills []string, format string) string {
