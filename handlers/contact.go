@@ -1,8 +1,10 @@
 package handlers
 
 import (
+	"bytes"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -19,8 +21,13 @@ type contactRequest struct {
 
 func CreateContactRequest(db *sql.DB, emailSvc *services.EmailService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		bodyBytes, _ := c.GetRawData()
+		c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
 		var req contactRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
+			ctype := c.GetHeader("Content-Type")
+			log.Printf("contact request bind failed: content_type=%q body_len=%d err=%v", ctype, len(bodyBytes), err)
 			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid contact request"})
 			return
 		}
