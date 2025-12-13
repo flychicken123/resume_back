@@ -96,9 +96,7 @@ func (p *GreenhouseProvider) FetchJobs(ctx context.Context, company *models.JobC
 					return nil, err
 				}
 				defer resp.Body.Close()
-				if resp.StatusCode < 400 {
-					token = fallback
-				} else {
+				if resp.StatusCode >= 400 {
 					return nil, fmt.Errorf("greenhouse returned status %d", resp.StatusCode)
 				}
 			} else {
