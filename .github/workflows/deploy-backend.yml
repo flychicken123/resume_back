@@ -182,7 +182,7 @@ jobs:
           STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
           STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
           SUPPORT_EMAIL=${{ secrets.SUPPORT_EMAIL }}
-          EMAIL_FROM=${{ secrets.SUPPORT_EMAIL }}
+          EMAIL_FROM=${{ secrets.SMTP_USERNAME }}
           SUPPORT_EMAIL_TO=${{ secrets.SUPPORT_EMAIL }}
           SMTP_HOST=${{ secrets.SMTP_HOST }}
           SMTP_PORT=${{ secrets.SMTP_PORT }}

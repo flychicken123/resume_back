@@ -34,6 +34,9 @@ func NewEmailService(logger *utils.Logger) *EmailService {
 	supportEmail := strings.TrimSpace(os.Getenv("SUPPORT_EMAIL"))
 	from := strings.TrimSpace(os.Getenv("EMAIL_FROM"))
 	if from == "" {
+		from = username
+	}
+	if from == "" {
 		from = supportEmail
 	}
 	supportTo := strings.TrimSpace(os.Getenv("SUPPORT_EMAIL_TO"))
