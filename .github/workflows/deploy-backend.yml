@@ -160,36 +160,39 @@ jobs:
             SMTP_SSL="true"
           fi
 
-          cat > .env <<EOF
-DB_HOST=${{ secrets.DB_HOST }}
-DB_PORT=${{ secrets.DB_PORT }}
-DB_USER=${{ secrets.DB_USER }}
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-DB_NAME=${{ secrets.DB_NAME }}
-DB_SSLMODE=${{ secrets.DB_SSLMODE }}
-JWT_SECRET=${{ secrets.JWT_SECRET }}
-GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
-GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}
-GCP_PRIVATE_KEY='${{ secrets.GCP_PRIVATE_KEY }}'
-GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
-GCP_CLIENT_ID=${{ secrets.GCP_CLIENT_ID }}
-GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}
-GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
-AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
-AWS_REGION=${{ secrets.AWS_REGION }}
-AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
-STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
-STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
-SUPPORT_EMAIL=${{ secrets.SUPPORT_EMAIL }}
-EMAIL_FROM=${{ secrets.SUPPORT_EMAIL }}
-SUPPORT_EMAIL_TO=${{ secrets.SUPPORT_EMAIL }}
-SMTP_HOST=${{ secrets.SMTP_HOST }}
-SMTP_PORT=${{ secrets.SMTP_PORT }}
-SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
-SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
-SMTP_SSL=${SMTP_SSL}
-EOF
+          cat > .env << EOF
+          DB_HOST=${{ secrets.DB_HOST }}
+          DB_PORT=${{ secrets.DB_PORT }}
+          DB_USER=${{ secrets.DB_USER }}
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DB_NAME=${{ secrets.DB_NAME }}
+          DB_SSLMODE=${{ secrets.DB_SSLMODE }}
+          JWT_SECRET=${{ secrets.JWT_SECRET }}
+          GCP_PROJECT_ID=${{ secrets.GCP_PROJECT_ID }}
+          GCP_PRIVATE_KEY_ID=${{ secrets.GCP_PRIVATE_KEY_ID }}
+          GCP_PRIVATE_KEY='${{ secrets.GCP_PRIVATE_KEY }}'
+          GCP_CLIENT_EMAIL=${{ secrets.GCP_CLIENT_EMAIL }}
+          GCP_CLIENT_ID=${{ secrets.GCP_CLIENT_ID }}
+          GCP_CLIENT_X509_CERT_URL=${{ secrets.GCP_CLIENT_X509_CERT_URL }}
+          GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+          AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION=${{ secrets.AWS_REGION }}
+          AWS_S3_BUCKET=${{ secrets.AWS_S3_BUCKET }}
+          STRIPE_SECRET_KEY=${{ secrets.STRIPE_SECRET_KEY }}
+          STRIPE_WEBHOOK_SECRET=${{ secrets.STRIPE_WEBHOOK_SECRET }}
+          SUPPORT_EMAIL=${{ secrets.SUPPORT_EMAIL }}
+          EMAIL_FROM=${{ secrets.SUPPORT_EMAIL }}
+          SUPPORT_EMAIL_TO=${{ secrets.SUPPORT_EMAIL }}
+          SMTP_HOST=${{ secrets.SMTP_HOST }}
+          SMTP_PORT=${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME=${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
+          SMTP_SSL=${SMTP_SSL}
+          EOF
+
+          # Remove indentation in the here-doc so docker-compose can parse it.
+          sed -i 's/^[[:space:]]\\+//' .env
 
           # SIMPLE DEPLOYMENT STRATEGY
           echo "🚀 Starting deployment..."
