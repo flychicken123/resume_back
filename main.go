@@ -268,6 +268,30 @@ func main() {
 				}
 				c.JSON(http.StatusOK, gin.H{"result": result})
 			})
+
+			internal.POST("/job-match-notifier/run-all", func(c *gin.Context) {
+				var req struct {
+					Confirm       string `json:"confirm"`
+					Limit         int    `json:"limit"`
+					EmailOverride string `json:"email_override"`
+					SendEmail     bool   `json:"send_email"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+					return
+				}
+				if req.Confirm != "RUN_ALL_USERS" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "confirm must be RUN_ALL_USERS"})
+					return
+				}
+
+				result, err := jobMatchNotifier.RunOnceForAll(c.Request.Context(), req.Limit, req.EmailOverride, req.SendEmail)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"result": result})
+			})
 		}
 
 		// Health check endpoint for Docker Compose
@@ -403,6 +427,30 @@ func main() {
 				}
 
 				result, err := jobMatchNotifier.RunOnceForUser(c.Request.Context(), req.UserID, req.EmailOverride)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"result": result})
+			})
+
+			admin.POST("/job-match-notifier/run-all", func(c *gin.Context) {
+				var req struct {
+					Confirm       string `json:"confirm"`
+					Limit         int    `json:"limit"`
+					EmailOverride string `json:"email_override"`
+					SendEmail     bool   `json:"send_email"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+					return
+				}
+				if req.Confirm != "RUN_ALL_USERS" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "confirm must be RUN_ALL_USERS"})
+					return
+				}
+
+				result, err := jobMatchNotifier.RunOnceForAll(c.Request.Context(), req.Limit, req.EmailOverride, req.SendEmail)
 				if err != nil {
 					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 					return
