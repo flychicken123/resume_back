@@ -74,8 +74,6 @@ func (p *ResumeParser) Parse(rawText string) (*ResumeData, error) {
 		return nil, fmt.Errorf("empty resume text")
 	}
 
-	fmt.Printf("[ResumeParser] Starting parse of %d characters\n", len(rawText))
-
 	resume := &ResumeData{
 		RawText:  rawText,
 		Sections: make(map[string]string),
@@ -83,23 +81,13 @@ func (p *ResumeParser) Parse(rawText string) (*ResumeData, error) {
 
 	// Extract basic contact information
 	p.extractContactInfo(resume, rawText)
-	fmt.Printf("[ResumeParser] Contact: Name=%s, Email=%s, Phone=%s\n", resume.Name, resume.Email, resume.Phone)
 
 	// Split text into sections
 	sections := p.extractSections(rawText)
 	resume.Sections = sections
-	fmt.Printf("[ResumeParser] Found %d sections\n", len(sections))
-	for key := range sections {
-		fmt.Printf("  - Section: %s\n", key)
-	}
 
 	// Extract structured data from sections
 	p.extractExperience(resume, sections)
-	fmt.Printf("[ResumeParser] Extracted %d experiences\n", len(resume.Experience))
-	for i, exp := range resume.Experience {
-		fmt.Printf("  Exp %d: Role='%s', Company='%s', Location='%s', Dates='%s-%s'\n",
-			i+1, exp.Role, exp.Company, exp.Location, exp.StartDate, exp.EndDate)
-	}
 
 	p.extractEducation(resume, sections)
 	p.extractProjects(resume, sections)

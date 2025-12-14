@@ -3,8 +3,10 @@ package services
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -120,6 +122,36 @@ func (s *S3Service) DeleteFile(fileName string) error {
 
 	log.Printf("File deleted from S3: %s", fileName)
 	return nil
+}
+
+// DownloadBytes downloads an object from S3 and returns its raw bytes.
+func (s *S3Service) DownloadBytes(key string) ([]byte, error) {
+	if strings.TrimSpace(key) == "" {
+		return nil, fmt.Errorf("s3 key is required")
+	}
+	if err := s.validate(); err != nil {
+		return nil, err
+	}
+
+	resp, err := s.s3Client.GetObject(&s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to download from S3: %v", err)
+	}
+	defer resp.Body.Close()
+
+	const maxSize = 25 << 20 // 25 MiB
+	limited := &io.LimitedReader{R: resp.Body, N: maxSize + 1}
+	data, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading S3 object: %v", err)
+	}
+	if int64(len(data)) > maxSize {
+		return nil, fmt.Errorf("s3 object exceeds max size (%d bytes)", maxSize)
+	}
+	return data, nil
 }
 
 // validate checks if the S3Service configuration is valid

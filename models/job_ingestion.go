@@ -132,16 +132,29 @@ func scanJobCompanyRow(scanner rowScanner) (*JobCompany, error) {
 // ListActive returns all active companies ordered by sync cadence
 func (m *JobCompanyModel) ListActive() ([]*JobCompany, error) {
 	const query = `
-        SELECT id, name, website_url, careers_url, ats_provider,
-               external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
-               created_at, updated_at
-        FROM job_companies
-        WHERE is_active = TRUE
-        ORDER BY sync_interval_minutes, id
-    `
-
-	return m.fetchCompanies(query)
+         SELECT id, name, website_url, careers_url, ats_provider,
+                external_identifier, is_active, sync_interval_minutes,
+                last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+                created_at, updated_at
+         FROM job_companies
+         WHERE is_active = TRUE
+         ORDER BY sync_interval_minutes, id
+     `
+	companies, err := m.fetchCompanies(query)
+	if err != nil && isUndefinedColumnError(err) {
+		const legacyQuery = `
+            SELECT id, name, website_url, careers_url, ats_provider,
+                   external_identifier, is_active, sync_interval_minutes,
+                   last_synced_at, last_sync_status,
+                   NULL AS last_sync_error, 0 AS sync_failure_count,
+                   created_at, updated_at
+            FROM job_companies
+            WHERE is_active = TRUE
+            ORDER BY sync_interval_minutes, id
+        `
+		return m.fetchCompanies(legacyQuery)
+	}
+	return companies, err
 }
 
 // ListAll returns all companies regardless of active flag
@@ -153,9 +166,21 @@ func (m *JobCompanyModel) ListAll() ([]*JobCompany, error) {
                created_at, updated_at
         FROM job_companies
         ORDER BY id
-    `
-
-	return m.fetchCompanies(query)
+     `
+	companies, err := m.fetchCompanies(query)
+	if err != nil && isUndefinedColumnError(err) {
+		const legacyQuery = `
+            SELECT id, name, website_url, careers_url, ats_provider,
+                   external_identifier, is_active, sync_interval_minutes,
+                   last_synced_at, last_sync_status,
+                   NULL AS last_sync_error, 0 AS sync_failure_count,
+                   created_at, updated_at
+            FROM job_companies
+            ORDER BY id
+        `
+		return m.fetchCompanies(legacyQuery)
+	}
+	return companies, err
 }
 
 func (m *JobCompanyModel) ListWithPagination(status string, limit, offset int) ([]*JobCompany, int, error) {
@@ -181,18 +206,35 @@ func (m *JobCompanyModel) ListWithPagination(status string, limit, offset int) (
 	}
 
 	dataQuery := fmt.Sprintf(`
-        SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
-               external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
-               created_at, updated_at
-        FROM job_companies
-        %s
-        ORDER BY id DESC
-        LIMIT $1 OFFSET $2
-    `, whereClause)
-
+         SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
+                external_identifier, is_active, sync_interval_minutes,
+                last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+                created_at, updated_at
+         FROM job_companies
+         %s
+         ORDER BY id DESC
+         LIMIT $1 OFFSET $2
+     `, whereClause)
 	companies, err := m.fetchCompanies(dataQuery, limit, offset)
 	if err != nil {
+		if isUndefinedColumnError(err) {
+			legacyQuery := fmt.Sprintf(`
+                SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
+                       external_identifier, is_active, sync_interval_minutes,
+                       last_synced_at, last_sync_status,
+                       NULL AS last_sync_error, 0 AS sync_failure_count,
+                       created_at, updated_at
+                FROM job_companies
+                %s
+                ORDER BY id DESC
+                LIMIT $1 OFFSET $2
+            `, whereClause)
+			companies, err = m.fetchCompanies(legacyQuery, limit, offset)
+			if err != nil {
+				return nil, 0, err
+			}
+			return companies, total, nil
+		}
 		return nil, 0, err
 	}
 
@@ -221,16 +263,31 @@ func (m *JobCompanyModel) fetchCompanies(query string, args ...interface{}) ([]*
 // GetByID fetches a single company by identifier
 func (m *JobCompanyModel) GetByID(id int) (*JobCompany, error) {
 	const query = `
-        SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
-               external_identifier, is_active, sync_interval_minutes,
-               last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
-               created_at, updated_at
-        FROM job_companies
-        WHERE id = $1
-    `
-
+         SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
+                external_identifier, is_active, sync_interval_minutes,
+                last_synced_at, last_sync_status, last_sync_error, sync_failure_count,
+                created_at, updated_at
+         FROM job_companies
+         WHERE id = $1
+     `
 	company, err := scanJobCompanyRow(m.db.QueryRow(query, id))
 	if err != nil {
+		if isUndefinedColumnError(err) {
+			const legacyQuery = `
+                SELECT id, name, COALESCE(website_url, ''), careers_url, ats_provider,
+                       external_identifier, is_active, sync_interval_minutes,
+                       last_synced_at, last_sync_status,
+                       NULL AS last_sync_error, 0 AS sync_failure_count,
+                       created_at, updated_at
+                FROM job_companies
+                WHERE id = $1
+            `
+			company, err = scanJobCompanyRow(m.db.QueryRow(legacyQuery, id))
+			if err != nil {
+				return nil, err
+			}
+			return company, nil
+		}
 		return nil, err
 	}
 
@@ -355,7 +412,36 @@ func (m *JobCompanyModel) UpdateSyncMetadata(companyID int, syncedAt time.Time, 
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
-	_, err := m.db.Exec(query, companyID, syncedAt, status)
+	if _, err := m.db.Exec(query, companyID, syncedAt, status); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyErrorQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            last_sync_error = NULL,
+            is_active = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	if _, err := m.db.Exec(legacyErrorQuery, companyID, syncedAt, status); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyMinimalQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            is_active = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	_, err := m.db.Exec(legacyMinimalQuery, companyID, syncedAt, status)
 	return err
 }
 
@@ -371,7 +457,36 @@ func (m *JobCompanyModel) RecordSyncFailure(companyID int, syncedAt time.Time, s
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
-	_, err := m.db.Exec(query, companyID, syncedAt, status, trimmed)
+	if _, err := m.db.Exec(query, companyID, syncedAt, status, trimmed); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyErrorQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            last_sync_error = NULLIF($4, ''),
+            is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	if _, err := m.db.Exec(legacyErrorQuery, companyID, syncedAt, status, trimmed); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyMinimalQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	_, err := m.db.Exec(legacyMinimalQuery, companyID, syncedAt, status)
 	return err
 }
 
@@ -385,7 +500,19 @@ func (m *JobCompanyModel) SetCompanyActive(companyID int, active bool) error {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = $1
         `
-		_, err := m.db.Exec(query, companyID)
+		if _, err := m.db.Exec(query, companyID); err == nil {
+			return nil
+		} else if !isUndefinedColumnError(err) {
+			return err
+		}
+
+		const legacyQuery = `
+            UPDATE job_companies
+            SET is_active = TRUE,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = $1
+        `
+		_, err := m.db.Exec(legacyQuery, companyID)
 		return err
 	}
 	const query = `

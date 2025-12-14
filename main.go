@@ -146,6 +146,7 @@ func main() {
 	defer cancel()
 	jobsService.StartScheduler(ctx, 24*time.Hour)
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
+	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobMatchNotifier.Start(ctx, 100*time.Hour)
 
 	r := gin.New()
@@ -295,6 +296,28 @@ func main() {
 
 			internal.GET("/job-match-notifier/run-all/status", func(c *gin.Context) {
 				c.JSON(http.StatusOK, gin.H{"status": jobMatchNotifier.RunAllStatus()})
+			})
+
+			internal.POST("/resumes/backfill-from-history", func(c *gin.Context) {
+				var req services.ResumeProfileBackfillRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+					return
+				}
+				if req.Confirm != "BACKFILL_RESUME_PROFILES" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "confirm must be BACKFILL_RESUME_PROFILES"})
+					return
+				}
+				status, err := resumeBackfill.Trigger(req.Limit, req.DryRun)
+				if err != nil {
+					c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusAccepted, gin.H{"status": status})
+			})
+
+			internal.GET("/resumes/backfill-from-history/status", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": resumeBackfill.Status()})
 			})
 		}
 
@@ -464,6 +487,28 @@ func main() {
 
 			admin.GET("/job-match-notifier/run-all/status", func(c *gin.Context) {
 				c.JSON(http.StatusOK, gin.H{"status": jobMatchNotifier.RunAllStatus()})
+			})
+
+			admin.POST("/resumes/backfill-from-history", func(c *gin.Context) {
+				var req services.ResumeProfileBackfillRequest
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+					return
+				}
+				if req.Confirm != "BACKFILL_RESUME_PROFILES" {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "confirm must be BACKFILL_RESUME_PROFILES"})
+					return
+				}
+				status, err := resumeBackfill.Trigger(req.Limit, req.DryRun)
+				if err != nil {
+					c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusAccepted, gin.H{"status": status})
+			})
+
+			admin.GET("/resumes/backfill-from-history/status", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": resumeBackfill.Status()})
 			})
 			admin.GET("/jobs/companies", jobsController.ListCompanies)
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
