@@ -4,6 +4,10 @@ on:
   push:
     branches: [ main ]
 
+concurrency:
+  group: deploy-backend-prod
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -197,20 +201,20 @@ jobs:
 
           # SIMPLE DEPLOYMENT STRATEGY
           echo "🚀 Starting deployment..."
-          
+           
           # Ensure network exists
-          docker network create ai-resume-network || true
-          
+          docker network inspect ai-resume-network >/dev/null 2>&1 || docker network create ai-resume-network
+           
           # Build new image - FAIL on error
           echo "🔨 Building new backend image..."
-          if ! docker-compose -f docker-compose.backend.yml build --no-cache backend; then
+          if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml build --no-cache backend; then
             echo "❌ Failed to build Docker image"
             exit 1
           fi
-          
+           
           # Deploy with compose - FAIL on error
           echo "🚀 Deploying backend..."
-          if ! docker-compose -f docker-compose.backend.yml up -d; then
+          if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml up -d --remove-orphans; then
             echo "❌ Failed to deploy with docker-compose"
             exit 1
           fi
@@ -225,7 +229,7 @@ jobs:
             echo "✅ Deployment successful - service is healthy!"
           else
             echo "❌ Service failed to start properly"
-            docker-compose -f docker-compose.backend.yml logs --tail=50
+            docker-compose -p ai-resume-backend -f docker-compose.backend.yml logs --tail=50
             exit 1
           fi
           
@@ -270,6 +274,9 @@ jobs:
             echo "❌ CORS configuration failed - deployment aborted"
             exit 1
           fi
+
+          echo "📊 docker-compose status:"
+          docker-compose -p ai-resume-backend -f docker-compose.backend.yml ps
           
           # Test API validation (should return proper error responses)
           echo "Testing API validation..."
