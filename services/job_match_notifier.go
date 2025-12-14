@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"strings"
 	"time"
 
@@ -21,6 +22,9 @@ type JobMatchNotifier struct {
 	matcher ResumeJobMatcher
 	email   *EmailService
 	logger  *utils.Logger
+
+	runAllMu     sync.Mutex
+	runAllStatus JobMatchRunAllStatus
 }
 
 type JobMatchManualRunResult struct {
@@ -36,7 +40,15 @@ type JobMatchRunAllResult struct {
 	EmailsSent     int                      `json:"emails_sent"`
 	MatchesFound   int                      `json:"matches_found"`
 	Errors         int                      `json:"errors"`
-	Results        []JobMatchManualRunResult `json:"results"`
+	Results        []JobMatchManualRunResult `json:"results,omitempty"`
+}
+
+type JobMatchRunAllStatus struct {
+	Running    bool                 `json:"running"`
+	StartedAt  *time.Time           `json:"started_at,omitempty"`
+	FinishedAt *time.Time           `json:"finished_at,omitempty"`
+	LastError  string               `json:"last_error,omitempty"`
+	LastResult *JobMatchRunAllResult `json:"last_result,omitempty"`
 }
 
 // NewJobMatchNotifier wires the notifier dependencies.
@@ -231,7 +243,6 @@ func (n *JobMatchNotifier) RunOnceForAll(ctx context.Context, limit int, emailOv
 
 	result := &JobMatchRunAllResult{
 		RequestedLimit: limit,
-		Results:        make([]JobMatchManualRunResult, 0, len(resumes)),
 	}
 
 	for _, item := range resumes {
@@ -244,7 +255,7 @@ func (n *JobMatchNotifier) RunOnceForAll(ctx context.Context, limit int, emailOv
 			continue
 		}
 		userID := item.Resume.UserID
-		matches, sent, recipient, err := n.processResume(ctx, item, emailOverride, sendEmail)
+		matches, sent, _, err := n.processResume(ctx, item, emailOverride, sendEmail)
 		result.Processed++
 		result.MatchesFound += matches
 		if sent {
@@ -254,15 +265,63 @@ func (n *JobMatchNotifier) RunOnceForAll(ctx context.Context, limit int, emailOv
 			result.Errors++
 			n.logger.Warn("job match notifier run-all failed", map[string]interface{}{"user_id": userID, "error": err.Error()})
 		}
-		result.Results = append(result.Results, JobMatchManualRunResult{
-			UserID:         userID,
-			RecipientEmail: recipient,
-			Matches:        matches,
-			EmailSent:      sent,
-		})
 	}
 
 	return result, nil
+}
+
+func (n *JobMatchNotifier) TriggerRunAll(limit int, emailOverride string, sendEmail bool) (JobMatchRunAllStatus, error) {
+	if n == nil || n.resumes == nil || n.matcher == nil {
+		return JobMatchRunAllStatus{}, errors.New("job match notifier not configured")
+	}
+	if sendEmail && (n.email == nil || !n.email.Enabled()) {
+		return JobMatchRunAllStatus{}, errors.New("email service not configured")
+	}
+
+	n.runAllMu.Lock()
+	defer n.runAllMu.Unlock()
+
+	if n.runAllStatus.Running {
+		return n.runAllStatus, errors.New("run-all already in progress")
+	}
+
+	started := time.Now()
+	n.runAllStatus = JobMatchRunAllStatus{
+		Running:    true,
+		StartedAt:  &started,
+		FinishedAt: nil,
+		LastError:  "",
+		LastResult: nil,
+	}
+
+	go func() {
+		result, err := n.RunOnceForAll(context.Background(), limit, emailOverride, sendEmail)
+		finished := time.Now()
+
+		n.runAllMu.Lock()
+		defer n.runAllMu.Unlock()
+
+		n.runAllStatus.Running = false
+		n.runAllStatus.FinishedAt = &finished
+		if err != nil {
+			n.runAllStatus.LastError = err.Error()
+			n.runAllStatus.LastResult = nil
+			return
+		}
+		n.runAllStatus.LastError = ""
+		n.runAllStatus.LastResult = result
+	}()
+
+	return n.runAllStatus, nil
+}
+
+func (n *JobMatchNotifier) RunAllStatus() JobMatchRunAllStatus {
+	if n == nil {
+		return JobMatchRunAllStatus{}
+	}
+	n.runAllMu.Lock()
+	defer n.runAllMu.Unlock()
+	return n.runAllStatus
 }
 
 func parseString(raw json.RawMessage) string {

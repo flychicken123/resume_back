@@ -285,12 +285,16 @@ func main() {
 					return
 				}
 
-				result, err := jobMatchNotifier.RunOnceForAll(c.Request.Context(), req.Limit, req.EmailOverride, req.SendEmail)
+				status, err := jobMatchNotifier.TriggerRunAll(req.Limit, req.EmailOverride, req.SendEmail)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{"result": result})
+				c.JSON(http.StatusAccepted, gin.H{"status": status})
+			})
+
+			internal.GET("/job-match-notifier/run-all/status", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": jobMatchNotifier.RunAllStatus()})
 			})
 		}
 
@@ -450,12 +454,16 @@ func main() {
 					return
 				}
 
-				result, err := jobMatchNotifier.RunOnceForAll(c.Request.Context(), req.Limit, req.EmailOverride, req.SendEmail)
+				status, err := jobMatchNotifier.TriggerRunAll(req.Limit, req.EmailOverride, req.SendEmail)
 				if err != nil {
-					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{"result": result})
+				c.JSON(http.StatusAccepted, gin.H{"status": status})
+			})
+
+			admin.GET("/job-match-notifier/run-all/status", func(c *gin.Context) {
+				c.JSON(http.StatusOK, gin.H{"status": jobMatchNotifier.RunAllStatus()})
 			})
 			admin.GET("/jobs/companies", jobsController.ListCompanies)
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
