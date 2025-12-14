@@ -190,7 +190,7 @@ jobs:
           SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
           SMTP_SSL=${SMTP_SSL}
           JOB_MATCH_NOTIFIER_TRIGGER_TOKEN=${{ secrets.JOB_MATCH_NOTIFIER_TRIGGER_TOKEN }}
-EOF
+          EOF
 
           # Remove indentation in the here-doc so docker-compose can parse it.
           sed -i 's/^[[:space:]]\\+//' .env
