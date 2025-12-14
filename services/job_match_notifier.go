@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"os"
-	"sync"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"resumeai/models"
@@ -35,19 +37,19 @@ type JobMatchManualRunResult struct {
 }
 
 type JobMatchRunAllResult struct {
-	RequestedLimit int                      `json:"requested_limit"`
-	Processed      int                      `json:"processed"`
-	EmailsSent     int                      `json:"emails_sent"`
-	MatchesFound   int                      `json:"matches_found"`
-	Errors         int                      `json:"errors"`
+	RequestedLimit int                       `json:"requested_limit"`
+	Processed      int                       `json:"processed"`
+	EmailsSent     int                       `json:"emails_sent"`
+	MatchesFound   int                       `json:"matches_found"`
+	Errors         int                       `json:"errors"`
 	Results        []JobMatchManualRunResult `json:"results,omitempty"`
 }
 
 type JobMatchRunAllStatus struct {
-	Running    bool                 `json:"running"`
-	StartedAt  *time.Time           `json:"started_at,omitempty"`
-	FinishedAt *time.Time           `json:"finished_at,omitempty"`
-	LastError  string               `json:"last_error,omitempty"`
+	Running    bool                  `json:"running"`
+	StartedAt  *time.Time            `json:"started_at,omitempty"`
+	FinishedAt *time.Time            `json:"finished_at,omitempty"`
+	LastError  string                `json:"last_error,omitempty"`
 	LastResult *JobMatchRunAllResult `json:"last_result,omitempty"`
 }
 
@@ -500,7 +502,7 @@ func renderJobCard(match *models.ResumeJobMatchRecord) string {
 		company = htmlEscape(strings.TrimSpace(*match.CompanyName))
 	}
 	location := htmlEscape(formatLocation(match.JobLocation, match.JobRemoteType))
-	desc := htmlEscape(truncate(match.JobDescription, 180))
+	desc := htmlEscape(formatJobDescriptionSnippet(match.JobDescription, 180))
 	url := htmlEscape(strings.TrimSpace(match.JobURL))
 	tailorURL := htmlEscape(buildTailorURL(match.JobPostingID))
 
@@ -540,8 +542,14 @@ func titleWithCompany(title, company string) string {
 }
 
 func formatLocation(loc, remoteType string) string {
-	loc = strings.TrimSpace(loc)
-	remote := strings.TrimSpace(remoteType)
+	loc = normalizeWhitespace(loc)
+	remote := normalizeWhitespace(remoteType)
+
+	loc = trimDuplicateRemoteLocation(loc)
+	if remote != "" && strings.Contains(strings.ToLower(loc), strings.ToLower(remote)) {
+		remote = ""
+	}
+
 	if loc == "" && remote == "" {
 		return "Remote or on-site"
 	}
@@ -552,6 +560,56 @@ func formatLocation(loc, remoteType string) string {
 		return loc
 	}
 	return remote
+}
+
+var (
+	htmlScriptStyleRegexp = regexp.MustCompile(`(?is)(<script[^>]*>.*?</script>|<style[^>]*>.*?</style>)`)
+	htmlBreakRegexp       = regexp.MustCompile(`(?i)<br\s*/?>`)
+	htmlTagRegexp         = regexp.MustCompile(`(?s)<[^>]+>`)
+	whitespaceRegexp      = regexp.MustCompile(`\s+`)
+)
+
+func formatJobDescriptionSnippet(raw string, max int) string {
+	cleaned := strings.TrimSpace(raw)
+	if cleaned == "" {
+		return ""
+	}
+
+	// Some ATS sources store descriptions HTML-escaped (e.g. "&lt;div...").
+	// Decode entities once, then strip tags.
+	cleaned = stdhtml.UnescapeString(cleaned)
+	cleaned = htmlScriptStyleRegexp.ReplaceAllString(cleaned, " ")
+	cleaned = htmlBreakRegexp.ReplaceAllString(cleaned, "\n")
+	cleaned = strings.NewReplacer("</p>", "\n", "</div>", "\n", "</li>", "\n", "<li>", " - ").Replace(cleaned)
+	cleaned = htmlTagRegexp.ReplaceAllString(cleaned, " ")
+	cleaned = normalizeWhitespace(cleaned)
+
+	return truncate(cleaned, max)
+}
+
+func normalizeWhitespace(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	value = whitespaceRegexp.ReplaceAllString(value, " ")
+	return strings.TrimSpace(value)
+}
+
+func trimDuplicateRemoteLocation(loc string) string {
+	loc = normalizeWhitespace(loc)
+	if loc == "" {
+		return ""
+	}
+
+	// Handle common duplication like: "Remote - United States Remote".
+	lower := strings.ToLower(loc)
+	if strings.HasSuffix(lower, " remote") && strings.Contains(lower[:len(lower)-len(" remote")], "remote") {
+		loc = strings.TrimSpace(loc[:len(loc)-len(" remote")])
+		loc = strings.TrimRight(strings.TrimSpace(loc), "-·,")
+		loc = normalizeWhitespace(loc)
+	}
+	return loc
 }
 
 func truncate(s string, max int) string {
