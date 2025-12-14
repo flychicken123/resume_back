@@ -38,6 +38,7 @@ services:
       - SMTP_SSL=${SMTP_SSL}
       - EMAIL_LOG_RECIPIENTS=${EMAIL_LOG_RECIPIENTS}
       - EMAIL_LOG_SUBJECT=${EMAIL_LOG_SUBJECT}
+      - JOB_MATCH_NOTIFIER_TRIGGER_TOKEN=${JOB_MATCH_NOTIFIER_TRIGGER_TOKEN}
       - NODE_ENV=prod
     restart: unless-stopped
     healthcheck:

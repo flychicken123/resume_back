@@ -255,6 +255,61 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 	return results, rows.Err()
 }
 
+// GetWithUserByUserID returns a single resume with its owning user's contact info.
+func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
+	if userID <= 0 {
+		return nil, errors.New("invalid user id")
+	}
+	row := m.DB.QueryRow(`
+		SELECT r.id, r.user_id, r.name, r.email, r.phone, r.summary, r.skills, r.selected_format,
+		       r.skills_categorized, r.experience, r.education, r.job_description, r.location,
+		       r.created_at, r.updated_at,
+		       u.email AS user_email, u.name AS user_name
+		FROM resumes r
+		JOIN users u ON u.id = r.user_id
+		WHERE r.user_id = $1
+	`, userID)
+
+	var resume Resume
+	var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
+	var userEmail, userName string
+	if err := row.Scan(
+		&resume.ID,
+		&resume.UserID,
+		&resume.Name,
+		&resume.Email,
+		&resume.Phone,
+		&summaryVal,
+		&skillsVal,
+		&resume.SelectedFormat,
+		&skillsCatVal,
+		&experienceVal,
+		&educationVal,
+		&jobDescVal,
+		&locationVal,
+		&resume.CreatedAt,
+		&resume.UpdatedAt,
+		&userEmail,
+		&userName,
+	); err != nil {
+		return nil, err
+	}
+
+	resume.Summary = toRawMessage(summaryVal)
+	resume.Skills = toRawMessage(skillsVal)
+	resume.SkillsCategorized = stringFromAny(skillsCatVal)
+	resume.Experience = stringFromAny(experienceVal)
+	resume.Education = stringFromAny(educationVal)
+	resume.JobDescription = stringFromAny(jobDescVal)
+	resume.Location = stringFromAny(locationVal)
+
+	return &ResumeWithUser{
+		Resume:    resume,
+		UserEmail: userEmail,
+		UserName:  userName,
+	}, nil
+}
+
 func (m *ResumeModel) saveProfileWithResumeName(ctx context.Context, resume *Resume, userID int, name, email, phone, summary string, skillsJSON json.RawMessage, skillsCategorized, experience, education, jobDescription, location, selectedFormat string) error {
 	query := `
 		INSERT INTO resumes (

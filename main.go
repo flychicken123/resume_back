@@ -244,6 +244,32 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
+		internal := api.Group("/internal")
+		internal.Use(middleware.RequireInternalToken("JOB_MATCH_NOTIFIER_TRIGGER_TOKEN"))
+		{
+			internal.POST("/job-match-notifier/run", func(c *gin.Context) {
+				var req struct {
+					UserID        int    `json:"user_id"`
+					EmailOverride string `json:"email_override"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+					return
+				}
+				if req.UserID <= 0 {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "user_id required"})
+					return
+				}
+
+				result, err := jobMatchNotifier.RunOnceForUser(c.Request.Context(), req.UserID, req.EmailOverride)
+				if err != nil {
+					c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+					return
+				}
+				c.JSON(http.StatusOK, gin.H{"result": result})
+			})
+		}
+
 		// Health check endpoint for Docker Compose
 		api.GET("/health", func(c *gin.Context) {
 			c.JSON(200, gin.H{

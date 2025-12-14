@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -20,6 +21,13 @@ type JobMatchNotifier struct {
 	matcher ResumeJobMatcher
 	email   *EmailService
 	logger  *utils.Logger
+}
+
+type JobMatchManualRunResult struct {
+	UserID         int    `json:"user_id"`
+	RecipientEmail string `json:"recipient_email"`
+	Matches        int    `json:"matches"`
+	EmailSent      bool   `json:"email_sent"`
 }
 
 // NewJobMatchNotifier wires the notifier dependencies.
@@ -85,64 +93,110 @@ func (n *JobMatchNotifier) runOnce(ctx context.Context) {
 		default:
 		}
 
-		resume := item.Resume
-		if strings.TrimSpace(item.UserEmail) == "" {
-			continue
-		}
+		_, _, _, _ = n.processResume(ctx, item, "")
+	}
+}
 
-		skills := parseSkills(resume.Skills)
-		summary := parseString(resume.Summary)
+func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.ResumeWithUser, emailOverride string) (int, bool, string, error) {
+	if item == nil {
+		return 0, false, "", errors.New("missing resume")
+	}
 
-		experienceText := strings.TrimSpace(resume.Experience)
-		if experienceText == "" {
-			if exps, err := n.resumes.GetExperiencesByResumeID(resume.ID); err == nil {
-				experienceText = summariseExperiences(exps)
-			}
-		}
+	resume := item.Resume
+	recipient := strings.TrimSpace(item.UserEmail)
+	if emailOverride != "" {
+		recipient = strings.TrimSpace(emailOverride)
+	}
+	if recipient == "" {
+		return 0, false, "", errors.New("missing recipient email")
+	}
 
-		hashInput := ResumeHashInput{
-			Position:       resume.Name,
-			Name:           resume.Name,
-			Email:          resume.Email,
-			Summary:        summary,
-			Experience:     experienceText,
-			Education:      resume.Education,
-			Location:       resume.Location,
-			Skills:         skills,
-			JobDescription: resume.JobDescription,
-		}
-		resumeHash := DeriveResumeHash(hashInput)
+	skills := parseSkills(resume.Skills)
+	summary := parseString(resume.Summary)
 
-		matchInput := ResumeJobMatchInput{
-			UserID:            resume.UserID,
-			ResumeHash:        resumeHash,
-			Position:          resume.Name,
-			Summary:           summary,
-			Experience:        experienceText,
-			Education:         resume.Education,
-			JobDescription:    resume.JobDescription,
-			PreferredLocation: resume.Location,
-			Skills:            skills,
-			CandidateJobLimit: 200,
-			MaxResults:        10,
-		}
-
-		matches, err := n.matcher.MatchAndStore(ctx, matchInput)
-		if err != nil {
-			n.logger.Warn("job match notifier: match failed", map[string]interface{}{"user_id": resume.UserID, "error": err.Error()})
-			continue
-		}
-		if len(matches) == 0 {
-			continue
-		}
-
-		body := formatMatchEmailBody(item.UserName, matches)
-		if err := n.email.SendHTMLEmail(item.UserEmail, "New job matches for your resume", body); err != nil {
-			n.logger.Warn("job match notifier: email failed", map[string]interface{}{"user_id": resume.UserID, "error": err.Error()})
-		} else {
-			n.logger.Info("job match notifier: email sent", map[string]interface{}{"user_id": resume.UserID, "matches": len(matches)})
+	experienceText := strings.TrimSpace(resume.Experience)
+	if experienceText == "" {
+		if exps, err := n.resumes.GetExperiencesByResumeID(resume.ID); err == nil {
+			experienceText = summariseExperiences(exps)
 		}
 	}
+
+	hashInput := ResumeHashInput{
+		Position:       resume.Name,
+		Name:           resume.Name,
+		Email:          resume.Email,
+		Summary:        summary,
+		Experience:     experienceText,
+		Education:      resume.Education,
+		Location:       resume.Location,
+		Skills:         skills,
+		JobDescription: resume.JobDescription,
+	}
+	resumeHash := DeriveResumeHash(hashInput)
+
+	matchInput := ResumeJobMatchInput{
+		UserID:            resume.UserID,
+		ResumeHash:        resumeHash,
+		Position:          resume.Name,
+		Summary:           summary,
+		Experience:        experienceText,
+		Education:         resume.Education,
+		JobDescription:    resume.JobDescription,
+		PreferredLocation: resume.Location,
+		Skills:            skills,
+		CandidateJobLimit: 200,
+		MaxResults:        10,
+	}
+
+	matches, err := n.matcher.MatchAndStore(ctx, matchInput)
+	if err != nil {
+		return 0, false, recipient, err
+	}
+	if len(matches) == 0 {
+		return 0, false, recipient, nil
+	}
+
+	body := formatMatchEmailBody(item.UserName, matches)
+	if err := n.email.SendHTMLEmail(recipient, "New job matches for your resume", body); err != nil {
+		return len(matches), false, recipient, err
+	}
+	return len(matches), true, recipient, nil
+}
+
+// RunOnceForUser computes matches for a single user and sends the email if there are any matches.
+func (n *JobMatchNotifier) RunOnceForUser(ctx context.Context, userID int, emailOverride string) (*JobMatchManualRunResult, error) {
+	if n == nil || n.resumes == nil || n.matcher == nil {
+		return nil, errors.New("job match notifier not configured")
+	}
+	if n.email == nil || !n.email.Enabled() {
+		return nil, errors.New("email service not configured")
+	}
+	if userID <= 0 {
+		return nil, errors.New("invalid user id")
+	}
+
+	item, err := n.resumes.GetWithUserByUserID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	matches, sent, recipient, err := n.processResume(ctx, item, emailOverride)
+	if err != nil {
+		n.logger.Warn("job match notifier manual run failed", map[string]interface{}{"user_id": userID, "error": err.Error()})
+		return nil, err
+	}
+	if sent {
+		n.logger.Info("job match notifier manual run sent", map[string]interface{}{"user_id": userID, "matches": matches})
+	} else {
+		n.logger.Info("job match notifier manual run completed", map[string]interface{}{"user_id": userID, "matches": matches})
+	}
+
+	return &JobMatchManualRunResult{
+		UserID:         userID,
+		RecipientEmail: recipient,
+		Matches:        matches,
+		EmailSent:      sent,
+	}, nil
 }
 
 func parseString(raw json.RawMessage) string {
