@@ -138,8 +138,8 @@ func (m *JobCompanyModel) ListActive() ([]*JobCompany, error) {
                 created_at, updated_at
          FROM job_companies
          WHERE is_active = TRUE
-         ORDER BY sync_interval_minutes, id
-     `
+         ORDER BY last_synced_at NULLS FIRST, sync_interval_minutes, id
+      `
 	companies, err := m.fetchCompanies(query)
 	if err != nil && isUndefinedColumnError(err) {
 		const legacyQuery = `
@@ -150,7 +150,7 @@ func (m *JobCompanyModel) ListActive() ([]*JobCompany, error) {
                    created_at, updated_at
             FROM job_companies
             WHERE is_active = TRUE
-            ORDER BY sync_interval_minutes, id
+            ORDER BY last_synced_at NULLS FIRST, sync_interval_minutes, id
         `
 		return m.fetchCompanies(legacyQuery)
 	}
