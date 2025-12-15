@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strings"
 	"sync"
@@ -327,6 +329,21 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 	}
 
 	if resp.StatusCode >= 400 {
+		if shouldRetryWorkdayViaPython(resp.StatusCode, body) {
+			if retryBody, retryStatus, retryErr := p.fetchPageViaPython(ctx, req.URL.String(), reqBody, cookieHeader, company); retryErr == nil {
+				body = retryBody
+				resp.StatusCode = retryStatus
+			} else {
+				p.logger.Warn("workday python fallback failed", map[string]interface{}{
+					"company_id": companyID,
+					"status":     resp.StatusCode,
+					"error":      retryErr.Error(),
+				})
+			}
+		}
+	}
+
+	if resp.StatusCode >= 400 {
 		snippet := strings.TrimSpace(string(body))
 		if len(snippet) > 512 {
 			snippet = snippet[:512] + "..."
@@ -357,6 +374,108 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 	}
 
 	return results, len(payload.JobPostings), nil
+}
+
+func shouldRetryWorkdayViaPython(status int, body []byte) bool {
+	if status == http.StatusBadRequest {
+		return false
+	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return true
+	}
+	if status == http.StatusTooManyRequests {
+		return false
+	}
+	if status >= 500 {
+		return true
+	}
+
+	trimmed := strings.TrimSpace(string(body))
+	if strings.Contains(trimmed, "cf-ray") || strings.Contains(strings.ToLower(trimmed), "cloudflare") {
+		return true
+	}
+	return false
+}
+
+func (p *WorkdayProvider) fetchPageViaPython(ctx context.Context, endpoint string, reqBody workdayRequest, cookieHeader string, company *models.JobCompany) ([]byte, int, error) {
+	payload := map[string]interface{}{
+		"endpoint": endpoint,
+		"body":     reqBody,
+		"headers":  map[string]string{},
+	}
+
+	headers := payload["headers"].(map[string]string)
+	headers["Accept"] = "application/json"
+	headers["Accept-Language"] = defaultLocaleHeader
+	headers["User-Agent"] = p.userAgent
+	headers["X-Workday-Client"] = workdayClientHeader
+	headers["Content-Type"] = "application/json"
+
+	if strings.TrimSpace(cookieHeader) != "" {
+		headers["Cookie"] = cookieHeader
+	}
+
+	if parsed, err := url.Parse(endpoint); err == nil && parsed.Host != "" {
+		origin := fmt.Sprintf("%s://%s", parsed.Scheme, parsed.Host)
+		headers["Origin"] = origin
+		referer := origin
+		if company != nil && strings.TrimSpace(company.CareersURL) != "" {
+			referer = strings.TrimSpace(company.CareersURL)
+		}
+		headers["Referer"] = referer
+	}
+
+	input, err := json.Marshal(payload)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	script := `
+import json
+import sys
+import urllib.request
+import urllib.error
+
+payload = json.load(sys.stdin)
+endpoint = payload.get("endpoint")
+body = payload.get("body")
+headers = payload.get("headers") or {}
+data = json.dumps(body).encode("utf-8")
+
+req = urllib.request.Request(endpoint, data=data, headers=headers, method="POST")
+try:
+    resp = urllib.request.urlopen(req, timeout=20)
+    status = resp.getcode()
+    text = resp.read().decode("utf-8", errors="replace")
+except urllib.error.HTTPError as e:
+    status = e.code
+    text = e.read().decode("utf-8", errors="replace")
+except Exception as e:
+    print(json.dumps({"error": str(e)}))
+    sys.exit(2)
+
+print(json.dumps({"status": status, "body": text}))
+`
+
+	cmd := exec.CommandContext(ctx, "python3", "-c", script)
+	cmd.Stdin = bytes.NewReader(input)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, 0, fmt.Errorf("python request failed: %w: %s", err, strings.TrimSpace(string(output)))
+	}
+
+	var decoded struct {
+		Status int    `json:"status"`
+		Body   string `json:"body"`
+		Error  string `json:"error"`
+	}
+	if err := json.Unmarshal(output, &decoded); err != nil {
+		return nil, 0, fmt.Errorf("parse python response: %w", err)
+	}
+	if strings.TrimSpace(decoded.Error) != "" {
+		return nil, 0, errors.New(decoded.Error)
+	}
+	return []byte(decoded.Body), decoded.Status, nil
 }
 
 func (p *WorkdayProvider) transformJob(companyID int, endpoint string, job workdayJobPosting) (*models.JobPosting, error) {
