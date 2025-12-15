@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -159,13 +160,24 @@ func (p *GreenhouseProvider) resolveBoardTokenViaRedirect(ctx context.Context, c
 		return "", err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 
-	if resp.Request == nil || resp.Request.URL == nil {
-		return "", errors.New("greenhouse redirect resolution returned no final URL")
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
 	}
 
-	return greenhouseTokenFromURL(resp.Request.URL.String())
+	if token, err := greenhouseTokenFromURL(finalURL); err == nil && token != "" {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
+		return token, nil
+	}
+
+	// Some companies embed Greenhouse job boards without redirecting.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if token := greenhouseTokenFromHTML(string(body)); token != "" {
+		return token, nil
+	}
+
+	return "", errors.New("greenhouse board token is required for company")
 }
 
 func greenhouseTokenFromURL(rawURL string) (string, error) {
@@ -183,8 +195,13 @@ func greenhouseTokenFromURL(rawURL string) (string, error) {
 			parsed = withScheme
 		}
 	}
-	if strings.Contains(strings.ToLower(parsed.Host), "grnh.se") {
-		return "", errors.New("greenhouse board token is required for company")
+
+	hostLower := strings.ToLower(strings.TrimSpace(parsed.Host))
+	if strings.Contains(hostLower, "grnh.se") {
+		return "", fmt.Errorf("greenhouse careers_url must be a Greenhouse job board URL (got redirect host=%s)", parsed.Host)
+	}
+	if !isGreenhouseHost(hostLower) {
+		return "", fmt.Errorf("greenhouse careers_url must be a Greenhouse job board URL (got host=%s)", parsed.Host)
 	}
 
 	query := parsed.Query()
@@ -222,6 +239,31 @@ func greenhouseTokenFromURL(rawURL string) (string, error) {
 	}
 
 	return "", errors.New("greenhouse board token is required for company")
+}
+
+var greenhouseBoardURLRx = regexp.MustCompile(`(?i)(?:boards(?:-api)?\.greenhouse\.io/(?:v1/)?boards/|job-boards\.greenhouse\.io/|boards\.greenhouse\.io/)([a-z0-9_-]{2,})`)
+
+func greenhouseTokenFromHTML(html string) string {
+	if strings.TrimSpace(html) == "" {
+		return ""
+	}
+	m := greenhouseBoardURLRx.FindStringSubmatch(html)
+	if len(m) < 2 {
+		return ""
+	}
+	token := strings.TrimSpace(m[1])
+	if token == "" || greenhouseLooksLikeJobID(token) {
+		return ""
+	}
+	return token
+}
+
+func isGreenhouseHost(hostLower string) bool {
+	hostLower = strings.TrimSpace(hostLower)
+	if hostLower == "" {
+		return false
+	}
+	return strings.Contains(hostLower, "greenhouse.io")
 }
 
 func greenhouseLooksLikeJobID(value string) bool {

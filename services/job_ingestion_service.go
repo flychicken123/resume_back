@@ -42,10 +42,13 @@ func shouldLogSyncFailureAsError(err error) bool {
 	softMarkers := []string{
 		" returned status 403",
 		" returned status 404",
+		" returned status 405",
 		" returned status 429",
 		" could not determine ",
 		" could not derive ",
 		" board token is required",
+		" must be a greenhouse job board url",
+		" does not resolve to a workday host",
 		" context deadline exceeded",
 		" client.timeout exceeded",
 	}

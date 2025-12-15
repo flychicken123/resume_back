@@ -154,6 +154,10 @@ func (p *WorkdayProvider) buildEndpoint(company *models.JobCompany) (string, err
 		parsed = resolved
 	}
 
+	if parsed.Host != "" && !isWorkdayHost(parsed.Host) && !strings.Contains(strings.ToLower(parsed.Path), "/wday/cxs/") {
+		return "", fmt.Errorf("workday careers_url does not resolve to a workday host (careers_url=%s)", company.CareersURL)
+	}
+
 	return p.endpointFromURL(parsed, company)
 }
 
@@ -169,6 +173,11 @@ func (p *WorkdayProvider) endpointFromURL(parsed *url.URL, company *models.JobCo
 	}
 
 	return fmt.Sprintf("https://%s/wday/cxs/%s/%s/jobs", host, tenant, site), nil
+}
+
+func isWorkdayHost(host string) bool {
+	lower := strings.ToLower(strings.TrimSpace(host))
+	return strings.Contains(lower, "myworkdayjobs.com") || strings.Contains(lower, "workday")
 }
 
 func (p *WorkdayProvider) resolveRedirectTarget(company *models.JobCompany, parsed *url.URL) (*url.URL, error) {
@@ -222,6 +231,11 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 				return tenant, site
 			}
 		}
+	}
+
+	lowerHost := strings.ToLower(strings.TrimSpace(parsed.Host))
+	if !strings.Contains(lowerHost, "myworkdayjobs.com") && !strings.Contains(lowerHost, "workday") {
+		return "", ""
 	}
 
 	tenant := ""
