@@ -40,6 +40,7 @@ func shouldLogSyncFailureAsError(err error) bool {
 
 	msg := strings.ToLower(err.Error())
 	softMarkers := []string{
+		" returned status 401",
 		" returned status 403",
 		" returned status 404",
 		" returned status 405",
