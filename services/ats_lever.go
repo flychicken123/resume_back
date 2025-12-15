@@ -25,15 +25,15 @@ type leverJob struct {
 	ApplyURL   string `json:"applyUrl"`
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
-	Commitment string `json:"commitment"`
-	Department string `json:"department"`
 	Categories struct {
-		Location string `json:"location"`
+		Location    string `json:"location"`
+		Team        string `json:"team"`
+		Department  string `json:"department"`
+		Commitment  string `json:"commitment"`
 	} `json:"categories"`
-	Descriptions []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	} `json:"description"`
+	Description          string `json:"description"`
+	DescriptionPlain     string `json:"descriptionPlain"`
+	DescriptionBodyPlain string `json:"descriptionBodyPlain"`
 }
 
 func NewLeverProvider(client *http.Client, logger *utils.Logger) *LeverProvider {
@@ -126,10 +126,14 @@ func (p *LeverProvider) transformJob(companyID int, companySlug string, job leve
 	}
 
 	location := strings.TrimSpace(job.Categories.Location)
-	department := strings.TrimSpace(job.Department)
-	employmentType := strings.TrimSpace(job.Commitment)
+	department := firstNonEmpty(strings.TrimSpace(job.Categories.Team), strings.TrimSpace(job.Categories.Department))
+	employmentType := strings.TrimSpace(job.Categories.Commitment)
 	remote := deriveLeverRemote(location)
-	description := extractLeverDescription(job.Descriptions)
+	description := firstNonEmpty(
+		strings.TrimSpace(job.DescriptionBodyPlain),
+		strings.TrimSpace(job.DescriptionPlain),
+		strings.TrimSpace(job.Description),
+	)
 
 	postedAt := parseLeverTime(job.CreatedAt)
 	jobURL := firstNonEmpty(strings.TrimSpace(job.HostedURL), fmt.Sprintf("https://jobs.lever.co/%s/%s", url.PathEscape(companySlug), url.PathEscape(job.ID)))
@@ -159,18 +163,6 @@ func (p *LeverProvider) transformJob(companyID int, companySlug string, job leve
 func deriveLeverRemote(location string) string {
 	if strings.Contains(strings.ToLower(location), "remote") {
 		return "Remote"
-	}
-	return ""
-}
-
-func extractLeverDescription(sections []struct {
-	Type string `json:"type"`
-	Text string `json:"text"`
-}) string {
-	for _, section := range sections {
-		if strings.TrimSpace(section.Text) != "" {
-			return strings.TrimSpace(section.Text)
-		}
 	}
 	return ""
 }

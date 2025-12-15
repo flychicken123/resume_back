@@ -377,11 +377,17 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 }
 
 func shouldRetryWorkdayViaPython(status int, body []byte) bool {
-	if status == http.StatusBadRequest {
-		return false
-	}
 	if status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return true
+	}
+	if status == http.StatusBadRequest {
+		// Some Workday installations appear to return 400 to Go/curl from AWS but succeed
+		// via Python's urllib stack. Retry when the response looks like a Workday error JSON.
+		trimmed := strings.ToLower(strings.TrimSpace(string(body)))
+		if strings.Contains(trimmed, "\"errorcode\"") && strings.Contains(trimmed, "\"errorcaseid\"") {
+			return true
+		}
+		return false
 	}
 	if status == http.StatusTooManyRequests {
 		return false
