@@ -36,6 +36,7 @@ const (
 var (
 	workdayHostSuffixRx  = regexp.MustCompile(`(?i)(-wd\d+|wd\d+)$`)
 	workdayLocaleSegment = regexp.MustCompile(`(?i)^[a-z]{2}[-_][a-z]{2}$`)
+	workdayPostingIDRx   = regexp.MustCompile(`(?i)\bP\d+\b`)
 )
 
 type workdayRequest struct {
@@ -56,7 +57,10 @@ type workdayJobPosting struct {
 	ExternalPath   string             `json:"externalPath"`
 	ExternalURL    string             `json:"externalUrl"`
 	TimePosted     string             `json:"timePosted"`
+	PostedOn       string             `json:"postedOn"`
 	Locations      []workdayLocation  `json:"locations"`
+	LocationsText  string             `json:"locationsText"`
+	BulletFields   []string           `json:"bulletFields"`
 	JobPostingInfo workdayPostingInfo `json:"jobPostingInfo"`
 }
 
@@ -375,13 +379,17 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 	}
 
 	results := make([]*models.JobPosting, 0, len(payload.JobPostings))
-	for _, job := range payload.JobPostings {
-		posting, err := p.transformJob(companyID, endpoint, job)
-		if err != nil {
-			p.logger.Warn("skipping workday job", map[string]interface{}{"company_id": companyID, "error": err.Error()})
-			continue
-		}
-		results = append(results, posting)
+		for _, job := range payload.JobPostings {
+			careersURL := ""
+			if company != nil {
+				careersURL = company.CareersURL
+			}
+			posting, err := p.transformJob(companyID, endpoint, careersURL, job)
+			if err != nil {
+				p.logger.Warn("skipping workday job", map[string]interface{}{"company_id": companyID, "error": err.Error()})
+				continue
+			}
+			results = append(results, posting)
 	}
 
 	return results, len(payload.JobPostings), nil
@@ -495,18 +503,33 @@ print(json.dumps({"status": status, "body": text}))
 	return []byte(decoded.Body), decoded.Status, nil
 }
 
-func (p *WorkdayProvider) transformJob(companyID int, endpoint string, job workdayJobPosting) (*models.JobPosting, error) {
-	if strings.TrimSpace(job.JobPostingID) == "" || strings.TrimSpace(job.Title) == "" {
+func (p *WorkdayProvider) transformJob(companyID int, endpoint string, careersURL string, job workdayJobPosting) (*models.JobPosting, error) {
+	jobID := strings.TrimSpace(job.JobPostingID)
+	if jobID == "" {
+		if len(job.BulletFields) > 0 {
+			jobID = strings.TrimSpace(job.BulletFields[0])
+		}
+	}
+	if jobID == "" {
+		if match := workdayPostingIDRx.FindString(job.ExternalPath); match != "" {
+			jobID = strings.TrimSpace(match)
+		}
+	}
+	if strings.TrimSpace(jobID) == "" || strings.TrimSpace(job.Title) == "" {
 		return nil, fmt.Errorf("missing job id or title")
 	}
 
-	location := buildWorkdayLocation(job.Locations)
+	location := buildWorkdayLocation(job.Locations, job.LocationsText)
 	remote := deriveWorkdayRemote(location)
 	employmentType := job.JobPostingInfo.JobType
 	department := job.JobPostingInfo.JobFamily
 
-	postedAt := parseWorkdayTime(job.TimePosted)
-	jobURL := firstNonEmpty(strings.TrimSpace(job.ExternalURL), buildWorkdayJobURL(endpoint, job.ExternalPath))
+	postedAt := parseWorkdayTime(firstNonEmpty(job.TimePosted, job.PostedOn))
+	jobURL := firstNonEmpty(
+		strings.TrimSpace(job.ExternalURL),
+		buildWorkdayJobURLFromCareers(careersURL, job.ExternalPath),
+		buildWorkdayJobURL(endpoint, job.ExternalPath),
+	)
 	if jobURL == "" {
 		jobURL = strings.TrimSpace(job.ExternalPath)
 	}
@@ -516,7 +539,7 @@ func (p *WorkdayProvider) transformJob(companyID int, endpoint string, job workd
 
 	return &models.JobPosting{
 		CompanyID:      companyID,
-		ExternalJobID:  strings.TrimSpace(job.JobPostingID),
+		ExternalJobID:  jobID,
 		Title:          strings.TrimSpace(job.Title),
 		Location:       location,
 		RemoteType:     remote,
@@ -530,9 +553,9 @@ func (p *WorkdayProvider) transformJob(companyID int, endpoint string, job workd
 	}, nil
 }
 
-func buildWorkdayLocation(locations []workdayLocation) string {
+func buildWorkdayLocation(locations []workdayLocation, fallback string) string {
 	if len(locations) == 0 {
-		return ""
+		return strings.TrimSpace(fallback)
 	}
 	loc := locations[0]
 	parts := []string{}
@@ -594,6 +617,29 @@ func buildWorkdayJobURL(endpoint, externalPath string) string {
 		return strings.TrimSpace(externalPath)
 	}
 	parsed.Path = strings.TrimSpace(externalPath)
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return parsed.String()
+}
+
+func buildWorkdayJobURLFromCareers(careersURL, externalPath string) string {
+	careersURL = strings.TrimSpace(careersURL)
+	externalPath = strings.TrimSpace(externalPath)
+	if careersURL == "" || externalPath == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(careersURL)
+	if err != nil || parsed.Host == "" {
+		if withScheme, err := url.Parse("https://" + careersURL); err == nil {
+			parsed = withScheme
+		}
+	}
+	if parsed.Host == "" {
+		return ""
+	}
+
+	parsed.Path = strings.TrimRight(parsed.Path, "/") + externalPath
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return parsed.String()
