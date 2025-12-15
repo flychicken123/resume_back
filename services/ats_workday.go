@@ -110,7 +110,8 @@ func (p *WorkdayProvider) FetchJobs(ctx context.Context, company *models.JobComp
 		return nil, err
 	}
 
-	const pageSize = 50
+	// Some Workday tenants reject limits > 20 with HTTP 400.
+	const pageSize = 20
 	offset := 0
 	var postings []*models.JobPosting
 
