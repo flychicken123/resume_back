@@ -10,6 +10,14 @@ func TestFormatJobDescriptionSnippet_DecodesAndStripsHTML(t *testing.T) {
 	}
 }
 
+func TestFormatJobDescriptionSnippet_DecodesTwiceAndStripsHTML(t *testing.T) {
+	raw := `&amp;lt;div class=&amp;quot;content-intro&amp;quot;&amp;gt;Hello&amp;lt;br/&amp;gt;World&amp;lt;/div&amp;gt;`
+	got := formatJobDescriptionSnippet(raw, 500)
+	if got != "Hello World" {
+		t.Fatalf("expected %q, got %q", "Hello World", got)
+	}
+}
+
 func TestFormatJobDescriptionSnippet_StripsRawHTML(t *testing.T) {
 	raw := `<div>One<br>Two</div>`
 	got := formatJobDescriptionSnippet(raw, 500)

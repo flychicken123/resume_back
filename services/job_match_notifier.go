@@ -575,9 +575,16 @@ func formatJobDescriptionSnippet(raw string, max int) string {
 		return ""
 	}
 
-	// Some ATS sources store descriptions HTML-escaped (e.g. "&lt;div...").
-	// Decode entities once, then strip tags.
-	cleaned = stdhtml.UnescapeString(cleaned)
+	// Some ATS sources store descriptions HTML-escaped (e.g. "&lt;div..."), and
+	// occasionally double-escaped (e.g. "&amp;lt;div..."). Decode a few times
+	// until stable so tag stripping works reliably.
+	for i := 0; i < 3; i++ {
+		unescaped := stdhtml.UnescapeString(cleaned)
+		if unescaped == cleaned {
+			break
+		}
+		cleaned = unescaped
+	}
 	cleaned = htmlScriptStyleRegexp.ReplaceAllString(cleaned, " ")
 	cleaned = htmlBreakRegexp.ReplaceAllString(cleaned, "\n")
 	cleaned = strings.NewReplacer("</p>", "\n", "</div>", "\n", "</li>", "\n", "<li>", " - ").Replace(cleaned)
