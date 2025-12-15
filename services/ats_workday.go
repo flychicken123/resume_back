@@ -330,15 +330,25 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 
 	if resp.StatusCode >= 400 {
 		if shouldRetryWorkdayViaPython(resp.StatusCode, body) {
-			if retryBody, retryStatus, retryErr := p.fetchPageViaPython(ctx, req.URL.String(), reqBody, cookieHeader, company); retryErr == nil {
-				body = retryBody
-				resp.StatusCode = retryStatus
-			} else {
+			retryBody, retryStatus, retryErr := p.fetchPageViaPython(ctx, req.URL.String(), reqBody, cookieHeader, company)
+			if retryErr != nil {
 				p.logger.Warn("workday python fallback failed", map[string]interface{}{
 					"company_id": companyID,
 					"status":     resp.StatusCode,
 					"error":      retryErr.Error(),
 				})
+			} else {
+				body = retryBody
+				resp.StatusCode = retryStatus
+			}
+
+			// Some sites return 400 when a stale/invalid cookie is included. If the python
+			// retry still fails and we had cookies, try once more without cookies.
+			if resp.StatusCode >= 400 && strings.TrimSpace(cookieHeader) != "" {
+				if retryBody, retryStatus, retryErr := p.fetchPageViaPython(ctx, req.URL.String(), reqBody, "", company); retryErr == nil {
+					body = retryBody
+					resp.StatusCode = retryStatus
+				}
 			}
 		}
 	}
