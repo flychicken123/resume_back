@@ -370,6 +370,9 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 		if company != nil {
 			careersURL = company.CareersURL
 		}
+		if resp.StatusCode == http.StatusUnprocessableEntity && p.careersLooksInMaintenance(ctx, careersURL) {
+			return nil, 0, fmt.Errorf("workday returned status %d (maintenance) (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
+		}
 		return nil, 0, fmt.Errorf("workday returned status %d (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
 	}
 
@@ -718,4 +721,41 @@ func buildCookieHeader(cookies []*http.Cookie) string {
 		parts = append(parts, fmt.Sprintf("%s=%s", cookie.Name, cookie.Value))
 	}
 	return strings.Join(parts, "; ")
+}
+
+func (p *WorkdayProvider) careersLooksInMaintenance(ctx context.Context, careersURL string) bool {
+	careersURL = strings.TrimSpace(careersURL)
+	if careersURL == "" || p == nil || p.client == nil {
+		return false
+	}
+
+	parsed, err := url.Parse(careersURL)
+	if err != nil || parsed.Host == "" {
+		if withScheme, err := url.Parse("https://" + careersURL); err == nil {
+			parsed = withScheme
+		}
+	}
+	if parsed == nil || parsed.Host == "" {
+		return false
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+	if err != nil {
+		return false
+	}
+	p.setCommonHeaders(req, parsed.String(), &models.JobCompany{CareersURL: careersURL}, false)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+
+	resp, err := p.client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	if err != nil {
+		return false
+	}
+	lower := strings.ToLower(string(body))
+	return strings.Contains(lower, "maintenance-page") || strings.Contains(lower, "community.workday.com/maintenance-page")
 }
