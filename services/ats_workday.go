@@ -27,6 +27,14 @@ type WorkdayProvider struct {
 	sessionCookies sync.Map
 }
 
+type workdayMaintenanceError struct {
+	CareersURL string
+}
+
+func (e *workdayMaintenanceError) Error() string {
+	return fmt.Sprintf("workday careers site in maintenance-page (careers_url=%s)", strings.TrimSpace(e.CareersURL))
+}
+
 const (
 	workdayClientHeader = "job-search"
 	defaultLocaleHeader = "en-US,en;q=0.9"
@@ -286,6 +294,10 @@ func (p *WorkdayProvider) extractTenantAndSite(parsed *url.URL, company *models.
 func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobCompany, endpoint string, offset, limit int) ([]*models.JobPosting, int, error) {
 	cookieHeader, err := p.warmUpSession(ctx, endpoint, company)
 	if err != nil {
+		var maintenanceErr *workdayMaintenanceError
+		if errors.As(err, &maintenanceErr) {
+			return nil, 0, maintenanceErr
+		}
 		p.logger.Warn("workday warmup failed; continuing without cookies", map[string]interface{}{
 			"company_id": func() int {
 				if company == nil {
@@ -370,8 +382,8 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 		if company != nil {
 			careersURL = company.CareersURL
 		}
-		if resp.StatusCode == http.StatusUnprocessableEntity && p.careersLooksInMaintenance(ctx, careersURL) {
-			return nil, 0, fmt.Errorf("workday returned status %d (maintenance) (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
+		if careersURL != "" && p.careersLooksInMaintenance(ctx, careersURL) {
+			return nil, 0, fmt.Errorf("workday returned status %d (maintenance-page) (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
 		}
 		return nil, 0, fmt.Errorf("workday returned status %d (endpoint=%s careers_url=%s): %s", resp.StatusCode, endpoint, careersURL, snippet)
 	}
@@ -382,17 +394,17 @@ func (p *WorkdayProvider) fetchPage(ctx context.Context, company *models.JobComp
 	}
 
 	results := make([]*models.JobPosting, 0, len(payload.JobPostings))
-		for _, job := range payload.JobPostings {
-			careersURL := ""
-			if company != nil {
-				careersURL = company.CareersURL
-			}
-			posting, err := p.transformJob(companyID, endpoint, careersURL, job)
-			if err != nil {
-				p.logger.Warn("skipping workday job", map[string]interface{}{"company_id": companyID, "error": err.Error()})
-				continue
-			}
-			results = append(results, posting)
+	for _, job := range payload.JobPostings {
+		careersURL := ""
+		if company != nil {
+			careersURL = company.CareersURL
+		}
+		posting, err := p.transformJob(companyID, endpoint, careersURL, job)
+		if err != nil {
+			p.logger.Warn("skipping workday job", map[string]interface{}{"company_id": companyID, "error": err.Error()})
+			continue
+		}
+		results = append(results, posting)
 	}
 
 	return results, len(payload.JobPostings), nil
@@ -675,8 +687,15 @@ func (p *WorkdayProvider) warmUpSession(ctx context.Context, endpoint string, co
 		return "", err
 	}
 	defer resp.Body.Close()
-	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20)); err != nil {
-		p.logger.Warn("error discarding response body during warmup", map[string]interface{}{"endpoint": endpoint, "error": err.Error()})
+
+	body, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if readErr != nil {
+		p.logger.Warn("error discarding response body during warmup", map[string]interface{}{"endpoint": endpoint, "error": readErr.Error()})
+	} else {
+		lower := strings.ToLower(string(body))
+		if strings.Contains(lower, "maintenance-page") || strings.Contains(lower, "community.workday.com/maintenance-page") {
+			return "", &workdayMaintenanceError{CareersURL: target}
+		}
 	}
 
 	cookieHeader := ""

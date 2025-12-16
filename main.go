@@ -511,6 +511,7 @@ func main() {
 				c.JSON(http.StatusOK, gin.H{"status": resumeBackfill.Status()})
 			})
 			admin.GET("/jobs/companies", jobsController.ListCompanies)
+			admin.GET("/jobs/companies/ats", jobsController.ExportCompanyATS)
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
 			admin.POST("/jobs/companies/import", jobsController.ImportCompanies)
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)

@@ -1,7 +1,9 @@
 package controllers
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/csv"
 	"errors"
 	"math"
 	"net/http"
@@ -57,25 +59,25 @@ func (jc *JobsController) GetJobByID(c *gin.Context) {
 	}
 
 	response := gin.H{
-		"id":               posting.ID,
-		"company_id":       posting.CompanyID,
-		"external_job_id":  posting.ExternalJobID,
-		"title":            posting.Title,
-		"location":         posting.Location,
-		"remote_type":      posting.RemoteType,
-		"department":       posting.Department,
-		"employment_type":  posting.EmploymentType,
-		"job_url":          posting.JobURL,
-		"application_url":  posting.ApplicationURL,
-		"description":      posting.Description,
-		"salary_min":       posting.SalaryMin,
-		"salary_max":       posting.SalaryMax,
-		"salary_currency":  posting.SalaryCurrency,
-		"posted_at":        posting.PostedAt,
-		"first_seen_at":    posting.FirstSeenAt,
-		"last_seen_at":     posting.LastSeenAt,
-		"closed_at":        posting.ClosedAt,
-		"is_active":        posting.IsActive,
+		"id":              posting.ID,
+		"company_id":      posting.CompanyID,
+		"external_job_id": posting.ExternalJobID,
+		"title":           posting.Title,
+		"location":        posting.Location,
+		"remote_type":     posting.RemoteType,
+		"department":      posting.Department,
+		"employment_type": posting.EmploymentType,
+		"job_url":         posting.JobURL,
+		"application_url": posting.ApplicationURL,
+		"description":     posting.Description,
+		"salary_min":      posting.SalaryMin,
+		"salary_max":      posting.SalaryMax,
+		"salary_currency": posting.SalaryCurrency,
+		"posted_at":       posting.PostedAt,
+		"first_seen_at":   posting.FirstSeenAt,
+		"last_seen_at":    posting.LastSeenAt,
+		"closed_at":       posting.ClosedAt,
+		"is_active":       posting.IsActive,
 	}
 	if companyName != nil {
 		response["company_name"] = *companyName
@@ -138,6 +140,73 @@ func (jc *JobsController) ListCompanies(c *gin.Context) {
 		"total":       total,
 		"total_pages": totalPages,
 	})
+}
+
+func (jc *JobsController) ExportCompanyATS(c *gin.Context) {
+	format := strings.ToLower(strings.TrimSpace(c.DefaultQuery("format", "json")))
+	status := strings.ToLower(strings.TrimSpace(c.DefaultQuery("status", "all")))
+
+	companies, err := jc.companies.ListAll()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load companies"})
+		return
+	}
+
+	filtered := make([]*models.JobCompany, 0, len(companies))
+	for _, company := range companies {
+		if company == nil {
+			continue
+		}
+		switch status {
+		case "active":
+			if !company.IsActive {
+				continue
+			}
+		case "inactive":
+			if company.IsActive {
+				continue
+			}
+		}
+		filtered = append(filtered, company)
+	}
+
+	if format == "csv" {
+		var buf bytes.Buffer
+		writer := csv.NewWriter(&buf)
+		_ = writer.Write([]string{"id", "name", "ats_provider", "careers_url", "is_active"})
+		for _, company := range filtered {
+			_ = writer.Write([]string{
+				strconv.Itoa(company.ID),
+				company.Name,
+				company.ATSProvider,
+				company.CareersURL,
+				strconv.FormatBool(company.IsActive),
+			})
+		}
+		writer.Flush()
+		if err := writer.Error(); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build csv"})
+			return
+		}
+
+		c.Header("Content-Type", "text/csv; charset=utf-8")
+		c.Header("Content-Disposition", "attachment; filename=job_companies_ats.csv")
+		c.String(http.StatusOK, buf.String())
+		return
+	}
+
+	out := make([]gin.H, 0, len(filtered))
+	for _, company := range filtered {
+		out = append(out, gin.H{
+			"id":           company.ID,
+			"name":         company.Name,
+			"ats_provider": company.ATSProvider,
+			"careers_url":  company.CareersURL,
+			"is_active":    company.IsActive,
+		})
+	}
+
+	c.JSON(http.StatusOK, gin.H{"companies": out, "count": len(out)})
 }
 
 type createCompanyRequest struct {
