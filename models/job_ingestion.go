@@ -1,6 +1,7 @@
 package models
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -810,6 +811,32 @@ func (m *JobPostingModel) DeactivateMissing(companyID int, activeExternalIDs []s
           AND external_job_id != ALL($2)
     `
 	res, err := m.db.Exec(query, companyID, pqArray(activeExternalIDs), closedAt)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// DeleteInactiveBefore removes inactive job postings that were last seen before the cutoff.
+// Returns the count deleted for this batch.
+func (m *JobPostingModel) DeleteInactiveBefore(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
+	if batchSize <= 0 {
+		batchSize = 5000
+	}
+
+	const query = `
+		DELETE FROM job_postings
+		WHERE id IN (
+			SELECT id
+			FROM job_postings
+			WHERE is_active = FALSE
+			  AND COALESCE(closed_at, last_seen_at, first_seen_at) < $1
+			ORDER BY id
+			LIMIT $2
+		)
+	`
+
+	res, err := m.db.ExecContext(ctx, query, cutoff, batchSize)
 	if err != nil {
 		return 0, err
 	}

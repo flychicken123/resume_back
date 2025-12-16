@@ -321,6 +321,9 @@ func (s *JobIngestionService) schedulerLoop(ctx context.Context, interval time.D
 		if err := s.syncDueCompanies(ctx); err != nil {
 			s.logger.Error("scheduled sync error", err)
 		}
+		if err := s.purgeOldJobPostings(ctx); err != nil {
+			s.logger.Error("scheduled job purge error", err)
+		}
 
 		select {
 		case <-ctx.Done():
@@ -328,6 +331,38 @@ func (s *JobIngestionService) schedulerLoop(ctx context.Context, interval time.D
 		case <-ticker.C:
 		}
 	}
+}
+
+func (s *JobIngestionService) purgeOldJobPostings(ctx context.Context) error {
+	now := s.clock()
+	cutoff := now.AddDate(0, -2, 0)
+
+	var totalDeleted int64
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		deleted, err := s.postingModel.DeleteInactiveBefore(ctx, cutoff, 5000)
+		if err != nil {
+			return err
+		}
+		totalDeleted += deleted
+
+		if deleted == 0 {
+			break
+		}
+	}
+
+	if totalDeleted > 0 {
+		s.logger.Info("purged old job postings", map[string]interface{}{
+			"deleted": totalDeleted,
+			"cutoff":  cutoff.Format(time.RFC3339),
+		})
+	}
+	return nil
 }
 
 func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
