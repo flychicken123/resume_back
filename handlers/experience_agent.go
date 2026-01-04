@@ -19,7 +19,8 @@ func SetExperienceAgent(agent *services.ExperienceAgent) {
 }
 
 type experienceParseRequest struct {
-	Text string `json:"text" binding:"required"`
+	Text     string                         `json:"text" binding:"required"`
+	Existing *services.ExperienceParseResult `json:"existing,omitempty"`
 }
 
 // ParseExperience analyzes free-form text using LangChain to extract structured
@@ -43,7 +44,13 @@ func ParseExperience(c *gin.Context) {
 		return
 	}
 
-	result, err := experienceAgent.ExtractExperiences(c.Request.Context(), text)
+	// Use existing data if provided, otherwise start fresh
+	existing := services.ExperienceParseResult{}
+	if req.Existing != nil {
+		existing = *req.Existing
+	}
+
+	result, err := experienceAgent.ExtractExperiencesWithContext(c.Request.Context(), text, existing)
 	if err != nil {
 		log.Printf("[experience-agent] failed to parse text=%q error=%v", sanitizeForLog(text), err)
 		utils.InternalServerError(c, "Failed to extract experience details", err)
