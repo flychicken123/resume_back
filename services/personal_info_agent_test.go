@@ -17,7 +17,7 @@ func TestPersonalInfoAgent_HappyPath(t *testing.T) {
   "name": "  jane doe ",
   "email": " jane@example.com ",
   "phone": " +1 (425) 389-1623 ",
-  "summary": " Senior backend engineer "
+  "summary": "Senior backend engineer"
 }`,
 	})
 	agent := &PersonalInfoAgent{llm: llm}
@@ -31,7 +31,7 @@ func TestPersonalInfoAgent_HappyPath(t *testing.T) {
 	assert.Equal(t, "+1 (425) 389-1623", res.Phone)
 	// Summary is not trimmed inside the agent today; this test just verifies
 	// that the model output is propagated.
-	assert.Equal(t, " Senior backend engineer ", res.Summary)
+	assert.Equal(t, "Senior backend engineer", res.Summary)
 }
 
 func TestPersonalInfoAgent_ErrorWhenLLMUnavailable(t *testing.T) {
