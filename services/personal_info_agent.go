@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -241,6 +242,10 @@ Text:
 	// Detect which field the user intended to update using programmatic keyword detection
 	// This overrides any incorrect LLM behavior
 	intendedField := detectIntendedField(input)
+
+	// Log for debugging
+	log.Printf("[personal-info-agent] input=%q intendedField=%q existing.Name=%q", input, intendedField, existing.Name)
+	log.Printf("[personal-info-agent] LLM raw response: %s", response)
 
 	// Start with existing data
 	result := existing
