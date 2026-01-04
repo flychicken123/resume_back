@@ -13,48 +13,83 @@ import (
 )
 
 // detectIntendedField determines which field the user wants to update based on keywords in the input.
-// Returns "email", "phone", "name", "summary", or "" if no specific field detected.
+// Returns "email", "phone", "name", "summary", or "" if no specific field detected or multiple fields detected.
 func detectIntendedField(input string) string {
 	lower := strings.ToLower(input)
 
-	// Email detection - highest priority (check for email keywords)
-	if strings.Contains(lower, "email") || strings.Contains(lower, "e-mail") ||
-		strings.Contains(lower, "e mail") {
-		return "email"
+	// Check for modification keywords that indicate a single-field update
+	hasModifyKeyword := strings.Contains(lower, "change my") || strings.Contains(lower, "update my") ||
+		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my")
+
+	// Count how many different field types are mentioned
+	fieldCount := 0
+
+	// Check for email keywords
+	hasEmailKeyword := strings.Contains(lower, "email") || strings.Contains(lower, "e-mail") ||
+		strings.Contains(lower, "e mail")
+	if hasEmailKeyword {
+		fieldCount++
 	}
 
-	// Also detect email if input contains @ symbol pattern (like user@domain.com)
-	// AND modification keywords but NO name keywords
-	emailPattern := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-	hasEmail := emailPattern.MatchString(input)
-	hasModifyKeyword := strings.Contains(lower, "change") || strings.Contains(lower, "update") ||
-		strings.Contains(lower, "set") || strings.Contains(lower, "modify")
+	// Check for phone keywords
+	hasPhoneKeyword := strings.Contains(lower, "phone") || strings.Contains(lower, "mobile") ||
+		strings.Contains(lower, "cell") || strings.Contains(lower, "telephone")
+	if hasPhoneKeyword {
+		fieldCount++
+	}
+
+	// Check for name keywords
 	hasNameKeyword := strings.Contains(lower, "my name") || strings.Contains(lower, "name is") ||
 		strings.Contains(lower, "i am ") || strings.Contains(lower, "i'm ")
+	if hasNameKeyword {
+		fieldCount++
+	}
 
-	if hasEmail && hasModifyKeyword && !hasNameKeyword {
+	// Check for summary keywords
+	hasSummaryKeyword := strings.Contains(lower, "summary") || strings.Contains(lower, "background") ||
+		strings.Contains(lower, "about me") || strings.Contains(lower, "bio")
+	if hasSummaryKeyword {
+		fieldCount++
+	}
+
+	// If multiple fields are mentioned, this is a full update - allow all fields
+	if fieldCount > 1 {
+		return ""
+	}
+
+	// If modification keyword is present with a single field, return that field
+	// This handles cases like "change my email to X" - only update email
+	if hasModifyKeyword {
+		if hasEmailKeyword {
+			return "email"
+		}
+		if hasPhoneKeyword {
+			return "phone"
+		}
+		if hasNameKeyword {
+			return "name"
+		}
+		if hasSummaryKeyword {
+			return "summary"
+		}
+	}
+
+	// Also detect email-only update if:
+	// - Input contains @ symbol pattern (email address)
+	// - AND contains "change", "update", "set" (not necessarily "change my")
+	// - AND only one field keyword is present (email)
+	// - AND NO name keywords are present
+	emailPattern := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+	hasEmailAddress := emailPattern.MatchString(input)
+	hasAnyModifyWord := strings.Contains(lower, "change") || strings.Contains(lower, "update") ||
+		strings.Contains(lower, "set") || strings.Contains(lower, "modify")
+
+	if hasEmailAddress && hasAnyModifyWord && hasEmailKeyword && !hasNameKeyword && !hasPhoneKeyword {
 		return "email"
 	}
 
-	// Phone detection
-	if strings.Contains(lower, "phone") || strings.Contains(lower, "mobile") ||
-		strings.Contains(lower, "cell") || strings.Contains(lower, "telephone") {
-		return "phone"
-	}
-
-	// Name detection
-	if hasNameKeyword {
-		return "name"
-	}
-
-	// Summary detection
-	if strings.Contains(lower, "summary") || strings.Contains(lower, "background") ||
-		strings.Contains(lower, "about me") || strings.Contains(lower, "bio") ||
-		strings.Contains(lower, "professional") {
-		return "summary"
-	}
-
-	return "" // No specific field detected, allow all updates
+	// No specific single-field update detected, allow all fields to be updated
+	return ""
 }
 
 // PersonalInfoAgent wraps an LLM client to extract personal details from natural language.
