@@ -76,31 +76,50 @@ CRITICAL RULES FOR PARTIAL UPDATES:
 - ONLY return a value (not null) for fields that the user EXPLICITLY mentions in their message
 - If a field is not mentioned, return null (not empty string) to preserve existing data
 - Carefully identify which field the user wants to update by looking for keywords
+- NEVER update multiple fields when only one field is mentioned
+
+FIELD DETECTION PRIORITY (check in this order):
+1. Look for explicit field keywords in the user's message
+2. Identify the field type based on the keyword that appears BEFORE the value
+3. Return null for ALL other fields
 
 FIELD DETECTION RULES:
-- NAME field keywords: "my name", "I am", "I'm called", "call me", "name is", "full name"
-  * "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
-  * "call me Jane" → {"name": "Jane", "email": null, "phone": null, "summary": null}
 
-- EMAIL field keywords: "email", "e-mail", "email address", "mail"
+EMAIL field (HIGHEST PRIORITY when email keywords present):
+- Keywords: "email", "e-mail", "email address", "mail", "e mail"
+- If ANY of these keywords appear, extract ONLY the email field, set all others to null
+- Examples:
+  * "change my email to wux1992@gmail.com" → {"name": null, "email": "wux1992@gmail.com", "phone": null, "summary": null}
   * "my email is john@example.com" → {"name": null, "email": "john@example.com", "phone": null, "summary": null}
   * "change my email address to jane@test.com" → {"name": null, "email": "jane@test.com", "phone": null, "summary": null}
-  * "email me at support@company.com" → {"name": null, "email": "support@company.com", "phone": null, "summary": null}
+  * "update my e-mail to support@company.com" → {"name": null, "email": "support@company.com", "phone": null, "summary": null}
+- IMPORTANT: The value after email keywords is ALWAYS the email address, NEVER the name
 
-- PHONE field keywords: "phone", "telephone", "mobile", "cell", "number", "contact number"
+PHONE field:
+- Keywords: "phone", "telephone", "mobile", "cell", "number", "contact number", "phone number"
+- If ANY of these keywords appear (WITHOUT email keywords), extract ONLY the phone field
+- Examples:
   * "my phone is 555-1234" → {"name": null, "email": null, "phone": "555-1234", "summary": null}
   * "change my phone number to 555-5678" → {"name": null, "email": null, "phone": "555-5678", "summary": null}
   * "call me at 555-9999" → {"name": null, "email": null, "phone": "555-9999", "summary": null}
 
-- SUMMARY field keywords: "summary", "background", "experience", "professional", "about me", "bio"
+NAME field:
+- Keywords: "my name", "I am", "I'm called", "call me" (followed by a person name), "name is", "full name"
+- Only extract if these specific name keywords appear
+- Examples:
+  * "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
+  * "call me Jane Smith" → {"name": "Jane Smith", "email": null, "phone": null, "summary": null}
+  * "I am Michael Johnson" → {"name": "Michael Johnson", "email": null, "phone": null, "summary": null}
+
+SUMMARY field:
+- Keywords: "summary", "background", "professional background", "about me", "bio"
+- Examples:
   * "I'm a software engineer with 5 years of experience" → {"name": null, "email": null, "phone": null, "summary": "Software engineer with 5 years of experience"}
   * "my summary is: passionate product manager" → {"name": null, "email": null, "phone": null, "summary": "Passionate product manager"}
 
-MODIFICATION PATTERNS - Pay special attention to:
-- "change my [field] to [value]" → update that specific field only
-- "update my [field] to [value]" → update that specific field only
-- "set my [field] to [value]" → update that specific field only
-- "my [field] is now [value]" → update that specific field only
+CRITICAL: Common mistake to AVOID:
+- WRONG: "change my email to wux1992@gmail.com" → {"name": "wux1992@gmail.com", "email": "wux1992@gmail.com", ...}
+- CORRECT: "change my email to wux1992@gmail.com" → {"name": null, "email": "wux1992@gmail.com", "phone": null, "summary": null}
 
 Other rules:
 - If the user explicitly states they do not have a field (e.g., "I don't have email"), output an empty string "" (not null) for that field.
