@@ -147,7 +147,7 @@ OUTPUT FORMAT:
 - Do not include any explanations, comments, or additional top-level fields.
 
 User text:
-%s`, input)
+%s`, existingContext, input)
 
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
 	if err != nil {
