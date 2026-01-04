@@ -18,7 +18,8 @@ func SetPersonalInfoAgent(agent *services.PersonalInfoAgent) {
 }
 
 type personalInfoRequest struct {
-	Text string `json:"text" binding:"required"`
+	Text     string                         `json:"text" binding:"required"`
+	Existing *services.PersonalInfoResult   `json:"existing,omitempty"`
 }
 
 // ParsePersonalInfo analyzes free-form text using LangChain to extract personal details.
@@ -34,7 +35,13 @@ func ParsePersonalInfo(c *gin.Context) {
 		return
 	}
 
-	result, err := personalInfoAgent.ExtractPersonalInfo(c.Request.Context(), req.Text)
+	// Use existing data if provided, otherwise start fresh
+	existing := services.PersonalInfoResult{}
+	if req.Existing != nil {
+		existing = *req.Existing
+	}
+
+	result, err := personalInfoAgent.ExtractPersonalInfoWithContext(c.Request.Context(), req.Text, existing)
 	if err != nil {
 		log.Printf("[personal-info] failed to parse text=%q error=%v", sanitizeForLog(req.Text), err)
 		utils.InternalServerError(c, "Failed to extract personal details", err)
