@@ -75,17 +75,41 @@ Return ONLY valid JSON using this exact schema:
 CRITICAL RULES FOR PARTIAL UPDATES:
 - ONLY return a value (not null) for fields that the user EXPLICITLY mentions in their message
 - If a field is not mentioned, return null (not empty string) to preserve existing data
-- Examples:
-  * User says "my name is John" → return {"name": "John", "email": null, "phone": null, "summary": null}
-  * User says "my email is john@example.com" → return {"name": null, "email": "john@example.com", "phone": null, "summary": null}
-  * User says "I'm a software engineer" → return {"name": null, "email": null, "phone": null, "summary": "Software engineer"}
+- Carefully identify which field the user wants to update by looking for keywords
+
+FIELD DETECTION RULES:
+- NAME field keywords: "my name", "I am", "I'm called", "call me", "name is", "full name"
+  * "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
+  * "call me Jane" → {"name": "Jane", "email": null, "phone": null, "summary": null}
+
+- EMAIL field keywords: "email", "e-mail", "email address", "mail"
+  * "my email is john@example.com" → {"name": null, "email": "john@example.com", "phone": null, "summary": null}
+  * "change my email address to jane@test.com" → {"name": null, "email": "jane@test.com", "phone": null, "summary": null}
+  * "email me at support@company.com" → {"name": null, "email": "support@company.com", "phone": null, "summary": null}
+
+- PHONE field keywords: "phone", "telephone", "mobile", "cell", "number", "contact number"
+  * "my phone is 555-1234" → {"name": null, "email": null, "phone": "555-1234", "summary": null}
+  * "change my phone number to 555-5678" → {"name": null, "email": null, "phone": "555-5678", "summary": null}
+  * "call me at 555-9999" → {"name": null, "email": null, "phone": "555-9999", "summary": null}
+
+- SUMMARY field keywords: "summary", "background", "experience", "professional", "about me", "bio"
+  * "I'm a software engineer with 5 years of experience" → {"name": null, "email": null, "phone": null, "summary": "Software engineer with 5 years of experience"}
+  * "my summary is: passionate product manager" → {"name": null, "email": null, "phone": null, "summary": "Passionate product manager"}
+
+MODIFICATION PATTERNS - Pay special attention to:
+- "change my [field] to [value]" → update that specific field only
+- "update my [field] to [value]" → update that specific field only
+- "set my [field] to [value]" → update that specific field only
+- "my [field] is now [value]" → update that specific field only
 
 Other rules:
 - If the user explicitly states they do not have a field (e.g., "I don't have email"), output an empty string "" (not null) for that field.
 - Never invent data that wasn't in the input.
 - Preserve proper case for names (e.g., "XUan wu" -> "Xuan Wu").
 - Strip filler phrases like "my number is" or "email me at" from stored values—return only the raw value.
-- For the summary, combine any sentences that describe the user's professional background (e.g., years of experience, companies, roles) into a concise, polished summary even if they didn't label it as such.
+- For email addresses, return ONLY the email address itself (e.g., "user@example.com"), not any surrounding text.
+- For phone numbers, return ONLY the digits and optional + prefix.
+- For the summary, combine any sentences that describe the user's professional background into a concise, polished summary.
 
 Text:
 %s`, existingContext, input)
