@@ -233,12 +233,24 @@ Implemented automated testing framework that increased code coverage from 45%% t
 Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, jobDescription, userExperience)
 }
 
-func BuildEducationOptimizationPrompt(education string) string {
+func BuildEducationOptimizationPrompt(education string, existingEducation ...string) string {
+	existingContext := ""
+	var mode string
+	if len(existingEducation) > 0 && strings.TrimSpace(existingEducation[0]) != "" {
+		existingContext = fmt.Sprintf(`
+EXISTING EDUCATION (Preserve key details and enhance):
+%s
+`, strings.TrimSpace(existingEducation[0]))
+		mode = "enhance the existing education entry while preserving its key details"
+	} else {
+		mode = "optimize the education section"
+	}
+
 	return fmt.Sprintf(`You are an expert resume writer and career coach.
+%s
+Your task is to %s to make it more professional and impactful.
 
-Your task is to optimize a user's education section to make it more professional and impactful.
-
-User's Original Education:
+User's Original/New Education:
 %s
 
 Please optimize the education description by:
@@ -247,24 +259,37 @@ Please optimize the education description by:
 3. Using clear, professional language
 4. Maintaining the same level of detail but making it more impactful
 5. Focusing on relevant academic achievements and skills
+6. If existing education is provided, PRESERVE the degree, institution, and key achievements while enhancing presentation
 
 IMPORTANT: Return ONLY the optimized education text. Do NOT include:
 - Explanations or additional text
 - Bullet point symbols (• or -)
 - Any header information
 
-Format the response as clean, professional text that can be directly used as the education description.`, education)
+Format the response as clean, professional text that can be directly used as the education description.`, existingContext, mode, education)
 }
 
-func BuildSummaryOptimizationPrompt(experience, education string, skills []string) string {
+func BuildSummaryOptimizationPrompt(experience, education string, skills []string, existingSummary ...string) string {
 	skillsText := ""
 	if len(skills) > 0 {
 		skillsText = strings.Join(skills, ", ")
 	}
 
-	return fmt.Sprintf(`You are an expert resume writer and career coach.
+	existingContext := ""
+	var mode string
+	if len(existingSummary) > 0 && strings.TrimSpace(existingSummary[0]) != "" {
+		existingContext = fmt.Sprintf(`
+EXISTING SUMMARY (Preserve key points and enhance):
+%s
+`, strings.TrimSpace(existingSummary[0]))
+		mode = "enhance the existing summary while preserving its core message"
+	} else {
+		mode = "create a compelling professional summary"
+	}
 
-Your task is to create a compelling professional summary based on the user's experience, education, and skills.
+	return fmt.Sprintf(`You are an expert resume writer and career coach.
+%s
+Your task is to %s based on the user's experience, education, and skills.
 
 Experience: %s
 Education: %s
@@ -298,12 +323,14 @@ INSTEAD, be specific about:
 - Concrete accomplishments
 - Industry expertise
 - Leadership experience with team sizes
-  - Revenue/cost/efficiency impacts
+- Revenue/cost/efficiency impacts
 
-  INTEGRITY REQUIREMENTS:
-  - Base every statement solely on the supplied experience, education, and skills.
-  - Do NOT introduce employers, titles, responsibilities, or outcomes that cannot be inferred from the provided information.
-  - If metrics are absent, keep accomplishments qualitative instead of fabricating numbers.
+INTEGRITY REQUIREMENTS:
+- If an existing summary is provided, PRESERVE its core message and key achievements
+- Enhance and polish the existing content rather than replacing it entirely
+- Base every statement solely on the supplied experience, education, skills, and existing summary
+- Do NOT introduce employers, titles, responsibilities, or outcomes that cannot be inferred from the provided information
+- If metrics are absent, keep accomplishments qualitative instead of fabricating numbers
 
   IMPORTANT: Return ONLY the professional summary text. Do NOT include:
 - Explanations or additional text
@@ -311,7 +338,7 @@ INSTEAD, be specific about:
 - Any header information
 - Generic personality traits
 
-Format the response as a clean, professional summary that immediately demonstrates value through specific expertise and accomplishments.`, experience, education, skillsText)
+Format the response as a clean, professional summary that immediately demonstrates value through specific expertise and accomplishments.`, existingContext, mode, experience, education, skillsText)
 }
 
 // Grammar improvement prompts
@@ -373,15 +400,27 @@ Implemented automated testing framework that increased code coverage from 45%% t
 Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, experience)
 }
 
-func BuildProjectOptimizationPrompt(jobDescription string, projectData string) string {
-	return fmt.Sprintf(`You are an expert resume writer who specializes in optimizing project descriptions for job applications.
+func BuildProjectOptimizationPrompt(jobDescription string, projectData string, existingProject ...string) string {
+	existingContext := ""
+	var mode string
+	if len(existingProject) > 0 && strings.TrimSpace(existingProject[0]) != "" {
+		existingContext = fmt.Sprintf(`
+EXISTING PROJECT (Preserve key details and enhance):
+%s
+`, strings.TrimSpace(existingProject[0]))
+		mode = "enhance the existing project description while preserving its key details and technologies"
+	} else {
+		mode = "optimize the project description"
+	}
 
-Your task is to optimize this project description to align with the specific job requirements.
+	return fmt.Sprintf(`You are an expert resume writer who specializes in optimizing project descriptions for job applications.
+%s
+Your task is to %s to align with the specific job requirements.
 
 Job Description:
 %s
 
-Current Project Description:
+Current/New Project Description:
 %s
 
 Please optimize this project by:
@@ -392,19 +431,27 @@ Please optimize this project by:
 5. Aligning the tone with the company culture suggested by the job posting
 6. Focusing on aspects most relevant to the target role
 7. Using action verbs that demonstrate the competencies required
+8. If existing project is provided, PRESERVE the project name, core technologies, and key achievements while enhancing presentation
 
-	Keep the project authentic and truthful while emphasizing the most relevant aspects for this role. Do NOT invent new achievements, technologies, or metrics—only elevate what is already present in the original project description. If specific numbers are missing, keep the statement qualitative rather than fabricating data.
+Keep the project authentic and truthful while emphasizing the most relevant aspects for this role. Do NOT invent new achievements, technologies, or metrics—only elevate what is already present in the original project description. If specific numbers are missing, keep the statement qualitative rather than fabricating data.
 
 Return ONLY the improved project description text, with each achievement on a new line.
-Do NOT include project name, dates, or any header information.`, jobDescription, projectData)
+Do NOT include project name, dates, or any header information.`, existingContext, mode, jobDescription, projectData)
 }
 
-func BuildProjectGrammarPrompt(projectData string) string {
+func BuildProjectGrammarPrompt(projectData string, existingProject ...string) string {
+	existingContext := ""
+	if len(existingProject) > 0 && strings.TrimSpace(existingProject[0]) != "" {
+		existingContext = fmt.Sprintf(`
+EXISTING PROJECT (Preserve and enhance):
+%s
+`, strings.TrimSpace(existingProject[0]))
+	}
 	return fmt.Sprintf(`You are an expert resume writer and editor specializing in technical project descriptions.
-
+%s
 Your task is to improve the grammar, clarity, and professional tone of this project description.
 
-Original Project Description:
+Original/New Project Description:
 %s
 
 Transform this project description using this formula: [ACTION VERB] + [WHAT YOU BUILT/DID] + [TECHNOLOGIES USED] + [IMPACT/OUTCOME]
@@ -420,8 +467,9 @@ Please improve this text by:
   8. Making it clear what YOU specifically did (not team accomplishments)
 
   INTEGRITY REQUIREMENTS:
-  - Preserve the factual details supplied in the original project; do NOT invent new scope, technologies, or outcomes.
-  - Only add metrics when they are implied by the original description—otherwise keep statements qualitative without fabricating numbers.
+  - If existing project is provided, PRESERVE its key details, technologies, and achievements
+  - Preserve the factual details supplied in the original project; do NOT invent new scope, technologies, or outcomes
+  - Only add metrics when they are implied by the original description—otherwise keep statements qualitative without fabricating numbers
 
   ENHANCE with these types of metrics:
 - Technical scale (X users, X requests/second, X GB data)
@@ -441,7 +489,7 @@ IMPORTANT: Return ONLY the improved description text. Do NOT include:
 - Explanations or additional text
 - Bullet point symbols (• or -)
 
-Format the response as clean text with each achievement on a new line, focusing on technical accomplishments and measurable outcomes.`, projectData)
+Format the response as clean text with each achievement on a new line, focusing on technical accomplishments and measurable outcomes.`, existingContext, projectData)
 }
 
 func BuildSummaryGrammarPrompt(summary string) string {

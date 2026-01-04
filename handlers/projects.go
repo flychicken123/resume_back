@@ -10,8 +10,9 @@ import (
 )
 
 type ProjectOptimizationRequest struct {
-	JobDescription string `json:"jobDescription"`
-	ProjectData    string `json:"projectData" binding:"required"`
+	JobDescription  string `json:"jobDescription"`
+	ProjectData     string `json:"projectData" binding:"required"`
+	ExistingProject string `json:"existingProject,omitempty"` // For preserving/updating existing project
 }
 
 type ProjectOptimizationResponse struct {
@@ -40,10 +41,10 @@ func OptimizeProject(c *gin.Context) {
 	// Otherwise, just improve grammar and professionalism
 	var prompt string
 	if req.JobDescription != "" {
-		prompt = services.BuildProjectOptimizationPrompt(req.JobDescription, req.ProjectData)
+		prompt = services.BuildProjectOptimizationPrompt(req.JobDescription, req.ProjectData, req.ExistingProject)
 	} else {
 		// Fall back to grammar improvement if no job description
-		prompt = services.BuildProjectGrammarPrompt(req.ProjectData)
+		prompt = services.BuildProjectGrammarPrompt(req.ProjectData, req.ExistingProject)
 	}
 
 	// Call AI service to generate optimized project

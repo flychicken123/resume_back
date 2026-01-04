@@ -16,6 +16,7 @@ import (
 type AutoSkillsRequest struct {
 	ResumeData     map[string]interface{} `json:"resumeData" binding:"required"`
 	JobDescription string                 `json:"jobDescription"`
+	ExistingSkills []string               `json:"existingSkills,omitempty"` // For preserving existing skills
 }
 
 // AutoSkillsResponse is returned to the frontend and includes both a structured
@@ -47,7 +48,7 @@ func AutoGenerateSkills(c *gin.Context) {
 		return
 	}
 
-	prompt := buildSkillsExtractionPrompt(req.ResumeData, req.JobDescription)
+	prompt := buildSkillsExtractionPrompt(req.ResumeData, req.JobDescription, req.ExistingSkills)
 
 	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
 	if err != nil {
@@ -170,7 +171,7 @@ func CategorizeSkills(c *gin.Context) {
 
 // buildSkillsExtractionPrompt converts the loosely-typed resumeData map into a
 // readable text block and asks the LangChain model to return a JSON list of skills.
-func buildSkillsExtractionPrompt(resumeData map[string]interface{}, jobDescription string) string {
+func buildSkillsExtractionPrompt(resumeData map[string]interface{}, jobDescription string, existingSkills []string) string {
 	var parts []string
 
 	// Basic identity fields (if present).
@@ -329,7 +330,13 @@ func buildSkillsExtractionPrompt(resumeData map[string]interface{}, jobDescripti
 		jobContext = "\n\nTARGET JOB DESCRIPTION:\n" + trimmedJD
 	}
 
+	existingContext := ""
+	if len(existingSkills) > 0 {
+		existingContext = "\n\nEXISTING SKILLS (MUST PRESERVE):\n" + strings.Join(existingSkills, ", ") + "\n"
+	}
+
 	return `You are an expert resume analyst and career coach.
+` + existingContext + `
 
 Your job is to read the candidate's in-progress resume data and (optionally) a target job description, then extract a clean, de-duplicated list of skills and tools.
 
@@ -342,11 +349,14 @@ Return ONLY valid JSON using exactly this schema:
 }
 
 Guidelines:
-- Include both technical and soft skills that are clearly supported by the resume or helpful for the target job.
-- Consolidate near-duplicates into a single, standard label (e.g., "Golang" and "Go" -> "Go"; "Microsoft Azure" and "Azure" -> "Azure").
-- Use concise, recruiter-friendly labels (e.g., "Distributed Systems", "REST APIs", "Kubernetes", "React", "Python").
-- Do NOT include generic filler words like "team player", "hard-working", "etc".
-- Do NOT invent skills that are not implied by the resume or job description.
+- PRESERVE all existing skills listed above - they MUST be included in the output
+- ADD new skills from the resume data that aren't already in the existing list
+- Include both technical and soft skills that are clearly supported by the resume or helpful for the target job
+- Consolidate near-duplicates into a single, standard label (e.g., "Golang" and "Go" -> "Go"; "Microsoft Azure" and "Azure" -> "Azure")
+- Use concise, recruiter-friendly labels (e.g., "Distributed Systems", "REST APIs", "Kubernetes", "React", "Python")
+- Do NOT include generic filler words like "team player", "hard-working", "etc"
+- Do NOT invent skills that are not implied by the resume or job description
+- Do NOT remove any existing skills unless they are clear duplicates
 
 RESUME DATA:
 ` + resumeText + `

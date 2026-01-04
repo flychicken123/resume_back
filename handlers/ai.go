@@ -10,7 +10,8 @@ import (
 )
 
 type EducationOptimizationRequest struct {
-	Education string `json:"education" binding:"required"`
+	Education         string `json:"education" binding:"required"`
+	ExistingEducation string `json:"existingEducation,omitempty"` // For preserving/updating existing education
 }
 
 type EducationOptimizationResponse struct {
@@ -19,9 +20,10 @@ type EducationOptimizationResponse struct {
 }
 
 type SummaryOptimizationRequest struct {
-	Experience string   `json:"experience"`
-	Education  string   `json:"education"`
-	Skills     []string `json:"skills"`
+	Experience      string   `json:"experience"`
+	Education       string   `json:"education"`
+	Skills          []string `json:"skills"`
+	ExistingSummary string   `json:"existingSummary,omitempty"` // For preserving/updating existing summary
 }
 
 type SummaryOptimizationResponse struct {
@@ -36,8 +38,8 @@ func OptimizeEducation(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for education optimization
-	prompt := services.BuildEducationOptimizationPrompt(req.Education)
+	// Build prompt for education optimization (with existing education for preservation)
+	prompt := services.BuildEducationOptimizationPrompt(req.Education, req.ExistingEducation)
 
 	// Call AI service to generate optimized education
 	optimizedEducation, err := services.CallGeminiWithAPIKey(prompt)
@@ -64,8 +66,8 @@ func OptimizeSummary(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for summary optimization
-	prompt := services.BuildSummaryOptimizationPrompt(req.Experience, req.Education, req.Skills)
+	// Build prompt for summary optimization (with existing summary for preservation)
+	prompt := services.BuildSummaryOptimizationPrompt(req.Experience, req.Education, req.Skills, req.ExistingSummary)
 
 	// Call AI service to generate optimized summary
 	optimizedSummary, err := services.CallGeminiWithAPIKey(prompt)
