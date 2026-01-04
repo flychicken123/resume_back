@@ -5,11 +5,57 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
 	"github.com/tmc/langchaingo/llms/googleai"
 )
+
+// detectIntendedField determines which field the user wants to update based on keywords in the input.
+// Returns "email", "phone", "name", "summary", or "" if no specific field detected.
+func detectIntendedField(input string) string {
+	lower := strings.ToLower(input)
+
+	// Email detection - highest priority (check for email keywords)
+	if strings.Contains(lower, "email") || strings.Contains(lower, "e-mail") ||
+		strings.Contains(lower, "e mail") {
+		return "email"
+	}
+
+	// Also detect email if input contains @ symbol pattern (like user@domain.com)
+	// AND modification keywords but NO name keywords
+	emailPattern := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+	hasEmail := emailPattern.MatchString(input)
+	hasModifyKeyword := strings.Contains(lower, "change") || strings.Contains(lower, "update") ||
+		strings.Contains(lower, "set") || strings.Contains(lower, "modify")
+	hasNameKeyword := strings.Contains(lower, "my name") || strings.Contains(lower, "name is") ||
+		strings.Contains(lower, "i am ") || strings.Contains(lower, "i'm ")
+
+	if hasEmail && hasModifyKeyword && !hasNameKeyword {
+		return "email"
+	}
+
+	// Phone detection
+	if strings.Contains(lower, "phone") || strings.Contains(lower, "mobile") ||
+		strings.Contains(lower, "cell") || strings.Contains(lower, "telephone") {
+		return "phone"
+	}
+
+	// Name detection
+	if hasNameKeyword {
+		return "name"
+	}
+
+	// Summary detection
+	if strings.Contains(lower, "summary") || strings.Contains(lower, "background") ||
+		strings.Contains(lower, "about me") || strings.Contains(lower, "bio") ||
+		strings.Contains(lower, "professional") {
+		return "summary"
+	}
+
+	return "" // No specific field detected, allow all updates
+}
 
 // PersonalInfoAgent wraps an LLM client to extract personal details from natural language.
 type PersonalInfoAgent struct {
@@ -157,31 +203,64 @@ Text:
 		return PersonalInfoResult{}, fmt.Errorf("failed to parse personal info JSON: %w", err)
 	}
 
+	// Detect which field the user intended to update using programmatic keyword detection
+	// This overrides any incorrect LLM behavior
+	intendedField := detectIntendedField(input)
+
 	// Start with existing data
 	result := existing
 
-	// Only update fields that were explicitly returned (not null)
-	if val, ok := rawMap["name"]; ok && val != nil {
-		if strVal, isString := val.(string); isString {
-			result.Name = strings.TrimSpace(strVal)
+	// Only update the intended field (if detected) or all non-null fields (if not detected)
+	switch intendedField {
+	case "email":
+		// Only update email field, ignore any other fields the LLM might have returned
+		if val, ok := rawMap["email"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Email = strings.TrimSpace(strVal)
+			}
 		}
-	}
-
-	if val, ok := rawMap["email"]; ok && val != nil {
-		if strVal, isString := val.(string); isString {
-			result.Email = strings.TrimSpace(strVal)
+	case "phone":
+		// Only update phone field
+		if val, ok := rawMap["phone"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Phone = strings.TrimSpace(strVal)
+			}
 		}
-	}
-
-	if val, ok := rawMap["phone"]; ok && val != nil {
-		if strVal, isString := val.(string); isString {
-			result.Phone = strings.TrimSpace(strVal)
+	case "name":
+		// Only update name field
+		if val, ok := rawMap["name"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Name = strings.TrimSpace(strVal)
+			}
 		}
-	}
-
-	if val, ok := rawMap["summary"]; ok && val != nil {
-		if strVal, isString := val.(string); isString {
-			result.Summary = strings.TrimSpace(strVal)
+	case "summary":
+		// Only update summary field
+		if val, ok := rawMap["summary"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Summary = strings.TrimSpace(strVal)
+			}
+		}
+	default:
+		// No specific field detected, update all non-null fields (original behavior)
+		if val, ok := rawMap["name"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Name = strings.TrimSpace(strVal)
+			}
+		}
+		if val, ok := rawMap["email"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Email = strings.TrimSpace(strVal)
+			}
+		}
+		if val, ok := rawMap["phone"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Phone = strings.TrimSpace(strVal)
+			}
+		}
+		if val, ok := rawMap["summary"]; ok && val != nil {
+			if strVal, isString := val.(string); isString {
+				result.Summary = strings.TrimSpace(strVal)
+			}
 		}
 	}
 
