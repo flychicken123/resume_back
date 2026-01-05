@@ -83,11 +83,16 @@ EXAMPLES:
 - "my project is an e-commerce platform built with Python" → {"projects": [{"projectName": "e-commerce platform", "description": "", "technologies": "Python", "projectUrl": "", "startDate": "", "endDate": ""}]}
 - "change project name to NewApp" → update only projectName field of existing project
 - "update project description to: A mobile app for tracking fitness" → update only description field
+- "remove the technologies from TaskManager" → set technologies to "" for TaskManager project
+- "delete project TaskManager" → remove TaskManager from the projects array
+- "clear project description" → set description to "" for the project
 
 FIELD UPDATE RULES:
 - When modifying an existing project, identify it by name or context
 - Only update fields explicitly mentioned in the user's message
 - Preserve all other fields from the existing project
+- For REMOVAL of a field (remove/delete/clear), set it to empty string ""
+- For REMOVAL of an entire project, omit it from the returned array
 
 Return ONLY valid JSON:
 {"projects": [{"projectName": <string>, "description": <string>, "technologies": <string>, "projectUrl": <string>, "startDate": <string>, "endDate": <string>}]}

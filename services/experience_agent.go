@@ -120,16 +120,22 @@ CRITICAL RULES FOR PARTIAL UPDATES:
 - If existing experiences are provided above, determine the user's intent:
   * ADDING: User says "add experience at Company X" or describes a completely new role → append to experiences array
   * MODIFYING: User says "change my title at Company Y to Z" or "update my role at Company X" → find that specific experience and update only the mentioned field(s), preserve everything else
+  * REMOVING FIELD: User says "remove/delete/clear my description at Company X" → set that field to empty string ""
+  * REMOVING ENTRY: User says "remove/delete my experience at Company X" → remove that entire experience from the array
   * REPLACING ALL: User provides a complete work history → replace all existing experiences with the new list
 
 FIELD UPDATE RULES:
 - When modifying an existing experience, identify it by company name, job title, or context clues
 - Only update fields explicitly mentioned in the user's message
 - Preserve all other fields from the existing experience
+- For REMOVAL of a field, set it to empty string ""
+- For REMOVAL of an entire experience, omit it from the returned array
 - Examples:
   * "change my job title at Microsoft to Senior Engineer" → find Microsoft entry, update only jobTitle field
   * "update my end date at Google to 2024-12" → find Google entry, update only endDate field
   * "add description: led a team of 5 engineers at Amazon" → find Amazon entry, update only description field
+  * "remove my description at Microsoft" → find Microsoft entry, set description to ""
+  * "delete my experience at Google" → remove Google entry from the array entirely
 
 GENERAL RULES:
 - Never invent employers, dates, or projects that are not implied by the text.

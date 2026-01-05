@@ -57,20 +57,32 @@ func ParsePersonalInfo(c *gin.Context) {
 		result.Summary,
 	)
 
-	// Only return fields that have actual values (not empty strings)
-	// This allows frontend to use hasOwnProperty to detect which fields were extracted
+	// Return fields that have values OR were explicitly removed (empty in result but had value in existing)
+	// This allows frontend to detect both updates and removals
 	responseData := make(map[string]string)
 	if result.Name != "" {
 		responseData["name"] = result.Name
+	} else if existing.Name != "" && result.Name == "" {
+		// Field was removed
+		responseData["name"] = ""
 	}
 	if result.Email != "" {
 		responseData["email"] = result.Email
+	} else if existing.Email != "" && result.Email == "" {
+		// Field was removed
+		responseData["email"] = ""
 	}
 	if result.Phone != "" {
 		responseData["phone"] = result.Phone
+	} else if existing.Phone != "" && result.Phone == "" {
+		// Field was removed
+		responseData["phone"] = ""
 	}
 	if result.Summary != "" {
 		responseData["summary"] = result.Summary
+	} else if existing.Summary != "" && result.Summary == "" {
+		// Field was removed
+		responseData["summary"] = ""
 	}
 
 	c.JSON(http.StatusOK, gin.H{

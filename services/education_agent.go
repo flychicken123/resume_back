@@ -87,11 +87,16 @@ EXAMPLES:
 - "graduated from Stanford in 2020 with a Master's in AI" → {"education": [{"degree": "Master's", "field": "AI", "school": "Stanford", "city": "", "state": "", "graduationYear": "2020", "gpa": "", "honors": ""}]}
 - "change my school to Harvard" → update only school field of existing education
 - "update my graduation year to 2023" → update only graduationYear field
+- "remove my GPA" → set gpa to "" for the education entry
+- "delete my education at MIT" → remove MIT from the education array
+- "clear my honors" → set honors to "" for the education entry
 
 FIELD UPDATE RULES:
 - When modifying existing education, identify it by school name, degree, or context
 - Only update fields explicitly mentioned in the user's message
 - Preserve all other fields from the existing education
+- For REMOVAL of a field (remove/delete/clear), set it to empty string ""
+- For REMOVAL of an entire education entry, omit it from the returned array
 
 Return ONLY valid JSON:
 {"education": [{"degree": <string>, "field": <string>, "school": <string>, "city": <string>, "state": <string>, "graduationYear": <string>, "gpa": <string>, "honors": <string>}]}

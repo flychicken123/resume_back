@@ -21,6 +21,11 @@ func detectIntendedField(input string) string {
 	hasModifyKeyword := strings.Contains(lower, "change my") || strings.Contains(lower, "update my") ||
 		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my")
 
+	// Check for removal keywords
+	hasRemoveKeyword := strings.Contains(lower, "remove my") || strings.Contains(lower, "delete my") ||
+		strings.Contains(lower, "clear my") || strings.Contains(lower, "remove the") ||
+		strings.Contains(lower, "delete the") || strings.Contains(lower, "clear the")
+
 	// Check for "my X is Y" pattern (e.g., "my email is X", "my phone is Y")
 	// Note: "my name is" is excluded because it's a common introduction phrase, not a field update
 	hasMyXIsPattern := strings.Contains(lower, "my email is") || strings.Contains(lower, "my phone is") ||
@@ -73,9 +78,9 @@ func detectIntendedField(input string) string {
 		}
 	}
 
-	// If modification keyword is present with a single field, return that field
-	// This handles cases like "change my email to X" - only update email
-	if hasModifyKeyword {
+	// If modification or removal keyword is present with a single field, return that field
+	// This handles cases like "change my email to X" or "remove my email"
+	if hasModifyKeyword || hasRemoveKeyword {
 		if hasEmailKeyword {
 			return "email"
 		}
@@ -184,6 +189,7 @@ RULES:
 3. For phone: extract the phone number (digits only)
 4. For name: extract the person's name
 5. For summary: extract the professional description
+6. For REMOVAL requests (remove/delete/clear): return empty string "" for that field
 
 EXAMPLES:
 - "change my email to test@gmail.com" → {"name": null, "email": "test@gmail.com", "phone": null, "summary": null}
@@ -191,6 +197,9 @@ EXAMPLES:
 - "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
 - "my phone is 1234567890" → {"name": null, "email": null, "phone": "1234567890", "summary": null}
 - "change my phone number to 9876543210" → {"name": null, "email": null, "phone": "9876543210", "summary": null}
+- "remove my email" → {"name": null, "email": "", "phone": null, "summary": null}
+- "delete my phone number" → {"name": null, "email": null, "phone": "", "summary": null}
+- "clear my summary" → {"name": null, "email": null, "phone": null, "summary": ""}
 
 Return ONLY valid JSON:
 {"name": <string or null>, "email": <string or null>, "phone": <string or null>, "summary": <string or null>}
