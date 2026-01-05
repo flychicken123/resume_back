@@ -9,6 +9,7 @@ import (
 	"resumeai/utils"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
@@ -122,7 +123,9 @@ func ExplainJobFit(c *gin.Context) {
 	}
 
 	prompt := services.BuildJobFitExplanationPrompt(req.ResumeData, req.Match)
-	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
+	timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 7*time.Second)
+	defer cancel()
+	raw, err := runCopilotPrompt(timeoutCtx, prompt)
 	if err != nil {
 		// Fall back to a simple generic reason if AI is unavailable.
 		fallback := []string{"Your resume highlights match the core needs of this role."}
