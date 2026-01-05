@@ -22,8 +22,9 @@ func detectIntendedField(input string) string {
 		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my")
 
 	// Check for "my X is Y" pattern (e.g., "my email is X", "my phone is Y")
+	// Note: "my name is" is excluded because it's a common introduction phrase, not a field update
 	hasMyXIsPattern := strings.Contains(lower, "my email is") || strings.Contains(lower, "my phone is") ||
-		strings.Contains(lower, "my name is") || strings.Contains(lower, "my number is")
+		strings.Contains(lower, "my number is")
 
 	// Count how many different field types are mentioned
 	fieldCount := 0
@@ -69,9 +70,6 @@ func detectIntendedField(input string) string {
 		}
 		if strings.Contains(lower, "my phone is") || strings.Contains(lower, "my number is") {
 			return "phone"
-		}
-		if strings.Contains(lower, "my name is") {
-			return "name"
 		}
 	}
 
