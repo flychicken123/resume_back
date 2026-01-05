@@ -126,6 +126,7 @@ CRITICAL RULES FOR PARTIAL UPDATES:
 
 FIELD UPDATE RULES:
 - When modifying an existing experience, identify it by company name, job title, or context clues
+- When modifying, reuse the exact company name from the existing experience if the user references it, even if the user input has typos
 - Only update fields explicitly mentioned in the user's message
 - Preserve all other fields from the existing experience
 - For REMOVAL of a field, set it to empty string ""
