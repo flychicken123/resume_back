@@ -57,8 +57,24 @@ func ParsePersonalInfo(c *gin.Context) {
 		result.Summary,
 	)
 
+	// Only return fields that have actual values (not empty strings)
+	// This allows frontend to use hasOwnProperty to detect which fields were extracted
+	responseData := make(map[string]string)
+	if result.Name != "" {
+		responseData["name"] = result.Name
+	}
+	if result.Email != "" {
+		responseData["email"] = result.Email
+	}
+	if result.Phone != "" {
+		responseData["phone"] = result.Phone
+	}
+	if result.Summary != "" {
+		responseData["summary"] = result.Summary
+	}
+
 	c.JSON(http.StatusOK, gin.H{
-		"data": result,
+		"data": responseData,
 	})
 }
 

@@ -9,6 +9,48 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var projectsAgent *services.ProjectsAgent
+
+// SetProjectsAgent injects the LangChain-powered projects parser.
+func SetProjectsAgent(agent *services.ProjectsAgent) {
+	projectsAgent = agent
+}
+
+type projectsParseRequest struct {
+	Text     string                        `json:"text" binding:"required"`
+	Existing *services.ProjectsParseResult `json:"existing,omitempty"`
+}
+
+// ParseProjects analyzes free-form text using LangChain to extract project details.
+func ParseProjects(c *gin.Context) {
+	if projectsAgent == nil {
+		utils.InternalServerError(c, "Projects agent is not configured", nil)
+		return
+	}
+
+	var req projectsParseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+
+	// Use existing data if provided, otherwise start fresh
+	existing := services.ProjectsParseResult{}
+	if req.Existing != nil {
+		existing = *req.Existing
+	}
+
+	result, err := projectsAgent.ExtractProjectsWithContext(c.Request.Context(), req.Text, existing)
+	if err != nil {
+		utils.InternalServerError(c, "Failed to extract project details", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+	})
+}
+
 type ProjectOptimizationRequest struct {
 	JobDescription  string `json:"jobDescription"`
 	ProjectData     string `json:"projectData" binding:"required"`

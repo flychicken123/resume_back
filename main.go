@@ -125,6 +125,16 @@ func main() {
 	} else {
 		handlers.SetTemplatePreferenceAgent(templatePreferenceAgent)
 	}
+	if projectsAgent, err := services.NewProjectsAgent(); err != nil {
+		log.Printf("Warning: Projects agent disabled: %v", err)
+	} else {
+		handlers.SetProjectsAgent(projectsAgent)
+	}
+	if educationAgent, err := services.NewEducationAgent(); err != nil {
+		log.Printf("Warning: Education agent disabled: %v", err)
+	} else {
+		handlers.SetEducationAgent(educationAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -382,6 +392,8 @@ func main() {
 		public.POST("/assistant/personal-info", handlers.ParsePersonalInfo)
 		public.POST("/assistant/job-intent", handlers.ParseJobIntent)
 		public.POST("/assistant/experience", handlers.ParseExperience)
+		public.POST("/assistant/projects", handlers.ParseProjects)
+		public.POST("/assistant/education", handlers.ParseEducation)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))

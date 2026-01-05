@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"regexp"
 	"strings"
@@ -22,6 +21,10 @@ func detectIntendedField(input string) string {
 	hasModifyKeyword := strings.Contains(lower, "change my") || strings.Contains(lower, "update my") ||
 		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my")
 
+	// Check for "my X is Y" pattern (e.g., "my email is X", "my phone is Y")
+	hasMyXIsPattern := strings.Contains(lower, "my email is") || strings.Contains(lower, "my phone is") ||
+		strings.Contains(lower, "my name is") || strings.Contains(lower, "my number is")
+
 	// Count how many different field types are mentioned
 	fieldCount := 0
 
@@ -34,7 +37,8 @@ func detectIntendedField(input string) string {
 
 	// Check for phone keywords
 	hasPhoneKeyword := strings.Contains(lower, "phone") || strings.Contains(lower, "mobile") ||
-		strings.Contains(lower, "cell") || strings.Contains(lower, "telephone")
+		strings.Contains(lower, "cell") || strings.Contains(lower, "telephone") ||
+		strings.Contains(lower, "my number is")
 	if hasPhoneKeyword {
 		fieldCount++
 	}
@@ -58,6 +62,19 @@ func detectIntendedField(input string) string {
 		return ""
 	}
 
+	// Handle "my X is Y" patterns - single field updates
+	if hasMyXIsPattern && fieldCount == 1 {
+		if strings.Contains(lower, "my email is") {
+			return "email"
+		}
+		if strings.Contains(lower, "my phone is") || strings.Contains(lower, "my number is") {
+			return "phone"
+		}
+		if strings.Contains(lower, "my name is") {
+			return "name"
+		}
+	}
+
 	// If modification keyword is present with a single field, return that field
 	// This handles cases like "change my email to X" - only update email
 	if hasModifyKeyword {
@@ -75,18 +92,34 @@ func detectIntendedField(input string) string {
 		}
 	}
 
-	// Also detect email-only update if:
-	// - Input contains @ symbol pattern (email address)
-	// - AND contains "change", "update", "set" (not necessarily "change my")
-	// - AND only one field keyword is present (email)
-	// - AND NO name keywords are present
+	// Detect email address pattern
 	emailPattern := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 	hasEmailAddress := emailPattern.MatchString(input)
 	hasAnyModifyWord := strings.Contains(lower, "change") || strings.Contains(lower, "update") ||
 		strings.Contains(lower, "set") || strings.Contains(lower, "modify")
 
+	// Email-only update if:
+	// - Input contains @ symbol pattern (email address)
+	// - AND contains "change", "update", "set" (not necessarily "change my")
+	// - AND only one field keyword is present (email)
+	// - AND NO name keywords are present
 	if hasEmailAddress && hasAnyModifyWord && hasEmailKeyword && !hasNameKeyword && !hasPhoneKeyword {
 		return "email"
+	}
+
+	// If input contains ONLY an email address (and no other field keywords),
+	// assume user wants to update email field
+	if hasEmailAddress && !hasNameKeyword && !hasPhoneKeyword && !hasSummaryKeyword {
+		return "email"
+	}
+
+	// Detect phone number pattern (digits with optional formatting)
+	phonePattern := regexp.MustCompile(`[\d\s()+-]{6,}`)
+	hasPhoneNumber := phonePattern.MatchString(input)
+
+	// Phone-only update if input contains phone keyword and phone number pattern
+	if hasPhoneNumber && hasPhoneKeyword && !hasNameKeyword && !hasEmailKeyword && !hasSummaryKeyword {
+		return "phone"
 	}
 
 	// No specific single-field update detected, allow all fields to be updated
@@ -144,87 +177,27 @@ Existing data (DO NOT change unless the user explicitly mentions updating these 
 `, existing.Name, existing.Email, existing.Phone, existing.Summary)
 	}
 
-	prompt := fmt.Sprintf(`You are an assistant that extracts resume personal information from any text.
+	prompt := fmt.Sprintf(`Extract personal information from the user's text and return as JSON.
 %s
 
-MANDATORY STEP-BY-STEP PROCESS (follow these steps in order):
+RULES:
+1. Extract ONLY the field that the user is updating. Set other fields to null.
+2. For email: extract the email address (contains @)
+3. For phone: extract the phone number (digits only)
+4. For name: extract the person's name
+5. For summary: extract the professional description
 
-STEP 1: Identify which keywords are present in the user's text
-- Does the text contain "email" or "email address" or "e-mail" or "mail"? → EMAIL field
-- Does the text contain "phone" or "mobile" or "telephone" or "cell"? → PHONE field
-- Does the text contain "my name" or "I am" or "name is"? → NAME field
-- Does the text contain "summary" or "professional background" or "about me"? → SUMMARY field
+EXAMPLES:
+- "change my email to test@gmail.com" → {"name": null, "email": "test@gmail.com", "phone": null, "summary": null}
+- "my email is john@example.com" → {"name": null, "email": "john@example.com", "phone": null, "summary": null}
+- "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
+- "my phone is 1234567890" → {"name": null, "email": null, "phone": "1234567890", "summary": null}
+- "change my phone number to 9876543210" → {"name": null, "email": null, "phone": "9876543210", "summary": null}
 
-STEP 2: Determine which ONE field to extract
-- If STEP 1 found email keywords → extract ONLY email, set all others to null
-- If STEP 1 found phone keywords (but NOT email) → extract ONLY phone, set all others to null
-- If STEP 1 found name keywords (but NOT email or phone) → extract ONLY name, set all others to null
-- If STEP 1 found summary keywords → extract ONLY summary, set all others to null
+Return ONLY valid JSON:
+{"name": <string or null>, "email": <string or null>, "phone": <string or null>, "summary": <string or null>}
 
-STEP 3: Extract the value for that field
-- For email: extract the email address (contains @)
-- For phone: extract the phone number (digits with optional + prefix)
-- For name: extract the person's name
-- For summary: extract the professional description
-
-STEP 4: Return JSON with ONLY that field populated, all others set to null
-
-CRITICAL EXAMPLES (study these carefully):
-
-Example 1:
-Input: "change my email address to wux1992@gmail.com"
-Step 1: Contains "email address" → EMAIL field
-Step 2: Extract ONLY email field
-Step 3: Email value = "wux1992@gmail.com"
-Output: {"name": null, "email": "wux1992@gmail.com", "phone": null, "summary": null}
-
-Example 2:
-Input: "change my email to wux1992@gmail.com"
-Step 1: Contains "email" → EMAIL field
-Step 2: Extract ONLY email field
-Step 3: Email value = "wux1992@gmail.com"
-Output: {"name": null, "email": "wux1992@gmail.com", "phone": null, "summary": null}
-
-Example 3:
-Input: "my name is John Doe"
-Step 1: Contains "my name" → NAME field
-Step 2: Extract ONLY name field
-Step 3: Name value = "John Doe"
-Output: {"name": "John Doe", "email": null, "phone": null, "summary": null}
-
-Example 4:
-Input: "my phone is 555-1234"
-Step 1: Contains "phone" → PHONE field
-Step 2: Extract ONLY phone field
-Step 3: Phone value = "555-1234"
-Output: {"name": null, "email": null, "phone": "555-1234", "summary": null}
-
-COMMON MISTAKES TO AVOID:
-❌ WRONG: "change my email address to wux1992@gmail.com" → {"name": "address to wux1992@gmail", "email": "wux1992@gmail.com", ...}
-✅ CORRECT: "change my email address to wux1992@gmail.com" → {"name": null, "email": "wux1992@gmail.com", "phone": null, "summary": null}
-
-❌ WRONG: Extracting multiple fields when only one is mentioned
-✅ CORRECT: Extract ONLY the field whose keyword appears in the text
-
-Return ONLY valid JSON using this exact schema:
-{
-  "name": "<full name OR null if not mentioned>",
-  "email": "<email address OR null if not mentioned>",
-  "phone": "<phone number digits with optional +country code OR null if not mentioned>",
-  "summary": "<1-2 sentence professional summary OR null if not mentioned>"
-}
-
-Other rules:
-- If the user explicitly states they do not have a field (e.g., "I don't have email"), output an empty string "" (not null) for that field.
-- Never invent data that wasn't in the input.
-- Preserve proper case for names (e.g., "XUan wu" -> "Xuan Wu").
-- Strip filler phrases like "my number is" or "email me at" from stored values—return only the raw value.
-- For email addresses, return ONLY the email address itself (e.g., "user@example.com"), not any surrounding text.
-- For phone numbers, return ONLY the digits and optional + prefix.
-- For the summary, combine any sentences that describe the user's professional background into a concise, polished summary.
-
-Text:
-%s`, existingContext, input)
+User text: %s`, existingContext, input)
 
 	response, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
 	if err != nil {
@@ -242,10 +215,6 @@ Text:
 	// Detect which field the user intended to update using programmatic keyword detection
 	// This overrides any incorrect LLM behavior
 	intendedField := detectIntendedField(input)
-
-	// Log for debugging
-	log.Printf("[personal-info-agent] input=%q intendedField=%q existing.Name=%q", input, intendedField, existing.Name)
-	log.Printf("[personal-info-agent] LLM raw response: %s", response)
 
 	// Start with existing data
 	result := existing
