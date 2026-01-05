@@ -17,14 +17,11 @@ import (
 func detectIntendedField(input string) string {
 	lower := strings.ToLower(input)
 
-	// Check for modification keywords that indicate a single-field update
+	// Check for modification/removal keywords that indicate a single-field update
 	hasModifyKeyword := strings.Contains(lower, "change my") || strings.Contains(lower, "update my") ||
-		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my")
-
-	// Check for removal keywords
-	hasRemoveKeyword := strings.Contains(lower, "remove my") || strings.Contains(lower, "delete my") ||
-		strings.Contains(lower, "clear my") || strings.Contains(lower, "remove the") ||
-		strings.Contains(lower, "delete the") || strings.Contains(lower, "clear the")
+		strings.Contains(lower, "set my") || strings.Contains(lower, "modify my") ||
+		strings.Contains(lower, "remove my") || strings.Contains(lower, "delete my") ||
+		strings.Contains(lower, "clear my")
 
 	// Check for "my X is Y" pattern (e.g., "my email is X", "my phone is Y")
 	// Note: "my name is" is excluded because it's a common introduction phrase, not a field update
@@ -78,9 +75,9 @@ func detectIntendedField(input string) string {
 		}
 	}
 
-	// If modification or removal keyword is present with a single field, return that field
+	// If modification/removal keyword is present with a single field, return that field
 	// This handles cases like "change my email to X" or "remove my email"
-	if hasModifyKeyword || hasRemoveKeyword {
+	if hasModifyKeyword {
 		if hasEmailKeyword {
 			return "email"
 		}
@@ -189,7 +186,7 @@ RULES:
 3. For phone: extract the phone number (digits only)
 4. For name: extract the person's name
 5. For summary: extract the professional description
-6. For REMOVAL requests (remove/delete/clear): return empty string "" for that field
+6. For REMOVAL requests (remove/delete/clear): return null for that field to indicate removal
 
 EXAMPLES:
 - "change my email to test@gmail.com" → {"name": null, "email": "test@gmail.com", "phone": null, "summary": null}
@@ -197,9 +194,10 @@ EXAMPLES:
 - "my name is John Doe" → {"name": "John Doe", "email": null, "phone": null, "summary": null}
 - "my phone is 1234567890" → {"name": null, "email": null, "phone": "1234567890", "summary": null}
 - "change my phone number to 9876543210" → {"name": null, "email": null, "phone": "9876543210", "summary": null}
-- "remove my email" → {"name": null, "email": "", "phone": null, "summary": null}
-- "delete my phone number" → {"name": null, "email": null, "phone": "", "summary": null}
-- "clear my summary" → {"name": null, "email": null, "phone": null, "summary": ""}
+- "remove my email" → {"email": null} (return ONLY the field being removed)
+- "delete my phone number" → {"phone": null}
+- "clear my summary" → {"summary": null}
+- "remove my name" → {"name": null}
 
 Return ONLY valid JSON:
 {"name": <string or null>, "email": <string or null>, "phone": <string or null>, "summary": <string or null>}
@@ -226,34 +224,45 @@ User text: %s`, existingContext, input)
 	// Start with existing data
 	result := existing
 
+	// Helper to extract string value from LLM response (handles both string and null)
+	getStringValue := func(val interface{}) (string, bool) {
+		if val == nil {
+			return "", true // null means removal/clear
+		}
+		if strVal, isString := val.(string); isString {
+			return strings.TrimSpace(strVal), true
+		}
+		return "", false
+	}
+
 	// Only update the intended field (if detected) or all non-null fields (if not detected)
 	switch intendedField {
 	case "email":
-		// Only update email field, ignore any other fields the LLM might have returned
-		if val, ok := rawMap["email"]; ok && val != nil {
-			if strVal, isString := val.(string); isString {
-				result.Email = strings.TrimSpace(strVal)
+		// Update email field - null or empty string means removal
+		if val, ok := rawMap["email"]; ok {
+			if strVal, valid := getStringValue(val); valid {
+				result.Email = strVal
 			}
 		}
 	case "phone":
-		// Only update phone field
-		if val, ok := rawMap["phone"]; ok && val != nil {
-			if strVal, isString := val.(string); isString {
-				result.Phone = strings.TrimSpace(strVal)
+		// Update phone field - null or empty string means removal
+		if val, ok := rawMap["phone"]; ok {
+			if strVal, valid := getStringValue(val); valid {
+				result.Phone = strVal
 			}
 		}
 	case "name":
-		// Only update name field
-		if val, ok := rawMap["name"]; ok && val != nil {
-			if strVal, isString := val.(string); isString {
-				result.Name = strings.TrimSpace(strVal)
+		// Update name field - null or empty string means removal
+		if val, ok := rawMap["name"]; ok {
+			if strVal, valid := getStringValue(val); valid {
+				result.Name = strVal
 			}
 		}
 	case "summary":
-		// Only update summary field
-		if val, ok := rawMap["summary"]; ok && val != nil {
-			if strVal, isString := val.(string); isString {
-				result.Summary = strings.TrimSpace(strVal)
+		// Update summary field - null or empty string means removal
+		if val, ok := rawMap["summary"]; ok {
+			if strVal, valid := getStringValue(val); valid {
+				result.Summary = strVal
 			}
 		}
 	default:
