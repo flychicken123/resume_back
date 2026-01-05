@@ -135,6 +135,11 @@ func main() {
 	} else {
 		handlers.SetEducationAgent(educationAgent)
 	}
+	if jobDescriptionAgent, err := services.NewJobDescriptionAgent(); err != nil {
+		log.Printf("Warning: Job description agent disabled: %v", err)
+	} else {
+		handlers.SetJobDescriptionAgent(jobDescriptionAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -394,6 +399,7 @@ func main() {
 		public.POST("/assistant/experience", handlers.ParseExperience)
 		public.POST("/assistant/projects", handlers.ParseProjects)
 		public.POST("/assistant/education", handlers.ParseEducation)
+		public.POST("/assistant/job-description", handlers.ParseJobDescription)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
