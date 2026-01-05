@@ -881,18 +881,6 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 	employmentType, _ := match["job_employment_type"].(string)
 	jobDescription, _ := match["job_description"].(string)
 
-	score := ""
-	if rawScore, ok := match["match_score"]; ok {
-		switch v := rawScore.(type) {
-		case float64:
-			score = fmt.Sprintf("%.1f", v)
-		case float32:
-			score = fmt.Sprintf("%.1f", v)
-		case int:
-			score = fmt.Sprintf("%d", v)
-		}
-	}
-
 	var jobBuilder strings.Builder
 	if jobTitle != "" {
 		jobBuilder.WriteString("Job Title: ")
@@ -924,11 +912,6 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 		jobBuilder.WriteString(employmentType)
 		jobBuilder.WriteString("\n")
 	}
-	if score != "" {
-		jobBuilder.WriteString("Match Score: ")
-		jobBuilder.WriteString(score)
-		jobBuilder.WriteString("\n")
-	}
 	if trimmed := strings.TrimSpace(jobDescription); trimmed != "" {
 		jobBuilder.WriteString("\nJob Description:\n")
 		jobBuilder.WriteString(trimmed)
@@ -947,11 +930,14 @@ Below is the candidate's resume context, followed by a single job match from an 
 --- JOB MATCH ---
 %s
 
-Write 3 to 6 short, specific reasons why this job is a good fit for the candidate.
-Each reason must:
-- Directly connect something in the resume (skills, experience, accomplishments, or goals) to something in the job (title, stack, responsibilities, or environment).
-- Avoid generic fluff like "this is a great fit" or "you are qualified"; instead, mention concrete overlaps.
-- Be one sentence, written in a positive, candidate-facing tone.
+Write 2 to 4 concise reasons why this job is a strong fit for the candidate.
+Make the reasons persuasive and varied:
+- Anchor each reason in concrete overlap between the resume (skills, experience, accomplishments, goals) and the job (title, stack, responsibilities, environment).
+- Highlight impact or outcomes when available.
+- Vary sentence structure; do not repeat the same lead-in.
+- Avoid template phrasing like "This role is a great fit because..." or "You are qualified because...".
+- Do not mention match scores or the word "AI".
+Each reason must be one sentence, 8-14 words, written in a confident, candidate-facing tone.
 
 Return ONLY valid JSON in this exact shape:
 {

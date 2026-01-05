@@ -124,7 +124,7 @@ func ExplainJobFit(c *gin.Context) {
 	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
 	if err != nil {
 		// Fall back to a simple generic reason if AI is unavailable.
-		fallback := []string{"This role aligns with the experience and skills saved in your resume."}
+		fallback := []string{"Your resume highlights match the core needs of this role."}
 		utils.SuccessResponse(c, http.StatusOK, "Job fit explanation fallback", JobFitExplanationResponse{
 			Reasons: fallback,
 			Message: "AI explanation unavailable; using fallback.",
