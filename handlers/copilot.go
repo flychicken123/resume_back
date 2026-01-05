@@ -9,6 +9,7 @@ import (
 	"resumeai/utils"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/gin-gonic/gin"
@@ -74,6 +75,7 @@ type JobFitExplanationRequest struct {
 type JobFitExplanationResponse struct {
 	Reasons []string `json:"reasons"`
 	Message string   `json:"message"`
+	Source  string   `json:"source"`
 }
 
 // ResumeCopilot orchestrates multiple AI passes to deliver a guided plan for the resume builder.
@@ -121,25 +123,35 @@ func ExplainJobFit(c *gin.Context) {
 	}
 
 	prompt := services.BuildJobFitExplanationPrompt(req.ResumeData, req.Match)
-	raw, err := runCopilotPrompt(c.Request.Context(), prompt)
+	timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 7*time.Second)
+	defer cancel()
+	raw, err := runCopilotPrompt(timeoutCtx, prompt)
 	if err != nil {
 		// Fall back to a simple generic reason if AI is unavailable.
-		fallback := []string{"This role aligns with the experience and skills saved in your resume."}
+		fallback := []string{"Your resume highlights match the core needs of this role."}
 		utils.SuccessResponse(c, http.StatusOK, "Job fit explanation fallback", JobFitExplanationResponse{
 			Reasons: fallback,
 			Message: "AI explanation unavailable; using fallback.",
+			Source:  "fallback",
 		})
 		return
 	}
 
 	reasons := parseJobFitReasons(raw)
 	if len(reasons) == 0 {
-		reasons = []string{"This role aligns with the experience and skills saved in your resume."}
+		reasons = []string{"Your resume highlights match the core needs of this role."}
+		utils.SuccessResponse(c, http.StatusOK, "Job fit explanation fallback", JobFitExplanationResponse{
+			Reasons: reasons,
+			Message: "AI explanation unavailable; using fallback.",
+			Source:  "fallback",
+		})
+		return
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Job fit explanation generated", JobFitExplanationResponse{
 		Reasons: reasons,
 		Message: "Job fit explanation generated.",
+		Source:  "langchain",
 	})
 }
 
