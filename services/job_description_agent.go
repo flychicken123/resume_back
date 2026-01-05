@@ -78,17 +78,19 @@ func (a *JobDescriptionAgent) ParseJobDescription(ctx context.Context, input str
 The user may want to:
 1. ADD a new job description (paste new job posting URL or text)
 2. MODIFY an existing job description (update/change/edit existing entry)
-3. REMOVE a job description (delete/remove/clear an entry)
-4. Just provide information (no clear intent)
+3. REMOVE a single job description (delete/remove/clear an entry)
+4. REMOVE_ALL job descriptions (delete/remove/clear ALL entries)
+5. Just provide information (no clear intent)
 
 RULES:
 1. If user pastes a job URL or job description text and there are NO existing entries, action is "add"
 2. If user pastes a job URL or job description text and there IS an existing entry, action is "modify" the first/most recent entry
 3. If user explicitly says "add another job" or "new job description", action is "add" even if entries exist
-4. If user says "remove", "delete", "clear" a job description, action is "remove"
-5. If user just wants to view or there's no job content, action is "none"
-6. Extract the job title from the job description if possible
-7. Extract any job posting URL if present
+4. If user says "remove", "delete", "clear" a job description (singular), action is "remove"
+5. If user says "remove ALL", "delete ALL", "clear ALL" job descriptions, action is "remove_all"
+6. If user just wants to view or there's no job content, action is "none"
+7. Extract the job title from the job description if possible
+8. Extract any job posting URL if present
 
 EXAMPLES:
 - User pastes job description with no existing entries → action: "add"
@@ -98,10 +100,13 @@ EXAMPLES:
 - "remove the job description" → action: "remove"
 - "delete my job description" → action: "remove"
 - "clear job description" → action: "remove"
+- "remove all job descriptions" → action: "remove_all"
+- "delete all job descriptions" → action: "remove_all"
+- "clear all job descriptions" → action: "remove_all"
 
 Return ONLY valid JSON:
 {
-  "action": "<add|modify|remove|none>",
+  "action": "<add|modify|remove|remove_all|none>",
   "targetId": "<ID of entry to modify/remove, or empty string>",
   "title": "<extracted job title or empty string>",
   "text": "<job description text or empty string>",
@@ -211,6 +216,10 @@ func (a *JobDescriptionAgent) applyAction(result JobDescriptionParseResult, exis
 			}
 		}
 		return updated
+
+	case "remove_all":
+		// Remove all entries
+		return []JobDescriptionEntry{}
 
 	default:
 		// No action, return existing unchanged
