@@ -145,6 +145,11 @@ func main() {
 	} else {
 		handlers.SetSkillsAgent(skillsAgent)
 	}
+	if voiceAgent, err := services.NewVoiceAgent(); err != nil {
+		log.Printf("Warning: Voice agent disabled: %v", err)
+	} else {
+		handlers.SetVoiceAgent(voiceAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -407,6 +412,7 @@ func main() {
 		public.POST("/assistant/job-description", handlers.ParseJobDescription)
 		public.POST("/assistant/skills", handlers.ParseSkillsAI)
 		public.POST("/assistant/skills/generate", handlers.GenerateSkillsAI)
+		public.POST("/assistant/voice/transcribe", handlers.TranscribeAudio)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
