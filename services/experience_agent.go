@@ -32,6 +32,7 @@ type ExperienceRecord struct {
 	Company          string             `json:"company"`
 	City             string             `json:"city"`
 	State            string             `json:"state"`
+	Remote           bool               `json:"remote"`
 	StartDate        string             `json:"startDate"`
 	EndDate          string             `json:"endDate"`
 	CurrentlyWorking bool               `json:"currentlyWorking"`
@@ -76,13 +77,14 @@ func (a *ExperienceAgent) ExtractExperiencesWithContext(ctx context.Context, inp
 	if len(existing.Experiences) > 0 {
 		existingContext = "\nExisting experiences (DO NOT modify unless the user explicitly mentions updating them):\n"
 		for i, exp := range existing.Experiences {
-			existingContext += fmt.Sprintf("%d. %s at %s (%s to %s) - %s\n",
+			existingContext += fmt.Sprintf("%d. %s at %s (%s to %s) - %s (Remote: %t)\n",
 				i+1,
 				exp.JobTitle,
 				exp.Company,
 				exp.StartDate,
 				exp.EndDate,
 				exp.City,
+				exp.Remote,
 			)
 		}
 		existingContext += "\n"
@@ -100,6 +102,7 @@ Your goal is to turn the user's text into one or more experience entries that ma
       "company": "<company name or empty string>",
       "city": "<city or empty string>",
       "state": "<state/region or empty string>",
+      "remote": <true if the role is remote, false if onsite/hybrid or not specified>,
       "startDate": "<start date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
       "endDate": "<end date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
       "currentlyWorking": <true if this is the current role, otherwise false>,
@@ -126,7 +129,9 @@ CRITICAL RULES FOR PARTIAL UPDATES:
 
 FIELD UPDATE RULES:
 - When modifying an existing experience, identify it by company name, job title, or context clues
+- When modifying, reuse the exact company name from the existing experience if the user references it, even if the user input has typos
 - Only update fields explicitly mentioned in the user's message
+- For the remote field, set it only when the user explicitly mentions remote/onsite/hybrid/in-person; otherwise preserve the existing value
 - Preserve all other fields from the existing experience
 - For REMOVAL of a field, set it to empty string ""
 - For REMOVAL of an entire experience, omit it from the returned array
