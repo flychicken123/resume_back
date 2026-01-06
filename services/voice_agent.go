@@ -29,10 +29,9 @@ func NewVoiceAgent() (*VoiceAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	// Use Gemini 1.5 Flash for faster audio processing
+	// Use the default Gemini model to ensure the API supports generateContent.
 	llm, err := googleai.New(context.Background(),
 		googleai.WithAPIKey(apiKey),
-		googleai.WithDefaultModel("gemini-1.5-flash"),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for voice agent: %w", err)
