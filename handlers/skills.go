@@ -3,12 +3,98 @@ package handlers
 import (
 	"encoding/json"
 	"net/http"
+	"resumeai/services"
 	"resumeai/utils"
 	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+var skillsAgent *services.SkillsAgent
+
+// SetSkillsAgent injects the LangChain-powered skills parser.
+func SetSkillsAgent(agent *services.SkillsAgent) {
+	skillsAgent = agent
+}
+
+type skillsParseRequest struct {
+	Text     string   `json:"text" binding:"required"`
+	Existing []string `json:"existing,omitempty"`
+}
+
+type skillsGenerateRequest struct {
+	Experience []services.ExperienceRecord `json:"experience,omitempty"`
+	Projects   []services.ProjectRecord    `json:"projects,omitempty"`
+	Education  []services.EducationRecord  `json:"education,omitempty"`
+	Existing   []string                    `json:"existing,omitempty"`
+}
+
+// ParseSkillsAI analyzes free-form text using LangChain to extract skills.
+func ParseSkillsAI(c *gin.Context) {
+	if skillsAgent == nil {
+		utils.InternalServerError(c, "Skills agent is not configured", nil)
+		return
+	}
+
+	var req skillsParseRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+
+	// Use existing data if provided
+	existing := req.Existing
+	if existing == nil {
+		existing = []string{}
+	}
+
+	result, err := skillsAgent.ParseSkills(c.Request.Context(), req.Text, existing)
+	if err != nil {
+		utils.InternalServerError(c, "Failed to parse skills", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+	})
+}
+
+// GenerateSkillsAI uses LangChain to generate skills from resume data.
+func GenerateSkillsAI(c *gin.Context) {
+	if skillsAgent == nil {
+		utils.InternalServerError(c, "Skills agent is not configured", nil)
+		return
+	}
+
+	var req skillsGenerateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+
+	// Use existing data if provided
+	existing := req.Existing
+	if existing == nil {
+		existing = []string{}
+	}
+
+	genReq := services.SkillsGenerateRequest{
+		Experience: req.Experience,
+		Projects:   req.Projects,
+		Education:  req.Education,
+	}
+
+	result, err := skillsAgent.GenerateSkills(c.Request.Context(), genReq, existing)
+	if err != nil {
+		utils.InternalServerError(c, "Failed to generate skills", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": result,
+	})
+}
 
 // AutoSkillsRequest is the payload sent from the frontend to auto-generate skills.
 // It contains the full in-progress resume data plus an optional job description
