@@ -24,11 +24,12 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Message   string        `json:"message" binding:"required"`
-	History   []chatMessage `json:"history"`
-	SessionID string        `json:"session_id"`
-	PagePath  string        `json:"page_path"`
-	UserEmail string        `json:"user_email"`
+	Message    string                 `json:"message" binding:"required"`
+	History    []chatMessage          `json:"history"`
+	SessionID  string                 `json:"session_id"`
+	PagePath   string                 `json:"page_path"`
+	UserEmail  string                 `json:"user_email"`
+	ResumeData map[string]interface{} `json:"resume_data"`
 }
 
 type chatResponse struct {
@@ -165,6 +166,91 @@ func buildKnowledgeContext(entries []knowledgeEntry) string {
 	return b.String()
 }
 
+func buildResumeContext(resumeData map[string]interface{}) string {
+	if len(resumeData) == 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("User's current resume data:\n")
+
+	// Personal details
+	if name, ok := resumeData["name"].(string); ok && strings.TrimSpace(name) != "" {
+		b.WriteString(fmt.Sprintf("- Name: %s\n", strings.TrimSpace(name)))
+	}
+	if email, ok := resumeData["email"].(string); ok && strings.TrimSpace(email) != "" {
+		b.WriteString(fmt.Sprintf("- Email: %s\n", strings.TrimSpace(email)))
+	}
+	if phone, ok := resumeData["phone"].(string); ok && strings.TrimSpace(phone) != "" {
+		b.WriteString(fmt.Sprintf("- Phone: %s\n", strings.TrimSpace(phone)))
+	}
+
+	// Summary
+	if summary, ok := resumeData["summary"].(string); ok && strings.TrimSpace(summary) != "" {
+		b.WriteString(fmt.Sprintf("- Summary: %s\n", strings.TrimSpace(summary)))
+	}
+
+	// Skills
+	if skills, ok := resumeData["skills"].(string); ok && strings.TrimSpace(skills) != "" {
+		b.WriteString(fmt.Sprintf("- Skills: %s\n", strings.TrimSpace(skills)))
+	}
+
+	// Experiences
+	if experiences, ok := resumeData["experiences"].([]interface{}); ok && len(experiences) > 0 {
+		b.WriteString("- Work Experience:\n")
+		for i, exp := range experiences {
+			if expMap, ok := exp.(map[string]interface{}); ok {
+				jobTitle, _ := expMap["jobTitle"].(string)
+				company, _ := expMap["company"].(string)
+				if jobTitle != "" || company != "" {
+					b.WriteString(fmt.Sprintf("  %d. %s at %s\n", i+1, strings.TrimSpace(jobTitle), strings.TrimSpace(company)))
+				}
+			}
+		}
+	}
+
+	// Projects
+	if projects, ok := resumeData["projects"].([]interface{}); ok && len(projects) > 0 {
+		b.WriteString("- Projects:\n")
+		for i, proj := range projects {
+			if projMap, ok := proj.(map[string]interface{}); ok {
+				projectName, _ := projMap["projectName"].(string)
+				if projectName != "" {
+					b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, strings.TrimSpace(projectName)))
+				}
+			}
+		}
+	}
+
+	// Education
+	if education, ok := resumeData["education"].([]interface{}); ok && len(education) > 0 {
+		b.WriteString("- Education:\n")
+		for i, edu := range education {
+			if eduMap, ok := edu.(map[string]interface{}); ok {
+				degree, _ := eduMap["degree"].(string)
+				school, _ := eduMap["school"].(string)
+				field, _ := eduMap["field"].(string)
+				if degree != "" || school != "" {
+					entry := strings.TrimSpace(degree)
+					if field != "" {
+						entry += " in " + strings.TrimSpace(field)
+					}
+					if school != "" {
+						entry += " from " + strings.TrimSpace(school)
+					}
+					b.WriteString(fmt.Sprintf("  %d. %s\n", i+1, entry))
+				}
+			}
+		}
+	}
+
+	result := b.String()
+	if result == "User's current resume data:\n" {
+		return ""
+	}
+	return result
+}
+
 func ChatAssistant(c *gin.Context) {
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -186,6 +272,7 @@ func ChatAssistant(c *gin.Context) {
 Focus on HiHired features: AI resume builder, templates, PDF export, memberships, workflow steps, and support.
 When pricing is mentioned, explicitly list the Free, Premium, and Ultimate plans with their benefits.
 When asked how to use the builder, provide step-by-step instructions.
+When the user asks about their resume data (like "what is my name", "what did I enter", "what are my skills"), refer to the user's current resume data provided below and answer accurately.
 If the question is outside scope, briefly say you can only help with HiHired resumes and suggest contacting us via the Help bubble or at hihired_support@tactechs.net.`
 
 	var historyBuilder strings.Builder
@@ -205,9 +292,16 @@ If the question is outside scope, briefly say you can only help with HiHired res
 	}
 
 	knowledgeContext := buildKnowledgeContext(findRelevantKnowledge(userMessage, history))
+	resumeContext := buildResumeContext(req.ResumeData)
 
-	prompt := fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using only the confirmed HiHired information above. If unsure, say you will connect them with support.",
-		systemInstructions, knowledgeContext, historyBuilder.String(), userMessage)
+	var prompt string
+	if resumeContext != "" {
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the confirmed HiHired information and user's resume data above. If the user asks about their resume data, refer to it accurately.",
+			systemInstructions, knowledgeContext, resumeContext, historyBuilder.String(), userMessage)
+	} else {
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using only the confirmed HiHired information above. If unsure, say you will connect them with support.",
+			systemInstructions, knowledgeContext, historyBuilder.String(), userMessage)
+	}
 
 	reply, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {
