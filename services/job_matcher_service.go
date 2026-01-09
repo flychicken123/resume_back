@@ -88,18 +88,30 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		return nil, ErrMissingResumeHash
 	}
 
+	// Two-pass approach:
+	// Pass 1: SQL-level filter by skills/position (broader pool)
+	// Pass 2: Full heuristic scoring on filtered set
+
 	limit := input.CandidateJobLimit
 	if limit <= 0 {
-		limit = 200
-	}
-
-	jobs, err := s.postings.ListActive(nil, limit)
-	if err != nil {
-		return nil, err
+		limit = 1000 // Increased default for two-pass approach
 	}
 
 	position := strings.ToLower(strings.TrimSpace(input.Position))
 	skills := normaliseSkills(input.Skills)
+
+	// Pass 1: Get jobs filtered by relevance (skills/position match in SQL)
+	jobs, err := s.postings.ListActiveByRelevance(skills, input.Position, limit)
+	if err != nil {
+		// Fallback to original method if new method fails
+		s.logger.Warn("ListActiveByRelevance failed, falling back to ListActive", map[string]interface{}{"error": err.Error()})
+		jobs, err = s.postings.ListActive(nil, limit)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	// Pass 2: Full heuristic scoring
 	sourceText := strings.Join([]string{input.Summary, input.Experience, input.Education, input.JobDescription}, " ")
 	resumeText := strings.ToLower(strings.TrimSpace(sourceText))
 	keywords := extractKeywords(resumeText, 40)

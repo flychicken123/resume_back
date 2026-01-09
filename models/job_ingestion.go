@@ -767,6 +767,132 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
 	return postings, rows.Err()
 }
 
+// ListActiveByRelevance returns active job postings filtered by skills and position keywords.
+// This performs a broad SQL-level filter (OR-based) to get a larger pool of relevant jobs
+// before detailed scoring is applied. Returns up to `limit` jobs.
+func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string, limit int) ([]*JobPosting, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+
+	// Build search terms from skills and position
+	searchTerms := make([]string, 0, len(skills)+5)
+	for _, skill := range skills {
+		trimmed := strings.TrimSpace(strings.ToLower(skill))
+		if trimmed != "" && len(trimmed) >= 2 {
+			searchTerms = append(searchTerms, trimmed)
+		}
+	}
+
+	// Add position keywords
+	positionLower := strings.ToLower(strings.TrimSpace(position))
+	if positionLower != "" {
+		// Split position into words and add significant ones
+		for _, word := range strings.Fields(positionLower) {
+			if len(word) >= 3 && word != "the" && word != "and" && word != "for" {
+				searchTerms = append(searchTerms, word)
+			}
+		}
+	}
+
+	// If no search terms, fall back to ListActive
+	if len(searchTerms) == 0 {
+		return m.ListActive(nil, limit)
+	}
+
+	// Build OR conditions for each search term matching title or description
+	conditions := make([]string, 0, len(searchTerms))
+	args := make([]interface{}, 0, len(searchTerms)+1)
+	for i, term := range searchTerms {
+		pattern := "%" + term + "%"
+		placeholder := i + 1
+		conditions = append(conditions, fmt.Sprintf("(LOWER(title) LIKE $%d OR LOWER(COALESCE(description, '')) LIKE $%d)", placeholder, placeholder))
+		args = append(args, pattern)
+	}
+
+	args = append(args, limit)
+	limitPlaceholder := len(searchTerms) + 1
+
+	query := fmt.Sprintf(`
+		SELECT id, company_id, external_job_id, title,
+		       COALESCE(location, ''), COALESCE(remote_type, ''),
+		       COALESCE(department, ''), COALESCE(employment_type, ''),
+		       job_url, COALESCE(application_url, ''),
+		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
+		       posted_at, first_seen_at, last_seen_at, closed_at, is_active
+		FROM job_postings
+		WHERE is_active = TRUE
+		  AND (%s)
+		ORDER BY COALESCE(posted_at, first_seen_at) DESC
+		LIMIT $%d
+	`, strings.Join(conditions, " OR "), limitPlaceholder)
+
+	rows, err := m.db.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var postings []*JobPosting
+	for rows.Next() {
+		var posting JobPosting
+		var postedAt sql.NullTime
+		var closedAt sql.NullTime
+		var location sql.NullString
+		var remoteType sql.NullString
+		var department sql.NullString
+		var employmentType sql.NullString
+		var applicationURL sql.NullString
+		var description sql.NullString
+		var salaryCurrency sql.NullString
+
+		if err := rows.Scan(
+			&posting.ID,
+			&posting.CompanyID,
+			&posting.ExternalJobID,
+			&posting.Title,
+			&location,
+			&remoteType,
+			&department,
+			&employmentType,
+			&posting.JobURL,
+			&applicationURL,
+			&description,
+			&posting.SalaryMin,
+			&posting.SalaryMax,
+			&salaryCurrency,
+			&postedAt,
+			&posting.FirstSeenAt,
+			&posting.LastSeenAt,
+			&closedAt,
+			&posting.IsActive,
+		); err != nil {
+			return nil, err
+		}
+
+		posting.Location = location.String
+		posting.RemoteType = remoteType.String
+		posting.Department = department.String
+		posting.EmploymentType = employmentType.String
+		posting.ApplicationURL = applicationURL.String
+		posting.Description = description.String
+		posting.SalaryCurrency = salaryCurrency.String
+
+		if postedAt.Valid {
+			ts := postedAt.Time
+			posting.PostedAt = &ts
+		}
+		if closedAt.Valid {
+			ts := closedAt.Time
+			posting.ClosedAt = &ts
+		}
+
+		postings = append(postings, &posting)
+	}
+
+	return postings, rows.Err()
+}
+
 func (m *JobPostingModel) CountActiveByKeyword(keyword string) (int, error) {
 	if keyword == "" {
 		return 0, fmt.Errorf("keyword required")

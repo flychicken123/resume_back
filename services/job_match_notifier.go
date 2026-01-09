@@ -167,7 +167,7 @@ func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.Resum
 		JobDescription:    resume.JobDescription,
 		PreferredLocation: resume.Location,
 		Skills:            skills,
-		CandidateJobLimit: 200,
+		CandidateJobLimit: 1000,
 		MaxResults:        10,
 	}
 
