@@ -81,19 +81,20 @@ RULES:
 1. Detect if this is a polish/optimize request
 2. Identify which section to polish
 3. If they mention a specific company/school/project name, extract it as the identifier
-4. If they have multiple entries in a section and don't specify which one, set needsClarification=true
+4. If NO specific entry is mentioned, set identifier to empty string - this means polish ALL entries in that section
 5. Match identifier case-insensitively against the resume data
-6. If they say "all my experience" or similar, set section="experience" with no specific identifier
+6. NEVER set needsClarification to true - always proceed with polishing using existing data
+7. Always set needsClarification=false and clarificationQuestion=""
 
 EXAMPLES:
-- "polish my experience at Microsoft" → isPolishRequest=true, section="experience", identifier="Microsoft"
-- "improve my Google experience" → isPolishRequest=true, section="experience", identifier="Google"
-- "optimize my education" → isPolishRequest=true, section="education" (needs clarification if multiple entries)
-- "make my summary better" → isPolishRequest=true, section="summary"
-- "polish all my experiences" → isPolishRequest=true, section="experience", identifier=""
-- "enhance my projects" → isPolishRequest=true, section="projects" (needs clarification if multiple)
-- "improve my AWS Lambda project" → isPolishRequest=true, section="projects", identifier="AWS Lambda"
-- "polish my resume" → isPolishRequest=true, section="all"
+- "polish my experience at Microsoft" → isPolishRequest=true, section="experience", identifier="Microsoft", needsClarification=false
+- "improve my Google experience" → isPolishRequest=true, section="experience", identifier="Google", needsClarification=false
+- "optimize my education" → isPolishRequest=true, section="education", identifier="", needsClarification=false (polish ALL education entries)
+- "make my summary better" → isPolishRequest=true, section="summary", needsClarification=false
+- "polish all my experiences" → isPolishRequest=true, section="experience", identifier="", needsClarification=false
+- "enhance my projects" → isPolishRequest=true, section="projects", identifier="", needsClarification=false (polish ALL projects)
+- "improve my AWS Lambda project" → isPolishRequest=true, section="projects", identifier="AWS Lambda", needsClarification=false
+- "polish my resume" → isPolishRequest=true, section="all", needsClarification=false
 - "what is my name?" → isPolishRequest=false
 
 Return ONLY valid JSON:
@@ -102,9 +103,9 @@ Return ONLY valid JSON:
   "section": "<experience|education|projects|summary|skills|all|none>",
   "identifier": "<company/school/project name or empty string>",
   "entryIndex": <index if found, -1 if not>,
-  "message": "<confirmation message>",
-  "needsClarification": <boolean>,
-  "clarificationQuestion": "<question to ask if needsClarification is true>"
+  "message": "<confirmation message like 'I will polish your experience at Microsoft' or 'I will polish all your experiences'>",
+  "needsClarification": false,
+  "clarificationQuestion": ""
 }
 
 User input: %s`, resumeContext, input)
