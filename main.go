@@ -155,6 +155,11 @@ func main() {
 	} else {
 		handlers.SetResumeModifyAgent(resumeModifyAgent)
 	}
+	if polishAgent, err := services.NewPolishAgent(); err != nil {
+		log.Printf("Warning: Polish agent disabled: %v", err)
+	} else {
+		handlers.SetPolishAgent(polishAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -419,6 +424,7 @@ func main() {
 		public.POST("/assistant/skills/generate", handlers.GenerateSkillsAI)
 		public.POST("/assistant/voice/transcribe", handlers.TranscribeAudio)
 		public.POST("/assistant/resume/modify", handlers.AnalyzeResumeModification)
+		public.POST("/assistant/resume/polish", handlers.PolishResume)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
