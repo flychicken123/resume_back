@@ -355,9 +355,11 @@ If the question is outside scope, briefly say you can only help with HiHired res
 
 // tryHandlePolishRequest checks if the message is a polish request and handles it.
 // Returns nil if not a polish request, allowing normal chat flow to continue.
+// Simplified approach: uses existing resumeData directly, polishes all entries if none specified.
 func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[string]interface{}, history []chatMessage) *chatResponse {
-	// Quick keyword check to avoid unnecessary AI calls
 	msgLower := strings.ToLower(message)
+
+	// Quick keyword check to avoid unnecessary AI calls
 	polishKeywords := []string{"polish", "improve", "enhance", "optimize", "rewrite", "refine", "make better", "fix"}
 	hasPolishKeyword := false
 	for _, kw := range polishKeywords {
@@ -381,13 +383,6 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		return nil
 	}
 
-	// Handle clarification needed
-	if intent.NeedsClarification {
-		return &chatResponse{
-			Reply: intent.ClarificationQuestion,
-		}
-	}
-
 	// Get job description from resume data if available
 	jobDesc, _ := resumeData["jobDescription"].(string)
 
@@ -401,6 +396,11 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 	var polishedContent interface{}
 	var entryIndex int = -1
 
+	// If identifier provided, try to find the specific entry
+	if intent.Identifier != "" && intent.EntryIndex < 0 {
+		intent.EntryIndex = findEntryIndexByIdentifier(resumeData, intent.Section, intent.Identifier)
+	}
+
 	switch intent.Section {
 	case "experience":
 		polishedContent, reply, entryIndex, err = polishExperiencesInChat(ctx, intent, resumeData, jobDesc, updatedData)
@@ -410,6 +410,9 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		polishedContent, reply, entryIndex, err = polishProjectsInChat(ctx, intent, resumeData, jobDesc, updatedData)
 	case "summary":
 		summary, _ := resumeData["summary"].(string)
+		if summary == "" {
+			return &chatResponse{Reply: "I don't see a professional summary to polish. Please add one first."}
+		}
 		polished, polishErr := polishAgent.PolishSummary(ctx, summary, resumeData)
 		if polishErr != nil {
 			err = polishErr
@@ -420,6 +423,9 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		}
 	case "skills":
 		skills, _ := resumeData["skills"].(string)
+		if skills == "" {
+			return &chatResponse{Reply: "I don't see any skills to polish. Please add some skills first."}
+		}
 		polished, polishErr := polishAgent.PolishSkills(ctx, skills, jobDesc)
 		if polishErr != nil {
 			err = polishErr
@@ -450,6 +456,55 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		EntryIndex:        entryIndex,
 		UpdatedResumeData: updatedData,
 	}
+}
+
+// findEntryIndexByIdentifier searches for an entry matching the identifier in the given section.
+func findEntryIndexByIdentifier(data map[string]interface{}, section, identifier string) int {
+	if identifier == "" {
+		return -1
+	}
+	identifierLower := strings.ToLower(identifier)
+
+	switch section {
+	case "experience":
+		if experiences, ok := data["experiences"].([]interface{}); ok {
+			for i, exp := range experiences {
+				if expMap, ok := exp.(map[string]interface{}); ok {
+					company, _ := expMap["company"].(string)
+					title, _ := expMap["jobTitle"].(string)
+					if strings.Contains(strings.ToLower(company), identifierLower) ||
+						strings.Contains(strings.ToLower(title), identifierLower) {
+						return i
+					}
+				}
+			}
+		}
+	case "projects":
+		if projects, ok := data["projects"].([]interface{}); ok {
+			for i, proj := range projects {
+				if projMap, ok := proj.(map[string]interface{}); ok {
+					name, _ := projMap["projectName"].(string)
+					if strings.Contains(strings.ToLower(name), identifierLower) {
+						return i
+					}
+				}
+			}
+		}
+	case "education":
+		if education, ok := data["education"].([]interface{}); ok {
+			for i, edu := range education {
+				if eduMap, ok := edu.(map[string]interface{}); ok {
+					school, _ := eduMap["school"].(string)
+					degree, _ := eduMap["degree"].(string)
+					if strings.Contains(strings.ToLower(school), identifierLower) ||
+						strings.Contains(strings.ToLower(degree), identifierLower) {
+						return i
+					}
+				}
+			}
+		}
+	}
+	return -1
 }
 
 func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (interface{}, string, int, error) {
