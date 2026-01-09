@@ -2,12 +2,9 @@ package services
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 	"unicode"
 
@@ -76,120 +73,11 @@ var (
 )
 
 const (
-	llmReRankTopK      = 20
-	llmReRankAlpha     = 0.7
-	llmReRankBeta      = 0.3
-	llmReRankTimeout   = 10 * time.Second
-	fitReasonTopN      = 5
-	fitReasonTimeout   = 8 * time.Second
+	llmReRankTopK   = 20
+	llmReRankAlpha  = 0.7
+	llmReRankBeta   = 0.3
+	llmReRankTimeout = 10 * time.Second
 )
-
-// generateFitReason generates an AI-powered explanation of why a job is a good fit.
-func (s *jobMatcherService) generateFitReason(ctx context.Context, input ResumeJobMatchInput, job *models.JobPosting) string {
-	if s.copilot == nil || job == nil {
-		return ""
-	}
-
-	// Build resume context
-	var resumeBuilder strings.Builder
-	if input.Position != "" {
-		resumeBuilder.WriteString("Target Position: ")
-		resumeBuilder.WriteString(input.Position)
-		resumeBuilder.WriteString("\n")
-	}
-	if input.Summary != "" {
-		resumeBuilder.WriteString("\nSummary: ")
-		resumeBuilder.WriteString(input.Summary)
-		resumeBuilder.WriteString("\n")
-	}
-	if input.Experience != "" {
-		resumeBuilder.WriteString("\nExperience:\n")
-		resumeBuilder.WriteString(input.Experience)
-		resumeBuilder.WriteString("\n")
-	}
-	if len(input.Skills) > 0 {
-		resumeBuilder.WriteString("\nSkills: ")
-		resumeBuilder.WriteString(strings.Join(input.Skills, ", "))
-		resumeBuilder.WriteString("\n")
-	}
-
-	// Build job context
-	var jobBuilder strings.Builder
-	jobBuilder.WriteString("Job Title: ")
-	jobBuilder.WriteString(job.Title)
-	jobBuilder.WriteString("\n")
-	if job.Location != "" {
-		jobBuilder.WriteString("Location: ")
-		jobBuilder.WriteString(job.Location)
-		jobBuilder.WriteString("\n")
-	}
-	if job.RemoteType != "" {
-		jobBuilder.WriteString("Remote Type: ")
-		jobBuilder.WriteString(job.RemoteType)
-		jobBuilder.WriteString("\n")
-	}
-	if job.Department != "" {
-		jobBuilder.WriteString("Department: ")
-		jobBuilder.WriteString(job.Department)
-		jobBuilder.WriteString("\n")
-	}
-	if job.Description != "" {
-		// Truncate description to avoid token limits
-		desc := job.Description
-		if len(desc) > 1500 {
-			desc = desc[:1500] + "..."
-		}
-		jobBuilder.WriteString("\nJob Description:\n")
-		jobBuilder.WriteString(desc)
-		jobBuilder.WriteString("\n")
-	}
-
-	prompt := fmt.Sprintf(`You are an expert career coach. Explain why this job is a good fit for the candidate.
-
---- RESUME ---
-%s
-
---- JOB ---
-%s
-
-Write 2-3 concise reasons why this job fits the candidate. Each reason should be one sentence, 10-15 words.
-Focus on specific skill/experience overlap.
-
-Return ONLY valid JSON:
-{"reasons": ["Reason 1", "Reason 2"]}`, resumeBuilder.String(), jobBuilder.String())
-
-	ctxWithTimeout, cancel := context.WithTimeout(ctx, fitReasonTimeout)
-	defer cancel()
-
-	raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
-	if err != nil {
-		s.logger.Warn("fit reason generation failed", map[string]interface{}{"error": err.Error(), "job_id": job.ID})
-		return ""
-	}
-
-	// Parse JSON response
-	var result struct {
-		Reasons []string `json:"reasons"`
-	}
-	if err := json.Unmarshal([]byte(raw), &result); err != nil {
-		// Try to clean up the response (remove markdown code blocks)
-		cleaned := strings.TrimSpace(raw)
-		cleaned = strings.TrimPrefix(cleaned, "```json")
-		cleaned = strings.TrimPrefix(cleaned, "```")
-		cleaned = strings.TrimSuffix(cleaned, "```")
-		cleaned = strings.TrimSpace(cleaned)
-		if err := json.Unmarshal([]byte(cleaned), &result); err != nil {
-			s.logger.Warn("fit reason parse failed", map[string]interface{}{"error": err.Error(), "raw": raw})
-			return ""
-		}
-	}
-
-	if len(result.Reasons) == 0 {
-		return ""
-	}
-
-	return strings.Join(result.Reasons, " | ")
-}
 
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
 func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMatchInput) ([]*models.ResumeJobMatchRecord, error) {
@@ -283,31 +171,11 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		scored = scored[:maxResults]
 	}
 
-	// Generate AI fit reasons for top N matches in parallel
-	fitReasons := make([]string, len(scored))
-	topN := fitReasonTopN
-	if topN > len(scored) {
-		topN = len(scored)
-	}
-
-	if s.copilot != nil && topN > 0 {
-		var wg sync.WaitGroup
-		for i := 0; i < topN; i++ {
-			wg.Add(1)
-			go func(idx int) {
-				defer wg.Done()
-				fitReasons[idx] = s.generateFitReason(ctx, input, scored[idx].posting)
-			}(i)
-		}
-		wg.Wait()
-	}
-
 	creates := make([]models.JobMatchCreate, len(scored))
 	for i, match := range scored {
 		creates[i] = models.JobMatchCreate{
 			JobPostingID: match.posting.ID,
 			MatchScore:   match.score,
-			FitReason:    fitReasons[i],
 		}
 	}
 

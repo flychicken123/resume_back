@@ -17,7 +17,6 @@ type ResumeJobMatchRecord struct {
 	JobPostingID   int64     `json:"job_posting_id"`
 	MatchScore     float64   `json:"match_score"`
 	MatchedAt      time.Time `json:"matched_at"`
-	FitReason      string    `json:"fit_reason,omitempty"`
 	JobTitle       string    `json:"job_title"`
 	JobLocation    string    `json:"job_location"`
 	JobRemoteType  string    `json:"job_remote_type"`
@@ -33,7 +32,6 @@ type ResumeJobMatchRecord struct {
 type JobMatchCreate struct {
 	JobPostingID int64
 	MatchScore   float64
-	FitReason    string
 }
 
 // ResumeJobMatchModel handles persistence for resume job matches.
@@ -72,12 +70,11 @@ func (m *ResumeJobMatchModel) UpsertMatches(userID int, resumeHash string, match
 	}
 
 	stmt, err := tx.Prepare(`
-        INSERT INTO resume_job_matches (user_id, resume_hash, job_posting_id, match_score, fit_reason)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO resume_job_matches (user_id, resume_hash, job_posting_id, match_score)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT (user_id, resume_hash, job_posting_id)
         DO UPDATE SET
             match_score = EXCLUDED.match_score,
-            fit_reason = EXCLUDED.fit_reason,
             matched_at = CURRENT_TIMESTAMP
     `)
 	if err != nil {
@@ -86,7 +83,7 @@ func (m *ResumeJobMatchModel) UpsertMatches(userID int, resumeHash string, match
 	defer stmt.Close()
 
 	for _, match := range matches {
-		if _, err = stmt.Exec(userID, resumeHash, match.JobPostingID, match.MatchScore, match.FitReason); err != nil {
+		if _, err = stmt.Exec(userID, resumeHash, match.JobPostingID, match.MatchScore); err != nil {
 			return err
 		}
 	}
@@ -120,7 +117,6 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 
 	query := `
        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
-              COALESCE(m.fit_reason, ''),
               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
               COALESCE(p.description, ''), p.company_id, c.name
@@ -151,7 +147,6 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 			&record.JobPostingID,
 			&record.MatchScore,
 			&record.MatchedAt,
-			&record.FitReason,
 			&record.JobTitle,
 			&record.JobLocation,
 			&record.JobRemoteType,
