@@ -154,7 +154,7 @@ func ParseResume(c *gin.Context) {
           "endDate": string | null,
           "bullets": string[] | null,
           "projectsForRole": [
-            {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null}
+            {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null, "bullets": string[] | null}
           ] | null
         }
       ],
@@ -179,12 +179,13 @@ Important extraction rules:
    - location: The city and state (e.g., "Seattle, WA", "Austin, TX")
    - startDate: Start date in original format (e.g., "Nov 2022", "May 2022")
    - endDate: End date or "Present" if current (e.g., "Dec 2024", "Present")
-   - bullets: Array of bullet points describing responsibilities (each point as separate string)
+   - bullets: ONLY general role responsibilities that are NOT part of a specific project. Do NOT include project-specific bullets here.
    - projectsForRole: Array of projects completed during this role. Look for:
      * Subsections labeled "Projects:", "Key Projects:", or "Notable Projects:" under a role
      * Bullet points that mention building/creating/developing specific named systems, tools, or applications
      * Work items with project names followed by descriptions (e.g., "Project X: Built a system that...")
-     For each project found: extract projectName, description, technologies (if mentioned), projectUrl (if any)
+     For each project found: extract projectName, description (include ALL bullet points that describe this project), technologies (if mentioned), projectUrl (if any)
+     IMPORTANT: All bullets/details about a project must go in that project's description field, NOT in the experience bullets array.
      If no projects are clearly associated with this role, use null or empty array
 
 2. For education entries:
