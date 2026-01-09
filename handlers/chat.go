@@ -382,20 +382,20 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 
 	// Force polish if keywords detected - don't rely on LLM's IsPolishRequest
 	// The LLM may incorrectly return false or ask for clarification
-	if !intent.IsPolishRequest {
-		// Override: if we have polish keywords, this IS a polish request
-		intent.IsPolishRequest = true
-		// Try to detect section from keywords if LLM didn't
-		if intent.Section == "" || intent.Section == "none" {
-			detected := detectSectionFromKeywords(msgLower, resumeData)
-			intent.Section = detected.Section
-			intent.Identifier = detected.Identifier
-		}
+	intent.IsPolishRequest = true // Always true if we have polish keywords
+
+	// Always try keyword-based detection as fallback/override
+	if intent.Section == "" || intent.Section == "none" {
+		detected := detectSectionFromKeywords(msgLower, resumeData)
+		intent.Section = detected.Section
+		intent.Identifier = detected.Identifier
+		intent.EntryIndex = detected.EntryIndex
 	}
 
 	// Force clear any clarification flags - we never ask for clarification
 	intent.NeedsClarification = false
 	intent.ClarificationQuestion = ""
+	intent.Message = "" // Clear any clarification message from LLM
 
 	// Get job description from resume data if available
 	jobDesc, _ := resumeData["jobDescription"].(string)
@@ -452,7 +452,10 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		reply, err = polishAllInChat(ctx, resumeData, jobDesc, updatedData)
 		polishedContent = updatedData
 	default:
-		return nil
+		// Fallback: if section is unrecognized but we have polish keywords, polish everything
+		log.Printf("Unrecognized section '%s', falling back to polish all", intent.Section)
+		reply, err = polishAllInChat(ctx, resumeData, jobDesc, updatedData)
+		polishedContent = updatedData
 	}
 
 	if err != nil {
