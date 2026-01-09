@@ -75,18 +75,8 @@ func PolishResume(c *gin.Context) {
 		return
 	}
 
-	// If clarification needed, ask for it
-	if intent.NeedsClarification {
-		c.JSON(http.StatusOK, PolishResponse{
-			Success:               true,
-			IsPolishRequest:       true,
-			Section:               intent.Section,
-			NeedsClarification:    true,
-			ClarificationQuestion: intent.ClarificationQuestion,
-			Message:               intent.Message,
-		})
-		return
-	}
+	// Never ask for clarification - always proceed with polishing using existing data
+	// If no specific entry identified, we'll polish ALL entries in the section
 
 	// Polish the identified section
 	response := PolishResponse{

@@ -376,12 +376,26 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 	intent, err := polishAgent.DetectPolishIntent(ctx, message, resumeData)
 	if err != nil {
 		log.Printf("polish intent detection failed: %v", err)
-		return nil
+		// Even if LLM fails, try to detect section from keywords
+		intent = detectSectionFromKeywords(msgLower, resumeData)
 	}
 
+	// Force polish if keywords detected - don't rely on LLM's IsPolishRequest
+	// The LLM may incorrectly return false or ask for clarification
 	if !intent.IsPolishRequest {
-		return nil
+		// Override: if we have polish keywords, this IS a polish request
+		intent.IsPolishRequest = true
+		// Try to detect section from keywords if LLM didn't
+		if intent.Section == "" || intent.Section == "none" {
+			detected := detectSectionFromKeywords(msgLower, resumeData)
+			intent.Section = detected.Section
+			intent.Identifier = detected.Identifier
+		}
 	}
+
+	// Force clear any clarification flags - we never ask for clarification
+	intent.NeedsClarification = false
+	intent.ClarificationQuestion = ""
 
 	// Get job description from resume data if available
 	jobDesc, _ := resumeData["jobDescription"].(string)
@@ -505,6 +519,72 @@ func findEntryIndexByIdentifier(data map[string]interface{}, section, identifier
 		}
 	}
 	return -1
+}
+
+// detectSectionFromKeywords uses simple keyword matching to detect which section to polish.
+// This is a fallback when LLM detection fails or returns unclear results.
+func detectSectionFromKeywords(msgLower string, resumeData map[string]interface{}) services.PolishIntent {
+	intent := services.PolishIntent{
+		IsPolishRequest: true,
+		EntryIndex:      -1,
+	}
+
+	// Check for section keywords
+	if strings.Contains(msgLower, "experience") || strings.Contains(msgLower, "work") || strings.Contains(msgLower, "job") {
+		intent.Section = "experience"
+		// Try to find company name identifier from resume data
+		if experiences, ok := resumeData["experiences"].([]interface{}); ok {
+			for i, exp := range experiences {
+				if expMap, ok := exp.(map[string]interface{}); ok {
+					company, _ := expMap["company"].(string)
+					if company != "" && strings.Contains(msgLower, strings.ToLower(company)) {
+						intent.Identifier = company
+						intent.EntryIndex = i
+						break
+					}
+				}
+			}
+		}
+	} else if strings.Contains(msgLower, "education") || strings.Contains(msgLower, "school") || strings.Contains(msgLower, "degree") {
+		intent.Section = "education"
+		if education, ok := resumeData["education"].([]interface{}); ok {
+			for i, edu := range education {
+				if eduMap, ok := edu.(map[string]interface{}); ok {
+					school, _ := eduMap["school"].(string)
+					if school != "" && strings.Contains(msgLower, strings.ToLower(school)) {
+						intent.Identifier = school
+						intent.EntryIndex = i
+						break
+					}
+				}
+			}
+		}
+	} else if strings.Contains(msgLower, "project") {
+		intent.Section = "projects"
+		if projects, ok := resumeData["projects"].([]interface{}); ok {
+			for i, proj := range projects {
+				if projMap, ok := proj.(map[string]interface{}); ok {
+					name, _ := projMap["projectName"].(string)
+					if name != "" && strings.Contains(msgLower, strings.ToLower(name)) {
+						intent.Identifier = name
+						intent.EntryIndex = i
+						break
+					}
+				}
+			}
+		}
+	} else if strings.Contains(msgLower, "summary") || strings.Contains(msgLower, "profile") || strings.Contains(msgLower, "objective") {
+		intent.Section = "summary"
+	} else if strings.Contains(msgLower, "skill") {
+		intent.Section = "skills"
+	} else if strings.Contains(msgLower, "resume") || strings.Contains(msgLower, "all") || strings.Contains(msgLower, "everything") {
+		intent.Section = "all"
+	} else {
+		// Default to polishing all if no specific section mentioned
+		intent.Section = "all"
+	}
+
+	return intent
 }
 
 func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (interface{}, string, int, error) {
