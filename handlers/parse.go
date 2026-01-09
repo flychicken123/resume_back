@@ -146,7 +146,17 @@ func ParseResume(c *gin.Context) {
       "phone": string | null,
       "summary": string | null,
       "experience": [
-        {"company": string | null, "role": string | null, "location": string | null, "startDate": string | null, "endDate": string | null, "bullets": string[] | null}
+        {
+          "company": string | null,
+          "role": string | null,
+          "location": string | null,
+          "startDate": string | null,
+          "endDate": string | null,
+          "bullets": string[] | null,
+          "projectsForRole": [
+            {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null}
+          ] | null
+        }
       ],
       "education": [
         {"school": string | null, "degree": string | null, "field": string | null, "startDate": string | null, "endDate": string | null}
@@ -170,6 +180,12 @@ Important extraction rules:
    - startDate: Start date in original format (e.g., "Nov 2022", "May 2022")
    - endDate: End date or "Present" if current (e.g., "Dec 2024", "Present")
    - bullets: Array of bullet points describing responsibilities (each point as separate string)
+   - projectsForRole: Array of projects completed during this role. Look for:
+     * Subsections labeled "Projects:", "Key Projects:", or "Notable Projects:" under a role
+     * Bullet points that mention building/creating/developing specific named systems, tools, or applications
+     * Work items with project names followed by descriptions (e.g., "Project X: Built a system that...")
+     For each project found: extract projectName, description, technologies (if mentioned), projectUrl (if any)
+     If no projects are clearly associated with this role, use null or empty array
 
 2. For education entries:
    - school: University/college name (e.g., "Texas Tech University")
@@ -178,14 +194,15 @@ Important extraction rules:
    - startDate: Start year or date (e.g., "Aug 2011", "2011")
    - endDate: Graduation year or date (e.g., "May 2014", "2014")
 
-3. For projects (IMPORTANT: These are NOT work experiences):
+3. For projects (standalone personal/academic projects NOT tied to a specific job):
    - projectName: Name of the project
    - description: Brief description of what the project does
    - technologies: Technologies/tools used (as a single string, e.g., "React, Node.js, MongoDB")
    - projectUrl: URL/link to the project if provided (GitHub, website, etc.)
    - bullets: Array of bullet points describing project details
-   - Projects are personal/academic/side projects, NOT professional work experience
+   - These are personal/academic/side projects, NOT professional work experience
    - Look for sections titled "Projects", "Personal Projects", "Academic Projects", "Portfolio"
+   - Do NOT include projects that are clearly part of a work experience (those go in projectsForRole)
 
 4. For skills: Extract as array of individual skills
 
@@ -193,7 +210,10 @@ Important extraction rules:
 
 6. If a field is not found, use null, not empty string
 
-CRITICAL: Distinguish between work experience (jobs at companies) and projects (personal/academic work). Do not mix them.
+CRITICAL: Distinguish between:
+- Work experience (jobs at companies) with their associated projectsForRole
+- Standalone projects (personal/academic work in the top-level projects array)
+Projects done AT a company go in that experience's projectsForRole. Personal/side projects go in the top-level projects array.
 
 Resume text:
 %s
