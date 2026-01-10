@@ -712,8 +712,9 @@ func countTokenOverlap(a, b []string) int {
 }
 
 const (
-	aiCareerFilterBatchSize = 75               // Number of jobs per AI call
-	aiCareerFilterTimeout   = 12 * time.Second // Timeout per AI call
+	aiCareerFilterBatchSize       = 75               // Number of jobs per AI call
+	aiCareerFilterTimeout         = 12 * time.Second // Timeout per AI call
+	aiCareerFieldClassifyTimeout  = 8 * time.Second  // Timeout for career field classification
 )
 
 // batchResult holds the result of processing a single batch
@@ -721,14 +722,62 @@ type batchResult struct {
 	batchStart      int
 	batchSize       int
 	relevantIndices []int
+	irrelevantIDs   []int64 // Job IDs that were filtered out (for caching)
+	relevantIDs     []int64 // Job IDs that were kept (for caching)
 	filteredCount   int
 	err             error
+}
+
+// classifyCandidateCareerField uses AI to determine the candidate's career field.
+// Results are cached by candidate profile hash.
+func (s *jobMatcherService) classifyCandidateCareerField(ctx context.Context, input ResumeJobMatchInput) CareerField {
+	cache := GetJobFilterCache()
+
+	// Check cache first
+	if field, found := cache.GetCareerField(input.Position, input.Skills); found {
+		s.logger.Info("career field cache hit", map[string]interface{}{
+			"position":    input.Position,
+			"careerField": string(field),
+		})
+		return field
+	}
+
+	// Cache miss - call AI to classify
+	if s.copilot == nil {
+		return CareerFieldUnknown
+	}
+
+	prompt := BuildCareerFieldClassificationPrompt(input.Position, input.Skills, input.Summary)
+	ctxWithTimeout, cancel := context.WithTimeout(ctx, aiCareerFieldClassifyTimeout)
+	defer cancel()
+
+	raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
+	if err != nil {
+		s.logger.Warn("career field classification failed", map[string]interface{}{
+			"error": err.Error(),
+		})
+		return CareerFieldUnknown
+	}
+
+	field := ParseCareerFieldClassificationResponse(raw)
+
+	// Cache the result
+	cache.SetCareerField(input.Position, input.Skills, field)
+
+	s.logger.Info("career field classified and cached", map[string]interface{}{
+		"position":    input.Position,
+		"careerField": string(field),
+	})
+
+	return field
 }
 
 // applyAICareerFieldFilter uses AI to filter out jobs that don't match the candidate's career field.
 // This is a pre-filter that runs before heuristic scoring to eliminate obviously irrelevant jobs
 // (e.g., Account Manager jobs for a Software Engineer candidate).
-// Batches are processed in PARALLEL for faster execution.
+// Features:
+// - Two-level caching: career field + job relevance
+// - Parallel batch processing for cache misses
 func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input ResumeJobMatchInput, jobs []*models.JobPosting) []*models.JobPosting {
 	if s.copilot == nil {
 		s.logger.Warn("AI career field filter skipped: copilot not available", nil)
@@ -738,42 +787,77 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		return jobs
 	}
 
-	// Calculate number of batches
-	numBatches := (len(jobs) + aiCareerFilterBatchSize - 1) / aiCareerFilterBatchSize
+	cache := GetJobFilterCache()
 
-	s.logger.Info("AI career field filter starting", map[string]interface{}{
-		"totalJobs":  len(jobs),
-		"numBatches": numBatches,
-		"batchSize":  aiCareerFilterBatchSize,
+	// Step 1: Classify candidate's career field (cached)
+	careerField := s.classifyCandidateCareerField(ctx, input)
+	if careerField == CareerFieldUnknown {
+		s.logger.Warn("could not determine career field, skipping filter", nil)
+		return jobs
+	}
+
+	// Step 2: Check cache for each job's relevance
+	var cachedRelevant []*models.JobPosting
+	var uncachedJobs []*models.JobPosting
+	var uncachedIndices []int // Original indices for uncached jobs
+
+	cacheHits := 0
+	cacheMisses := 0
+
+	for i, job := range jobs {
+		if relevant, found := cache.GetJobRelevance(careerField, job.ID); found {
+			cacheHits++
+			if relevant {
+				cachedRelevant = append(cachedRelevant, job)
+			}
+			// If not relevant, we skip it (filtered out from cache)
+		} else {
+			cacheMisses++
+			uncachedJobs = append(uncachedJobs, job)
+			uncachedIndices = append(uncachedIndices, i)
+		}
+	}
+
+	s.logger.Info("AI career field filter cache check", map[string]interface{}{
+		"careerField":   string(careerField),
+		"totalJobs":     len(jobs),
+		"cacheHits":     cacheHits,
+		"cacheMisses":   cacheMisses,
+		"cachedRelevant": len(cachedRelevant),
 	})
 
-	// Channel to collect results from all batches
+	// If all jobs were cached, return early
+	if len(uncachedJobs) == 0 {
+		s.logger.Info("AI career field filter completed (all from cache)", map[string]interface{}{
+			"filteredCount": len(cachedRelevant),
+		})
+		return cachedRelevant
+	}
+
+	// Step 3: Process uncached jobs in parallel batches
+	numBatches := (len(uncachedJobs) + aiCareerFilterBatchSize - 1) / aiCareerFilterBatchSize
 	resultsChan := make(chan batchResult, numBatches)
 
-	// Launch all batches in parallel
 	for batchIdx := 0; batchIdx < numBatches; batchIdx++ {
 		batchStart := batchIdx * aiCareerFilterBatchSize
 		batchEnd := batchStart + aiCareerFilterBatchSize
-		if batchEnd > len(jobs) {
-			batchEnd = len(jobs)
+		if batchEnd > len(uncachedJobs) {
+			batchEnd = len(uncachedJobs)
 		}
 
-		// Capture batch jobs for this goroutine
-		batchJobs := jobs[batchStart:batchEnd]
+		batchJobs := uncachedJobs[batchStart:batchEnd]
 		batchStartCopy := batchStart
 
 		go func(bStart int, bJobs []*models.JobPosting) {
-			// Build batch of candidates
 			candidates := make([]JobRelevanceCandidate, len(bJobs))
 			for i, job := range bJobs {
 				candidates[i] = JobRelevanceCandidate{
-					Index:      bStart + i + 1, // Global 1-indexed
+					Index:      bStart + i + 1,
 					Title:      job.Title,
 					Department: job.Department,
 				}
 			}
 
-			// Call AI to filter this batch
 			prompt := BuildJobRelevanceFilterPrompt(input, candidates)
 			ctxWithTimeout, cancel := context.WithTimeout(ctx, aiCareerFilterTimeout)
 			defer cancel()
@@ -781,12 +865,12 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 			raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
 
 			if err != nil {
-				s.logger.Warn("AI career field filter failed for batch, keeping all jobs in batch", map[string]interface{}{
+				s.logger.Warn("AI career field filter failed for batch, keeping all jobs", map[string]interface{}{
 					"error":      err.Error(),
 					"batchStart": bStart,
 					"batchSize":  len(bJobs),
 				})
-				// On failure, keep all jobs in this batch (fail open)
+				// Fail open - keep all jobs, but don't cache (transient failure)
 				allIndices := make([]int, len(bJobs))
 				for i := range bJobs {
 					allIndices[i] = bStart + i + 1
@@ -801,21 +885,38 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 				return
 			}
 
-			// Parse response
 			parsed := ParseJobRelevanceFilterResponse(raw, len(candidates))
+
+			// Collect job IDs for caching
+			relevantSet := make(map[int]bool)
+			for _, idx := range parsed.RelevantIndices {
+				relevantSet[idx] = true
+			}
+
+			var relevantIDs, irrelevantIDs []int64
+			for i, job := range bJobs {
+				localIdx := bStart + i + 1
+				if relevantSet[localIdx] {
+					relevantIDs = append(relevantIDs, job.ID)
+				} else {
+					irrelevantIDs = append(irrelevantIDs, job.ID)
+				}
+			}
+
 			resultsChan <- batchResult{
 				batchStart:      bStart,
 				batchSize:       len(bJobs),
 				relevantIndices: parsed.RelevantIndices,
+				relevantIDs:     relevantIDs,
+				irrelevantIDs:   irrelevantIDs,
 				filteredCount:   parsed.FilteredCount,
 				err:             nil,
 			}
 		}(batchStartCopy, batchJobs)
 	}
 
-	// Collect results from all batches
-	relevantIndices := make(map[int]bool)
-	totalFiltered := 0
+	// Collect results
+	relevantFromAI := make(map[int]bool)
 	successfulBatches := 0
 	failedBatches := 0
 
@@ -823,36 +924,40 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		result := <-resultsChan
 
 		for _, idx := range result.relevantIndices {
-			relevantIndices[idx] = true
+			relevantFromAI[idx] = true
 		}
-		totalFiltered += result.filteredCount
 
 		if result.err != nil {
 			failedBatches++
 		} else {
 			successfulBatches++
-			s.logger.Info("AI career field filter batch completed", map[string]interface{}{
-				"batchStart":    result.batchStart,
-				"batchSize":     result.batchSize,
-				"relevantCount": len(result.relevantIndices),
-				"filteredCount": result.filteredCount,
-			})
+			// Cache the results
+			cache.SetBulkJobRelevance(careerField, result.relevantIDs, result.irrelevantIDs)
 		}
 	}
 	close(resultsChan)
 
-	// Build filtered job list
-	filteredJobs := make([]*models.JobPosting, 0, len(relevantIndices))
-	for i, job := range jobs {
-		if relevantIndices[i+1] {
-			filteredJobs = append(filteredJobs, job)
+	// Step 4: Build final list (cached + newly evaluated)
+	var aiRelevant []*models.JobPosting
+	for i, job := range uncachedJobs {
+		// The index in relevantFromAI is 1-based within each batch
+		batchIdx := i / aiCareerFilterBatchSize
+		posInBatch := i % aiCareerFilterBatchSize
+		globalIdx := batchIdx*aiCareerFilterBatchSize + posInBatch + 1
+		if relevantFromAI[globalIdx] {
+			aiRelevant = append(aiRelevant, job)
 		}
 	}
 
+	// Combine cached and AI-evaluated results
+	filteredJobs := append(cachedRelevant, aiRelevant...)
+
 	s.logger.Info("AI career field filter completed", map[string]interface{}{
+		"careerField":       string(careerField),
 		"originalCount":     len(jobs),
 		"filteredCount":     len(filteredJobs),
-		"removedCount":      len(jobs) - len(filteredJobs),
+		"fromCache":         len(cachedRelevant),
+		"fromAI":            len(aiRelevant),
 		"successfulBatches": successfulBatches,
 		"failedBatches":     failedBatches,
 	})

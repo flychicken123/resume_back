@@ -1658,3 +1658,108 @@ func ParseJobRelevanceFilterResponse(raw string, totalJobs int) JobRelevanceFilt
 	result.FilteredCount = totalJobs - len(result.RelevantIndices)
 	return result
 }
+
+// BuildCareerFieldClassificationPrompt builds a prompt to classify candidate's career field
+func BuildCareerFieldClassificationPrompt(position string, skills []string, summary string) string {
+	var sb strings.Builder
+
+	sb.WriteString("Position: ")
+	sb.WriteString(strings.TrimSpace(position))
+	sb.WriteString("\n")
+
+	if len(skills) > 0 {
+		sb.WriteString("Skills: ")
+		sb.WriteString(strings.Join(skills, ", "))
+		sb.WriteString("\n")
+	}
+
+	if trimmed := strings.TrimSpace(summary); trimmed != "" {
+		// Truncate summary to save tokens
+		if len(trimmed) > 300 {
+			trimmed = trimmed[:300] + "..."
+		}
+		sb.WriteString("Summary: ")
+		sb.WriteString(trimmed)
+		sb.WriteString("\n")
+	}
+
+	return fmt.Sprintf(`Classify this candidate's primary career field based on their profile.
+
+CANDIDATE PROFILE:
+%s
+
+Return ONLY one of these career fields that best matches:
+- SOFTWARE_ENGINEERING (developers, engineers, architects, DevOps, QA, SRE)
+- DATA_SCIENCE (data scientists, ML engineers, data analysts, AI researchers)
+- PRODUCT_MANAGEMENT (product managers, TPMs, program managers)
+- DESIGN (UX/UI designers, graphic designers, design leads)
+- SALES (account executives, sales reps, BDRs, account managers)
+- MARKETING (marketing managers, growth, content, SEO, brand)
+- FINANCE (accountants, financial analysts, controllers, FP&A)
+- OPERATIONS (operations managers, supply chain, logistics)
+- HR_RECRUITING (recruiters, HR managers, people ops)
+- CUSTOMER_SUCCESS (CSMs, support engineers, success managers)
+- OTHER (if none of the above fit)
+
+Response format (JSON only):
+{"career_field": "SOFTWARE_ENGINEERING"}`, sb.String())
+}
+
+// ParseCareerFieldClassificationResponse parses the AI response for career field
+func ParseCareerFieldClassificationResponse(raw string) CareerField {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return CareerFieldUnknown
+	}
+
+	// Strip markdown fences if present
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	var response struct {
+		CareerField string `json:"career_field"`
+	}
+
+	if err := json.Unmarshal([]byte(trimmed), &response); err != nil {
+		// Try to extract career field from raw text as fallback
+		upperRaw := strings.ToUpper(trimmed)
+		for _, field := range []CareerField{
+			CareerFieldSoftwareEngineering,
+			CareerFieldDataScience,
+			CareerFieldProductManagement,
+			CareerFieldDesign,
+			CareerFieldSales,
+			CareerFieldMarketing,
+			CareerFieldFinance,
+			CareerFieldOperations,
+			CareerFieldHRRecruiting,
+			CareerFieldCustomerSuccess,
+		} {
+			if strings.Contains(upperRaw, string(field)) {
+				return field
+			}
+		}
+		return CareerFieldUnknown
+	}
+
+	// Validate and return
+	field := CareerField(strings.ToUpper(strings.TrimSpace(response.CareerField)))
+	switch field {
+	case CareerFieldSoftwareEngineering,
+		CareerFieldDataScience,
+		CareerFieldProductManagement,
+		CareerFieldDesign,
+		CareerFieldSales,
+		CareerFieldMarketing,
+		CareerFieldFinance,
+		CareerFieldOperations,
+		CareerFieldHRRecruiting,
+		CareerFieldCustomerSuccess,
+		CareerFieldOther:
+		return field
+	default:
+		return CareerFieldUnknown
+	}
+}
