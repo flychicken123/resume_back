@@ -543,46 +543,6 @@ func computeSkillGapsWithLLM(ctx context.Context, matches []*models.ResumeJobMat
 	}
 }
 
-// computeSkillGaps is the legacy function using rule-based inference only.
-// Kept for backwards compatibility.
-func computeSkillGaps(matches []*models.ResumeJobMatchRecord, userSkills []string) {
-	if len(matches) == 0 {
-		return
-	}
-
-	// Normalize user's skills and expand with inferred skills
-	normalizedSkills := normaliseSkills(userSkills)
-	expandedSkills := ExpandSkillsWithInference(normalizedSkills)
-
-	// Build set of all user skills (explicit + inferred)
-	userSkillSet := make(map[string]bool, len(expandedSkills))
-	for _, s := range expandedSkills {
-		userSkillSet[s] = true
-	}
-
-	// Calculate gaps for each match
-	for _, match := range matches {
-		// Extract required skills from job description
-		requiredSkills := ExtractSkillsFromText(match.JobDescription)
-		if len(requiredSkills) == 0 {
-			continue
-		}
-
-		var matched, missing []string
-		for _, reqSkill := range requiredSkills {
-			if userSkillSet[reqSkill] {
-				matched = append(matched, reqSkill)
-			} else {
-				missing = append(missing, reqSkill)
-			}
-		}
-
-		match.RequiredSkills = requiredSkills
-		match.MatchedSkills = matched
-		match.MissingSkills = missing
-	}
-}
-
 func jobLooksLikeInternRole(title, description string) bool {
 	return determineJobSeniority(title, description) == seniorityIntern
 }
