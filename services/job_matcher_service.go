@@ -799,12 +799,11 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	// Step 2: Check cache for each job's relevance
 	var cachedRelevant []*models.JobPosting
 	var uncachedJobs []*models.JobPosting
-	var uncachedIndices []int // Original indices for uncached jobs
 
 	cacheHits := 0
 	cacheMisses := 0
 
-	for i, job := range jobs {
+	for _, job := range jobs {
 		if relevant, found := cache.GetJobRelevance(careerField, job.ID); found {
 			cacheHits++
 			if relevant {
@@ -814,7 +813,6 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		} else {
 			cacheMisses++
 			uncachedJobs = append(uncachedJobs, job)
-			uncachedIndices = append(uncachedIndices, i)
 		}
 	}
 

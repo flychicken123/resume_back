@@ -95,10 +95,6 @@ func generateCandidateHash(position string, skills []string) string {
 	return hex.EncodeToString(hash[:16]) // Use first 16 bytes for shorter key
 }
 
-// generateJobRelevanceKey creates a cache key for job relevance
-func generateJobRelevanceKey(careerField CareerField, jobID int64) string {
-	return string(careerField) + ":" + strings.TrimSpace(string(rune(jobID)))
-}
 
 // GetCareerField retrieves cached career field for a candidate
 func (c *JobFilterCache) GetCareerField(position string, skills []string) (CareerField, bool) {
