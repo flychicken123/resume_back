@@ -530,51 +530,6 @@ func computeRecencyBoost(job *models.JobPosting) float64 {
 	}
 }
 
-// computeSkillGapsWithLLM calculates which skills are required by each job but missing from the user's resume.
-// It uses LLM-powered skill inference to intelligently derive implicit skills from resume content.
-// For example, if a project description mentions "Built REST API with Express", the LLM infers backend, api, node skills.
-func computeSkillGapsWithLLM(ctx context.Context, matches []*models.ResumeJobMatchRecord, content ResumeContent) {
-	if len(matches) == 0 {
-		return
-	}
-
-	// Use LLM to infer all skills from resume content
-	inferrer := GetSkillInferenceLLM()
-	inferredSkills, err := inferrer.InferSkillsFromResume(ctx, content)
-	if err != nil {
-		// Fall back to rule-based inference
-		inferredSkills = ExpandSkillsWithInference(content.Skills)
-	}
-
-	// Build set of all user skills (explicit + LLM-inferred)
-	userSkillSet := make(map[string]bool, len(inferredSkills))
-	for _, s := range inferredSkills {
-		userSkillSet[s] = true
-	}
-
-	// Calculate gaps for each match
-	for _, match := range matches {
-		// Extract required skills from job description
-		requiredSkills := ExtractSkillsFromText(match.JobDescription)
-		if len(requiredSkills) == 0 {
-			continue
-		}
-
-		var matched, missing []string
-		for _, reqSkill := range requiredSkills {
-			if userSkillSet[reqSkill] {
-				matched = append(matched, reqSkill)
-			} else {
-				missing = append(missing, reqSkill)
-			}
-		}
-
-		match.RequiredSkills = requiredSkills
-		match.MatchedSkills = matched
-		match.MissingSkills = missing
-	}
-}
-
 // computeSkillGapsFromSkills calculates skill gaps using pre-computed user skills.
 // This is more efficient when skills are already inferred (e.g., from parallel LLM call).
 func computeSkillGapsFromSkills(matches []*models.ResumeJobMatchRecord, userSkills []string) {
