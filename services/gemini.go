@@ -48,6 +48,11 @@ var (
 	langChainOnce  sync.Once
 	langChainErr   error
 	langChainModel llms.Model
+
+	// Flash model for faster, simpler tasks
+	langChainFlashOnce  sync.Once
+	langChainFlashErr   error
+	langChainFlashModel llms.Model
 )
 
 func getLangChainModel() (llms.Model, error) {
@@ -74,6 +79,42 @@ func getLangChainModel() (llms.Model, error) {
 
 func CallGeminiWithAPIKey(prompt string) (string, error) {
 	llm, err := getLangChainModel()
+	if err != nil {
+		return "", err
+	}
+
+	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
+}
+
+// getLangChainFlashModel returns a Gemini Flash model optimized for speed.
+func getLangChainFlashModel() (llms.Model, error) {
+	langChainFlashOnce.Do(func() {
+		apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+		if apiKey == "" {
+			langChainFlashErr = fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+			return
+		}
+
+		opts := []googleai.Option{
+			googleai.WithAPIKey(apiKey),
+			googleai.WithDefaultModel("gemini-2.0-flash"),
+		}
+
+		llm, err := googleai.New(context.Background(), opts...)
+		if err != nil {
+			langChainFlashErr = fmt.Errorf("failed to initialize LangChain GoogleAI Flash client: %w", err)
+			return
+		}
+
+		langChainFlashModel = llm
+	})
+
+	return langChainFlashModel, langChainFlashErr
+}
+
+// CallGeminiFlash calls Gemini Flash model which is 5-10x faster than Pro.
+func CallGeminiFlash(prompt string) (string, error) {
+	llm, err := getLangChainFlashModel()
 	if err != nil {
 		return "", err
 	}
