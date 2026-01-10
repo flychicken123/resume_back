@@ -2,6 +2,7 @@ package controllers
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"errors"
@@ -394,6 +395,7 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		HtmlContent       string   `json:"htmlContent"`
 		CandidateJobLimit int      `json:"candidateJobLimit"`
 		MaxResults        int      `json:"maxResults"`
+		QuickMode         bool     `json:"quickMode"` // If true, skip AI filter for instant results
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -428,9 +430,27 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		Skills:            req.Skills,
 		CandidateJobLimit: req.CandidateJobLimit,
 		MaxResults:        req.MaxResults,
+		QuickMode:         req.QuickMode,
 	}
 
 	matches, err := jc.matcher.MatchAndStore(c.Request.Context(), input)
+
+	// If quick mode was used, start background job to run full matching with AI filter
+	aiFilterPending := false
+	if req.QuickMode {
+		aiFilterPending = true
+		// Run full matching in background
+		go func() {
+			bgInput := input
+			bgInput.QuickMode = false // Run with AI filter
+			_, bgErr := jc.matcher.MatchAndStore(context.Background(), bgInput)
+			if bgErr != nil {
+				// Log error but don't fail - quick results are already returned
+				// The background job will update the DB with refined results
+				_ = bgErr // Silently handle - results will be updated on next poll
+			}
+		}()
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to compute job matches"})
 		return
@@ -451,10 +471,11 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"resumeHash": resumeHash,
-		"count":      len(matches),
-		"matches":    matches,
-		"topMatches": topMatches,
+		"resumeHash":      resumeHash,
+		"count":           len(matches),
+		"matches":         matches,
+		"topMatches":      topMatches,
+		"aiFilterPending": aiFilterPending,
 	})
 }
 

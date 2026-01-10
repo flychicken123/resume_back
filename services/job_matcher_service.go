@@ -26,6 +26,7 @@ type ResumeJobMatchInput struct {
 	CandidateJobLimit int
 	MaxResults        int
 	CandidateYOE      float64 // Extracted years of experience (set during matching)
+	QuickMode         bool    // If true, skip AI filtering for faster initial results
 }
 
 // ResumeJobMatcher defines the behaviour exposed to handlers.
@@ -115,7 +116,14 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	}
 
 	// Pass 1.5: AI-based career field filtering (filter out unrelated job categories)
-	jobs = s.applyAICareerFieldFilter(ctx, input, jobs)
+	// Skip if QuickMode is enabled for faster initial results
+	if !input.QuickMode {
+		jobs = s.applyAICareerFieldFilter(ctx, input, jobs)
+	} else {
+		s.logger.Info("AI career field filter skipped (quick mode)", map[string]interface{}{
+			"jobCount": len(jobs),
+		})
+	}
 
 	// Pass 2: Full heuristic scoring
 	sourceText := strings.Join([]string{input.Summary, input.Experience, input.Education, input.JobDescription}, " ")
