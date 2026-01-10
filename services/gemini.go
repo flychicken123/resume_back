@@ -1582,7 +1582,7 @@ func BuildJobRelevanceFilterPrompt(input ResumeJobMatchInput, jobs []JobRelevanc
 		jobsBuilder.WriteString("\n")
 	}
 
-	return fmt.Sprintf(`You are a career matching expert. Your task is to filter job listings to show only those relevant to a candidate's career background.
+	return fmt.Sprintf(`You are a career matching expert. Your task is to filter out OBVIOUSLY IRRELEVANT jobs from a list while keeping any job that could reasonably match a candidate's background.
 
 CANDIDATE PROFILE:
 %s
@@ -1591,24 +1591,32 @@ JOB LISTINGS TO EVALUATE:
 %s
 
 INSTRUCTIONS:
-1. Analyze the candidate's career field based on their position, skills, and experience
-2. For each job, determine if it matches the candidate's career field
-3. Return ONLY jobs the candidate would realistically apply for
+1. Identify the candidate's primary career field from their position and skills
+2. Keep jobs that are in the same field OR related/adjacent fields
+3. ONLY filter out jobs that are clearly in a completely different industry
 
-FILTERING RULES:
-- Software/Engineering candidates: Include software, engineering, data, DevOps, architect, technical PM roles. EXCLUDE sales, marketing, HR, finance, operations, account management roles.
-- Product candidates: Include product, program management, technical PM roles. May include some engineering roles.
-- Sales candidates: Include sales, business development, account executive roles. EXCLUDE engineering, technical roles.
-- Marketing candidates: Include marketing, growth, content, brand roles. EXCLUDE engineering, sales roles.
-- Keep roles that bridge the candidate's field (e.g., "Sales Engineer" for engineering candidate, "Technical Account Manager" for technical candidates)
+WHAT TO FILTER OUT (be conservative - only filter these):
+- Manufacturing/industrial jobs (welder, machinist, spray technician) for office workers
+- Healthcare roles (nurse, medical technician) for non-healthcare candidates
+- Trades jobs (electrician, plumber, HVAC) for non-trades candidates
+- Driving/logistics jobs (truck driver, delivery) for desk workers
+- Food service/hospitality for professional candidates
 
-Return JSON with the indices of RELEVANT jobs only:
+WHAT TO KEEP (even if not a perfect match):
+- Any tech-adjacent role for tech candidates (technical support, solutions engineer, etc.)
+- Management roles across departments (engineering managers, project managers)
+- Analyst roles across fields (business analyst, data analyst, operations analyst)
+- Cross-functional roles (technical writer, developer relations, sales engineer)
+- Roles with transferable skills (customer success for support background, etc.)
+
+IMPORTANT: When in doubt, KEEP the job. Let the scoring algorithm handle relevance ranking.
+Only filter jobs that are OBVIOUSLY from a completely different career path.
+
+Return JSON with the indices of jobs to KEEP:
 {
-  "relevant_indices": [1, 3, 5, 7],
-  "reasoning": "Candidate is a software engineer. Filtered out Account Manager (#2), Marketing Coordinator (#4) as unrelated fields."
-}
-
-IMPORTANT: Be strict. When in doubt, filter it out. Only include jobs that clearly match the candidate's career trajectory.`, resumeBlock, jobsBuilder.String())
+  "relevant_indices": [1, 2, 3, 4, 6, 7, 8],
+  "reasoning": "Kept most jobs. Filtered out Cold Spray Technician (#5) as manufacturing trade unrelated to software."
+}`, resumeBlock, jobsBuilder.String())
 }
 
 // ParseJobRelevanceFilterResponse parses the AI response for job relevance filtering

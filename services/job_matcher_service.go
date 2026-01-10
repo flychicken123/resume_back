@@ -958,6 +958,19 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	// Combine cached and AI-evaluated results
 	filteredJobs := append(cachedRelevant, aiRelevant...)
 
+	// Safeguard: If AI filter removed more than 80% of jobs, it's likely too aggressive.
+	// In this case, return all jobs and let the scoring algorithm handle relevance.
+	filterRate := float64(len(jobs)-len(filteredJobs)) / float64(len(jobs))
+	if len(jobs) > 20 && filterRate > 0.80 {
+		s.logger.Warn("AI career field filter was too aggressive, returning all jobs", map[string]interface{}{
+			"careerField":     string(careerField),
+			"originalCount":   len(jobs),
+			"filteredCount":   len(filteredJobs),
+			"filterRate":      filterRate,
+		})
+		return jobs
+	}
+
 	s.logger.Info("AI career field filter completed", map[string]interface{}{
 		"careerField":       string(careerField),
 		"originalCount":     len(jobs),
@@ -966,6 +979,7 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		"fromAI":            len(aiRelevant),
 		"successfulBatches": successfulBatches,
 		"failedBatches":     failedBatches,
+		"filterRate":        filterRate,
 	})
 
 	return filteredJobs

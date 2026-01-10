@@ -31,6 +31,8 @@ const (
 	careerFieldCacheTTL   = 24 * time.Hour // Cache candidate career field for 24 hours
 	jobRelevanceCacheTTL  = 7 * 24 * time.Hour // Cache job relevance for 7 days
 	cacheCleanupInterval  = 1 * time.Hour
+	// Cache version - increment this when prompt logic changes to invalidate old cache entries
+	cacheVersion          = "v2" // v2: less aggressive filtering prompt
 )
 
 // jobFilterCacheEntry holds a cached value with expiration
@@ -129,7 +131,7 @@ func (c *JobFilterCache) SetCareerField(position string, skills []string, field 
 
 // GetJobRelevance retrieves cached job relevance for a career field
 func (c *JobFilterCache) GetJobRelevance(careerField CareerField, jobID int64) (bool, bool) {
-	key := string(careerField) + ":" + formatJobID(jobID)
+	key := cacheVersion + ":" + string(careerField) + ":" + formatJobID(jobID)
 
 	if entry, ok := c.jobRelevanceCache.Load(key); ok {
 		cached := entry.(jobFilterCacheEntry)
@@ -151,7 +153,7 @@ func (c *JobFilterCache) GetJobRelevance(careerField CareerField, jobID int64) (
 
 // SetJobRelevance caches job relevance for a career field
 func (c *JobFilterCache) SetJobRelevance(careerField CareerField, jobID int64, relevant bool) {
-	key := string(careerField) + ":" + formatJobID(jobID)
+	key := cacheVersion + ":" + string(careerField) + ":" + formatJobID(jobID)
 	c.jobRelevanceCache.Store(key, jobFilterCacheEntry{
 		value:     relevant,
 		expiresAt: time.Now().Add(jobRelevanceCacheTTL),
