@@ -1518,12 +1518,143 @@ func ValidateNoHallucinations(original, optimized string) (string, []string) {
 // This is a more aggressive version that attempts to clean the output.
 func ValidateAndCleanOutput(original, optimized string) string {
 	validated, issues := ValidateNoHallucinations(original, optimized)
-	
+
 	if len(issues) > 0 {
 		// Log the issues for monitoring
 		// In production, you might want to use a proper logger
 		fmt.Printf("Hallucination detection: %v\n", issues)
 	}
-	
+
 	return validated
+}
+
+// JobRelevanceCandidate represents a job to be checked for relevance
+type JobRelevanceCandidate struct {
+	Index      int
+	Title      string
+	Department string
+}
+
+// JobRelevanceFilterResult contains the AI filtering results
+type JobRelevanceFilterResult struct {
+	RelevantIndices []int             // Indices of jobs that are relevant
+	FilteredCount   int               // Number of jobs filtered out
+}
+
+// BuildJobRelevanceFilterPrompt builds a prompt for AI to filter jobs by career relevance
+func BuildJobRelevanceFilterPrompt(input ResumeJobMatchInput, jobs []JobRelevanceCandidate) string {
+	var resumeBuilder strings.Builder
+
+	// Build concise resume summary for the prompt
+	if strings.TrimSpace(input.Position) != "" {
+		resumeBuilder.WriteString("Target Position: ")
+		resumeBuilder.WriteString(strings.TrimSpace(input.Position))
+		resumeBuilder.WriteString("\n")
+	}
+	if strings.TrimSpace(input.Summary) != "" {
+		resumeBuilder.WriteString("Summary: ")
+		// Truncate summary to first 500 chars to save tokens
+		summary := strings.TrimSpace(input.Summary)
+		if len(summary) > 500 {
+			summary = summary[:500] + "..."
+		}
+		resumeBuilder.WriteString(summary)
+		resumeBuilder.WriteString("\n")
+	}
+	if len(input.Skills) > 0 {
+		resumeBuilder.WriteString("Skills: ")
+		resumeBuilder.WriteString(strings.Join(input.Skills, ", "))
+		resumeBuilder.WriteString("\n")
+	}
+	if input.CandidateYOE > 0 {
+		resumeBuilder.WriteString(fmt.Sprintf("Years of Experience: %.1f\n", input.CandidateYOE))
+	}
+
+	resumeBlock := resumeBuilder.String()
+
+	// Build job list
+	var jobsBuilder strings.Builder
+	for _, job := range jobs {
+		jobsBuilder.WriteString(fmt.Sprintf("%d. %s", job.Index, job.Title))
+		if job.Department != "" {
+			jobsBuilder.WriteString(fmt.Sprintf(" [%s]", job.Department))
+		}
+		jobsBuilder.WriteString("\n")
+	}
+
+	return fmt.Sprintf(`You are a career matching expert. Your task is to filter job listings to show only those relevant to a candidate's career background.
+
+CANDIDATE PROFILE:
+%s
+
+JOB LISTINGS TO EVALUATE:
+%s
+
+INSTRUCTIONS:
+1. Analyze the candidate's career field based on their position, skills, and experience
+2. For each job, determine if it matches the candidate's career field
+3. Return ONLY jobs the candidate would realistically apply for
+
+FILTERING RULES:
+- Software/Engineering candidates: Include software, engineering, data, DevOps, architect, technical PM roles. EXCLUDE sales, marketing, HR, finance, operations, account management roles.
+- Product candidates: Include product, program management, technical PM roles. May include some engineering roles.
+- Sales candidates: Include sales, business development, account executive roles. EXCLUDE engineering, technical roles.
+- Marketing candidates: Include marketing, growth, content, brand roles. EXCLUDE engineering, sales roles.
+- Keep roles that bridge the candidate's field (e.g., "Sales Engineer" for engineering candidate, "Technical Account Manager" for technical candidates)
+
+Return JSON with the indices of RELEVANT jobs only:
+{
+  "relevant_indices": [1, 3, 5, 7],
+  "reasoning": "Candidate is a software engineer. Filtered out Account Manager (#2), Marketing Coordinator (#4) as unrelated fields."
+}
+
+IMPORTANT: Be strict. When in doubt, filter it out. Only include jobs that clearly match the candidate's career trajectory.`, resumeBlock, jobsBuilder.String())
+}
+
+// ParseJobRelevanceFilterResponse parses the AI response for job relevance filtering
+func ParseJobRelevanceFilterResponse(raw string, totalJobs int) JobRelevanceFilterResult {
+	result := JobRelevanceFilterResult{
+		RelevantIndices: make([]int, 0),
+		FilteredCount:   0,
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		// If parsing fails, return all jobs as relevant (fail open)
+		for i := 1; i <= totalJobs; i++ {
+			result.RelevantIndices = append(result.RelevantIndices, i)
+		}
+		return result
+	}
+
+	// Strip markdown fences if present
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	var response struct {
+		RelevantIndices []int  `json:"relevant_indices"`
+		Reasoning       string `json:"reasoning"`
+	}
+
+	if err := json.Unmarshal([]byte(trimmed), &response); err != nil {
+		// If parsing fails, return all jobs as relevant (fail open)
+		for i := 1; i <= totalJobs; i++ {
+			result.RelevantIndices = append(result.RelevantIndices, i)
+		}
+		return result
+	}
+
+	// Validate indices are within range
+	seen := make(map[int]bool)
+	for _, idx := range response.RelevantIndices {
+		if idx >= 1 && idx <= totalJobs && !seen[idx] {
+			result.RelevantIndices = append(result.RelevantIndices, idx)
+			seen[idx] = true
+		}
+	}
+
+	result.FilteredCount = totalJobs - len(result.RelevantIndices)
+	return result
 }

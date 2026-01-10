@@ -114,6 +114,9 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		}
 	}
 
+	// Pass 1.5: AI-based career field filtering (filter out unrelated job categories)
+	jobs = s.applyAICareerFieldFilter(ctx, input, jobs)
+
 	// Pass 2: Full heuristic scoring
 	sourceText := strings.Join([]string{input.Summary, input.Experience, input.Education, input.JobDescription}, " ")
 	resumeText := strings.ToLower(strings.TrimSpace(sourceText))
@@ -706,6 +709,102 @@ func countTokenOverlap(a, b []string) int {
 		}
 	}
 	return overlap
+}
+
+const (
+	aiCareerFilterBatchSize = 75               // Number of jobs per AI call
+	aiCareerFilterTimeout   = 12 * time.Second // Timeout per AI call
+)
+
+// applyAICareerFieldFilter uses AI to filter out jobs that don't match the candidate's career field.
+// This is a pre-filter that runs before heuristic scoring to eliminate obviously irrelevant jobs
+// (e.g., Account Manager jobs for a Software Engineer candidate).
+func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input ResumeJobMatchInput, jobs []*models.JobPosting) []*models.JobPosting {
+	if s.copilot == nil {
+		s.logger.Warn("AI career field filter skipped: copilot not available", nil)
+		return jobs
+	}
+	if len(jobs) == 0 {
+		return jobs
+	}
+
+	// Build a map of original index to job for quick lookup
+	jobMap := make(map[int]*models.JobPosting, len(jobs))
+	for i, job := range jobs {
+		jobMap[i+1] = job // 1-indexed for AI prompt
+	}
+
+	// Process jobs in batches to stay within token limits
+	relevantIndices := make(map[int]bool)
+	totalFiltered := 0
+
+	for batchStart := 0; batchStart < len(jobs); batchStart += aiCareerFilterBatchSize {
+		batchEnd := batchStart + aiCareerFilterBatchSize
+		if batchEnd > len(jobs) {
+			batchEnd = len(jobs)
+		}
+
+		// Build batch of candidates
+		batchJobs := jobs[batchStart:batchEnd]
+		candidates := make([]JobRelevanceCandidate, len(batchJobs))
+		for i, job := range batchJobs {
+			candidates[i] = JobRelevanceCandidate{
+				Index:      batchStart + i + 1, // Global 1-indexed
+				Title:      job.Title,
+				Department: job.Department,
+			}
+		}
+
+		// Call AI to filter this batch
+		prompt := BuildJobRelevanceFilterPrompt(input, candidates)
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, aiCareerFilterTimeout)
+
+		raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
+		cancel()
+
+		if err != nil {
+			s.logger.Warn("AI career field filter failed for batch, keeping all jobs in batch", map[string]interface{}{
+				"error":      err.Error(),
+				"batchStart": batchStart,
+				"batchSize":  len(batchJobs),
+			})
+			// On failure, keep all jobs in this batch (fail open)
+			for i := range batchJobs {
+				relevantIndices[batchStart+i+1] = true
+			}
+			continue
+		}
+
+		// Parse response
+		result := ParseJobRelevanceFilterResponse(raw, len(candidates))
+		for _, idx := range result.RelevantIndices {
+			relevantIndices[idx] = true
+		}
+		totalFiltered += result.FilteredCount
+
+		s.logger.Info("AI career field filter batch completed", map[string]interface{}{
+			"batchStart":    batchStart,
+			"batchSize":     len(batchJobs),
+			"relevantCount": len(result.RelevantIndices),
+			"filteredCount": result.FilteredCount,
+		})
+	}
+
+	// Build filtered job list
+	filteredJobs := make([]*models.JobPosting, 0, len(relevantIndices))
+	for i, job := range jobs {
+		if relevantIndices[i+1] {
+			filteredJobs = append(filteredJobs, job)
+		}
+	}
+
+	s.logger.Info("AI career field filter completed", map[string]interface{}{
+		"originalCount": len(jobs),
+		"filteredCount": len(filteredJobs),
+		"removedCount":  len(jobs) - len(filteredJobs),
+	})
+
+	return filteredJobs
 }
 
 // applyLLMReRank uses the LangChain-backed copilot agent (if available) to
