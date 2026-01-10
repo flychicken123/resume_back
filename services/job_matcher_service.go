@@ -315,18 +315,38 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 		if skill == "" {
 			continue
 		}
+
+		// Expand skill to include synonyms (e.g., "react" -> ["react", "reactjs", "react.js"])
+		skillVariations := ExpandSkillWithSynonyms(skill)
+
 		matched := false
-		if title != "" && strings.Contains(title, skill) {
-			score += 5
-			matched = true
+		// Check title first (highest weight)
+		for _, variant := range skillVariations {
+			if title != "" && strings.Contains(title, variant) {
+				score += 5
+				matched = true
+				break
+			}
 		}
-		if !matched && description != "" && strings.Contains(description, skill) {
-			score += 3
-			matched = true
+		// Check description if not matched in title
+		if !matched {
+			for _, variant := range skillVariations {
+				if description != "" && strings.Contains(description, variant) {
+					score += 3
+					matched = true
+					break
+				}
+			}
 		}
-		if !matched && department != "" && strings.Contains(department, skill) {
-			score += 1.5
-			matched = true
+		// Check department if not matched elsewhere
+		if !matched {
+			for _, variant := range skillVariations {
+				if department != "" && strings.Contains(department, variant) {
+					score += 1.5
+					matched = true
+					break
+				}
+			}
 		}
 		if matched {
 			skillMatches++
@@ -375,6 +395,9 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 	if preferredLocation != "" {
 		score += computeLocationBoost(location, remote, preferredLocation)
 	}
+
+	// Recency boost - favor recently posted jobs
+	score += computeRecencyBoost(job)
 
 	if skillMatches == 0 && keywordHits == 0 {
 		return 0
@@ -425,6 +448,42 @@ func computeLocationBoost(jobLocation, jobRemoteType, preferredLocation string) 
 	}
 
 	return -0.5
+}
+
+// computeRecencyBoost adds points for recently posted jobs.
+// This helps surface fresh opportunities that are more likely to be actively hiring.
+func computeRecencyBoost(job *models.JobPosting) float64 {
+	if job == nil {
+		return 0
+	}
+
+	// Use posted_at if available, otherwise fall back to first_seen_at
+	var postDate time.Time
+	if job.PostedAt != nil {
+		postDate = *job.PostedAt
+	} else {
+		postDate = job.FirstSeenAt
+	}
+
+	// Handle zero time (shouldn't happen but be defensive)
+	if postDate.IsZero() {
+		return 0
+	}
+
+	daysSincePosted := time.Since(postDate).Hours() / 24
+
+	switch {
+	case daysSincePosted <= 3:
+		return 4.0 // Very fresh: +4 points
+	case daysSincePosted <= 7:
+		return 3.0 // Fresh: +3 points
+	case daysSincePosted <= 14:
+		return 2.0 // Recent: +2 points
+	case daysSincePosted <= 30:
+		return 1.0 // Within month: +1 point
+	default:
+		return 0.0 // Older jobs: no boost
+	}
 }
 
 func jobLooksLikeInternRole(title, description string) bool {
