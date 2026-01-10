@@ -492,16 +492,21 @@ func computeRecencyBoost(job *models.JobPosting) float64 {
 }
 
 // computeSkillGaps calculates which skills are required by each job but missing from the user's resume.
+// It uses skill inference to derive implicit skills from explicit ones.
+// For example, if user has React + Node + PostgreSQL, we infer "frontend", "backend", "fullstack".
 func computeSkillGaps(matches []*models.ResumeJobMatchRecord, userSkills []string) {
 	if len(matches) == 0 {
 		return
 	}
 
-	// Normalize and canonicalize user's skills
-	userSkillSet := make(map[string]bool)
-	for _, s := range normaliseSkills(userSkills) {
-		canonical := GetCanonicalSkill(s)
-		userSkillSet[canonical] = true
+	// Normalize user's skills and expand with inferred skills
+	normalizedSkills := normaliseSkills(userSkills)
+	expandedSkills := ExpandSkillsWithInference(normalizedSkills)
+
+	// Build set of all user skills (explicit + inferred)
+	userSkillSet := make(map[string]bool, len(expandedSkills))
+	for _, s := range expandedSkills {
+		userSkillSet[s] = true
 	}
 
 	// Calculate gaps for each match

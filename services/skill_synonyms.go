@@ -143,6 +143,165 @@ func GetCanonicalSkill(skill string) string {
 	return skill
 }
 
+// skillInferenceRules maps implicit skills to the explicit skills that imply them.
+// If a user has ANY of the listed skills, they implicitly have the key skill.
+var skillInferenceRules = map[string][]string{
+	// Frontend inference
+	"frontend": {
+		"react", "vue", "angular", "svelte", "next", "nuxt",
+		"html", "css", "sass", "less", "tailwind", "bootstrap",
+		"webpack", "vite", "rollup", "parcel",
+	},
+
+	// Backend inference
+	"backend": {
+		"node", "express", "django", "flask", "fastapi",
+		"spring", "springboot", "rails", "laravel", "symfony",
+		"gin", "echo", "fiber", "actix", "rocket",
+		"nestjs", "koa", "hapi",
+	},
+
+	// Database inference
+	"database": {
+		"postgresql", "mysql", "mongodb", "redis", "elasticsearch",
+		"cassandra", "sqlite", "oracle", "sql server", "dynamodb",
+		"firestore", "supabase", "prisma", "sequelize", "typeorm",
+	},
+
+	// DevOps inference
+	"devops": {
+		"docker", "kubernetes", "terraform", "ansible", "puppet", "chef",
+		"jenkins", "github actions", "gitlab ci", "circleci", "travis",
+		"prometheus", "grafana", "datadog", "splunk", "elk",
+	},
+
+	// Cloud inference
+	"cloud": {
+		"aws", "gcp", "azure", "heroku", "vercel", "netlify",
+		"digitalocean", "linode", "cloudflare",
+	},
+
+	// API inference
+	"api": {
+		"rest", "restful", "graphql", "grpc", "soap",
+		"openapi", "swagger", "postman",
+	},
+
+	// Machine Learning inference
+	"machine learning": {
+		"tensorflow", "pytorch", "keras", "scikit-learn", "sklearn",
+		"pandas", "numpy", "jupyter", "mlflow", "huggingface",
+	},
+
+	// Mobile inference
+	"mobile": {
+		"react native", "flutter", "swift", "kotlin", "ios", "android",
+		"xamarin", "ionic", "capacitor",
+	},
+
+	// Testing inference
+	"testing": {
+		"jest", "mocha", "pytest", "junit", "rspec",
+		"cypress", "playwright", "selenium", "testcafe",
+	},
+
+	// CI/CD inference
+	"ci/cd": {
+		"jenkins", "github actions", "gitlab ci", "circleci", "travis",
+		"azure devops", "bamboo", "teamcity", "drone",
+	},
+
+	// Microservices inference
+	"microservices": {
+		"kubernetes", "docker", "kafka", "rabbitmq", "grpc",
+		"service mesh", "istio", "envoy", "consul",
+	},
+}
+
+// InferImplicitSkills takes a list of explicit skills and returns additional
+// implicit skills that can be inferred from them.
+// For example, if user has ["react", "node", "postgresql"], this returns
+// ["frontend", "backend", "database", "fullstack"].
+func InferImplicitSkills(skills []string) []string {
+	if len(skills) == 0 {
+		return nil
+	}
+
+	// Normalize input skills to lowercase
+	normalizedSkills := make(map[string]bool, len(skills))
+	for _, s := range skills {
+		canonical := GetCanonicalSkill(s)
+		normalizedSkills[canonical] = true
+		// Also add the original lowercased version
+		normalizedSkills[strings.ToLower(strings.TrimSpace(s))] = true
+	}
+
+	inferred := make(map[string]bool)
+
+	// Check each inference rule
+	for implicitSkill, triggerSkills := range skillInferenceRules {
+		for _, trigger := range triggerSkills {
+			if normalizedSkills[trigger] {
+				inferred[implicitSkill] = true
+				break
+			}
+		}
+	}
+
+	// Special case: if user has both frontend AND backend, infer fullstack
+	if inferred["frontend"] && inferred["backend"] {
+		inferred["fullstack"] = true
+	}
+
+	// Don't include skills user already has
+	for skill := range inferred {
+		if normalizedSkills[skill] {
+			delete(inferred, skill)
+		}
+	}
+
+	if len(inferred) == 0 {
+		return nil
+	}
+
+	// Convert to sorted slice
+	result := make([]string, 0, len(inferred))
+	for skill := range inferred {
+		result = append(result, skill)
+	}
+	sort.Strings(result)
+	return result
+}
+
+// ExpandSkillsWithInference takes explicit skills and returns both the explicit
+// skills (canonicalized) plus any inferred implicit skills.
+func ExpandSkillsWithInference(skills []string) []string {
+	if len(skills) == 0 {
+		return nil
+	}
+
+	// Start with canonicalized explicit skills
+	result := make(map[string]bool, len(skills)*2)
+	for _, s := range skills {
+		canonical := GetCanonicalSkill(s)
+		result[canonical] = true
+	}
+
+	// Add inferred skills
+	inferred := InferImplicitSkills(skills)
+	for _, s := range inferred {
+		result[s] = true
+	}
+
+	// Convert to sorted slice
+	out := make([]string, 0, len(result))
+	for skill := range result {
+		out = append(out, skill)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ExtractSkillsFromText scans text for known skills from our synonym map.
 // Returns canonical skill names found in the text, sorted alphabetically.
 func ExtractSkillsFromText(text string) []string {
