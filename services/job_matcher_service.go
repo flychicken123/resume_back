@@ -76,8 +76,8 @@ const (
 	llmReRankTopK            = 15 // Reduced from 30 for faster response
 	llmReRankAlpha           = 0.7
 	llmReRankBeta            = 0.3
-	llmReRankTimeout         = 8 * time.Second
-	llmSkillInferenceTimeout = 8 * time.Second
+	llmReRankTimeout         = 15 * time.Second
+	llmSkillInferenceTimeout = 15 * time.Second
 	defaultMaxResults        = 50
 )
 
