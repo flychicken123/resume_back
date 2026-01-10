@@ -881,6 +881,30 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 	employmentType, _ := match["job_employment_type"].(string)
 	jobDescription, _ := match["job_description"].(string)
 
+	// Extract skill gap data
+	var matchedSkills, missingSkills, requiredSkills []string
+	if ms, ok := match["matched_skills"].([]interface{}); ok {
+		for _, s := range ms {
+			if str, ok := s.(string); ok {
+				matchedSkills = append(matchedSkills, str)
+			}
+		}
+	}
+	if ms, ok := match["missing_skills"].([]interface{}); ok {
+		for _, s := range ms {
+			if str, ok := s.(string); ok {
+				missingSkills = append(missingSkills, str)
+			}
+		}
+	}
+	if rs, ok := match["required_skills"].([]interface{}); ok {
+		for _, s := range rs {
+			if str, ok := s.(string); ok {
+				requiredSkills = append(requiredSkills, str)
+			}
+		}
+	}
+
 	var jobBuilder strings.Builder
 	if jobTitle != "" {
 		jobBuilder.WriteString("Job Title: ")
@@ -920,32 +944,63 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 
 	jobBlock := jobBuilder.String()
 
-	return fmt.Sprintf(`You are an expert career coach who explains job matches to candidates in clear, concrete language.
+	// Build skill analysis section
+	var skillAnalysis string
+	if len(requiredSkills) > 0 {
+		skillFitPercent := 0
+		if len(requiredSkills) > 0 {
+			skillFitPercent = (len(matchedSkills) * 100) / len(requiredSkills)
+		}
+		skillAnalysis = fmt.Sprintf(`
+--- SKILL ANALYSIS ---
+Required Skills: %s
+Candidate's Matching Skills: %s
+Skills Gap (candidate lacks): %s
+Skill Fit: %d%% (%d of %d skills matched)
+`,
+			strings.Join(requiredSkills, ", "),
+			strings.Join(matchedSkills, ", "),
+			strings.Join(missingSkills, ", "),
+			skillFitPercent, len(matchedSkills), len(requiredSkills))
+	}
 
-Below is the candidate's resume context, followed by a single job match from an AI job matching engine.
+	return fmt.Sprintf(`You are an expert career coach who explains job matches to candidates in clear, concrete, actionable language.
+
+Below is the candidate's resume context, a job match, and skill gap analysis.
 
 --- RESUME CONTEXT ---
 %s
 
 --- JOB MATCH ---
-%s
+%s%s
 
-Write 2 to 4 concise reasons why this job is a strong fit for the candidate.
-Make the reasons persuasive and varied:
-- Anchor each reason in concrete overlap between the resume (skills, experience, accomplishments, goals) and the job (title, stack, responsibilities, environment).
-- Highlight impact or outcomes when available.
-- Vary sentence structure; do not repeat the same lead-in.
-- Avoid template phrasing like "This role is a great fit because..." or "You are qualified because...".
-- Do not mention match scores or the word "AI".
-Each reason must be one sentence, 8-14 words, written in a confident, candidate-facing tone.
+Write 3 to 5 concise, specific reasons explaining this job fit. Structure your response as:
 
-Return ONLY valid JSON in this exact shape:
+1. SKILL ALIGNMENT (required): Reference specific matching skills from the analysis. Example: "Your Python and AWS expertise directly matches their core stack requirements."
+
+2. EXPERIENCE FIT (required): Connect their work history to the role. Example: "Leading backend systems at [Company] prepared you for this distributed architecture role."
+
+3. GROWTH OPPORTUNITY (if skill gaps exist): Frame missing skills positively. Example: "This role offers hands-on Kubernetes experience to round out your DevOps toolkit."
+
+4. LOCATION/CULTURE FIT (if relevant): Comment on remote/location alignment.
+
+5. ACTIONABLE TIP (optional): One specific suggestion to strengthen their application. Example: "Emphasize your microservices experience from [Company] in your cover letter."
+
+Guidelines:
+- Be SPECIFIC - reference actual skills, companies, and technologies by name
+- Be HONEST about skill gaps but frame them as growth opportunities
+- Avoid generic phrases like "great fit" or "well-qualified"
+- Each reason: 10-20 words, confident tone, candidate-facing
+- Do not mention match scores or AI
+
+Return ONLY valid JSON:
 {
   "reasons": [
-    "Reason 1 ...",
-    "Reason 2 ..."
+    "Reason 1 (skill alignment)...",
+    "Reason 2 (experience fit)...",
+    "Reason 3 (growth/tip)..."
   ]
-}`, resumeBlock, jobBlock)
+}`, resumeBlock, jobBlock, skillAnalysis)
 }
 
 // Cover letter prompt
