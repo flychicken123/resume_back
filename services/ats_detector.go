@@ -41,6 +41,8 @@ func DetectATSProvider(careersURL string) string {
 		{provider: "smartrecruiters", substrings: []string{"smartrecruiters.com"}},
 		{provider: "workable", substrings: []string{"workable.com"}},
 		{provider: "bamboohr", substrings: []string{"bamboohr.com"}},
+		{provider: "recruitee", substrings: []string{"recruitee.com"}},
+		{provider: "teamtailor", substrings: []string{"teamtailor.com"}},
 	}
 
 	for _, m := range matchers {

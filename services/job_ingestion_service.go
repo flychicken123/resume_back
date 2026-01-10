@@ -126,6 +126,8 @@ func NewJobIngestionService(db *sql.DB, logger *utils.Logger) *JobIngestionServi
 	service.RegisterProvider("workable", NewWorkableProvider(httpClient, logger))
 	service.RegisterProvider("ashby", NewAshbyProvider(httpClient, logger))
 	service.RegisterProvider("bamboohr", NewBambooHRProvider(httpClient, logger))
+	service.RegisterProvider("recruitee", NewRecruiteeProvider(httpClient, logger))
+	service.RegisterProvider("teamtailor", NewTeamtailorProvider(httpClient, logger))
 
 	return service
 }
