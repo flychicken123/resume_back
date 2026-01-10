@@ -751,6 +751,9 @@ func BuildJobReRankingPrompt(input ResumeJobMatchInput, jobs []JobReRankCandidat
 		resumeBuilder.WriteString(strings.TrimSpace(input.JobDescription))
 		resumeBuilder.WriteString("\n")
 	}
+	if input.CandidateYOE > 0 {
+		resumeBuilder.WriteString(fmt.Sprintf("\nYears of Experience: %.1f years\n", input.CandidateYOE))
+	}
 
 	resumeBlock := resumeBuilder.String()
 
@@ -799,9 +802,25 @@ The system has already computed baseline match scores between a candidate's resu
 Your task is to look at the resume context and the list of jobs, then assign an additional
 "llm_score" between 0 and 10 (higher is better) for each job, reflecting how strong the fit is.
 
-You should value:
-- Clear overlap between the candidate's skills/experience and the job's responsibilities and stack
+CRITICAL RULE - INDUSTRY AND CAREER CATEGORY MATCHING:
+First, identify the candidate's industry/career category from their resume (e.g., IT/Software, Healthcare, Manufacturing, Finance, Marketing, etc.).
+Then, for EACH job, check if it belongs to the same or closely related industry.
+
+- If a job is in a COMPLETELY DIFFERENT industry or career category than the candidate's background, you MUST assign a score of 0.
+- For example: If the candidate has an IT/Software background (developer, engineer, analyst), jobs like "Cold Spray Technician", "Welder", "Nurse", "Truck Driver", "Manufacturing Operator" should receive a score of 0.
+- Only jobs that match the candidate's industry/career category should receive scores above 0.
+
+YEARS OF EXPERIENCE (YOE) ALIGNMENT:
+If the candidate's years of experience is provided, consider YOE alignment when scoring:
+- Jobs requiring similar or less YOE than the candidate has: Score higher (good fit)
+- Jobs requiring slightly more YOE (1-2 years more): Still acceptable, moderate score
+- Jobs requiring significantly more YOE (3-5 years more): Lower score (stretch role)
+- Jobs requiring much more YOE (5+ years more): Very low score (likely under-qualified)
+
+Scoring criteria for jobs that match the industry:
+- Clear overlap between the candidate's skills/experience and the job's responsibilities and stack (weight heavily)
 - Alignment between seniority level and scope of work
+- Years of experience alignment with job requirements
 - Location and remote preferences when they are mentioned
 - Overall coherence between the resume and job description
 
@@ -815,12 +834,13 @@ Return ONLY valid JSON using this exact shape. Include an entry for every job in
 {
   "scores": [
     { "index": 1, "llm_score": 8.7 },
-    { "index": 2, "llm_score": 6.3 }
+    { "index": 2, "llm_score": 0, "reason": "Different industry" }
   ]
 }
 
 - "index" MUST match the Job N index from the list above.
 - "llm_score" MUST be a number between 0 and 10.
+- "reason" is optional but encouraged when score is 0 to explain the mismatch.
 - Do not include any other fields or text outside this JSON.`, resumeBlock, jobsBuilder.String())
 }
 

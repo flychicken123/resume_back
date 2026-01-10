@@ -19,7 +19,7 @@ func TestComputeMatchScore(t *testing.T) {
 	keywords := []string{"scalable", "systems", "microservices"}
 	resumeText := "seasoned backend engineer focused on remote distributed systems"
 
-	score := computeMatchScore(job, "backend engineer", skills, keywords, resumeText, "remote")
+	score := computeMatchScore(job, "backend engineer", skills, keywords, resumeText, "remote", 5.0)
 	if score <= 0 {
 		t.Fatalf("expected positive score, got %.2f", score)
 	}
@@ -27,7 +27,7 @@ func TestComputeMatchScore(t *testing.T) {
 
 func TestComputeMatchScoreRequiresSignal(t *testing.T) {
 	job := &models.JobPosting{Title: "Office Manager", Description: "assist with office tasks"}
-	score := computeMatchScore(job, "backend", nil, nil, "", "")
+	score := computeMatchScore(job, "backend", nil, nil, "", "", 0)
 	if score != 0 {
 		t.Fatalf("expected zero score when no matches, got %.2f", score)
 	}
@@ -62,7 +62,7 @@ func TestComputeMatchScorePositionTokens(t *testing.T) {
 	}
 
 	keywords := []string{"strategy"}
-	score := computeMatchScore(job, "Product Manager", nil, keywords, "", "San Francisco, CA")
+	score := computeMatchScore(job, "Product Manager", nil, keywords, "", "San Francisco, CA", 5.0)
 	if score <= 0 {
 		t.Fatalf("expected positive score from resume keywords, got %.2f", score)
 	}
@@ -74,7 +74,7 @@ func TestComputeMatchScoreRejectsTitleOnlyMatch(t *testing.T) {
 		Description: "Join our team supporting internal tooling.",
 	}
 
-	score := computeMatchScore(job, "Software Engineer", nil, nil, "", "")
+	score := computeMatchScore(job, "Software Engineer", nil, nil, "", "", 0)
 	if score != 0 {
 		t.Fatalf("expected zero score when only title overlaps, got %.2f", score)
 	}
@@ -87,7 +87,7 @@ func TestInternJobFilteredForSeniorCandidate(t *testing.T) {
 		Location:    "Remote - US",
 	}
 
-	score := computeMatchScore(job, "Senior Software Engineer", nil, nil, "seasoned senior software engineer building systems", "")
+	score := computeMatchScore(job, "Senior Software Engineer", nil, nil, "seasoned senior software engineer building systems", "", 8.0)
 	if score != 0 {
 		t.Fatalf("expected zero score for intern role when candidate is senior, got %.2f", score)
 	}
@@ -100,7 +100,7 @@ func TestInternJobFilteredForNonSeniorCandidate(t *testing.T) {
 		Location:    "Remote - US",
 	}
 
-	score := computeMatchScore(job, "software engineer", nil, nil, "software engineering student", "")
+	score := computeMatchScore(job, "software engineer", nil, nil, "software engineering student", "", 1.0)
 	if score != 0 {
 		t.Fatalf("expected zero score for intern job when candidate is not senior, got %.2f", score)
 	}

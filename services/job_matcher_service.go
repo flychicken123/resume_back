@@ -25,6 +25,7 @@ type ResumeJobMatchInput struct {
 	Skills            []string
 	CandidateJobLimit int
 	MaxResults        int
+	CandidateYOE      float64 // Extracted years of experience (set during matching)
 }
 
 // ResumeJobMatcher defines the behaviour exposed to handlers.
@@ -123,6 +124,15 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	}
 	candidateLevel := determineCandidateSeniority(input.Position, sourceText)
 
+	// Extract candidate's years of experience from their work history
+	candidateYOE := ExtractYOEFromExperience(input.Experience)
+	s.logger.Info("extracted candidate YOE", map[string]interface{}{
+		"years":     candidateYOE.Years,
+		"confident": candidateYOE.Confident,
+	})
+	// Set YOE on input for LLM re-ranking prompt
+	input.CandidateYOE = candidateYOE.Years
+
 	scored := make([]scoredJob, 0, len(jobs))
 	for _, job := range jobs {
 		if !locationCompatible(preferredLocation, job) {
@@ -130,17 +140,34 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		}
 
 		jobLevel := determineJobSeniority(job.Title, job.Description)
+		// Always skip intern roles
 		if jobLevel == seniorityIntern {
 			continue
 		}
-		if candidateLevel >= senioritySenior && jobLevel <= seniorityEntry {
-			continue
-		}
-		if candidateLevel >= seniorityLead && jobLevel < seniorityLead {
-			continue
+
+		// Seniority level filtering: allow [A-1, A, A+1] range
+		// Candidate can see jobs one level below, same level, or one level above
+		if candidateLevel >= 0 {
+			levelDiff := jobLevel - candidateLevel
+			// Skip if job is more than 1 level above or more than 1 level below
+			if levelDiff > 1 || levelDiff < -1 {
+				continue
+			}
+			// Special case: Entry level candidates can't see below (there's nothing below except intern)
+			// Lead level candidates: levelDiff < -1 already handles skipping mid/entry
 		}
 
-		score := computeMatchScore(job, position, skills, keywords, resumeText, preferredLocation)
+		// YOE-based filtering: extract job's YOE requirement and check tier
+		jobYOEReq := ExtractYOEFromJobDescription(job.Description)
+		if candidateYOE.Years > 0 && jobYOEReq.Found {
+			tier, _ := ComputeYOETier(candidateYOE.Years, jobYOEReq)
+			// Filter out Tier 3 jobs (YOE gap too large)
+			if tier == YOETier3 {
+				continue
+			}
+		}
+
+		score := computeMatchScore(job, position, skills, keywords, resumeText, preferredLocation, candidateYOE.Years)
 		if score <= 0 {
 			continue
 		}
@@ -190,6 +217,15 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 
 	// Apply LangChain-based re-ranking on the top K matches (runs in parallel with skill inference)
 	s.applyLLMReRank(ctx, input, scored, maxResults)
+
+	// Filter out jobs with score 0 (jobs in wrong industry/category as determined by LLM)
+	filteredScored := make([]scoredJob, 0, len(scored))
+	for _, sj := range scored {
+		if sj.score > 0 {
+			filteredScored = append(filteredScored, sj)
+		}
+	}
+	scored = filteredScored
 
 	// Trim to the requested maximum number of results after re-ranking.
 	if len(scored) > maxResults {
@@ -326,7 +362,7 @@ func extractKeywords(text string, max int) []string {
 	return keywords
 }
 
-func computeMatchScore(job *models.JobPosting, position string, skills []string, keywords []string, resumeText string, preferredLocation string) float64 {
+func computeMatchScore(job *models.JobPosting, position string, skills []string, keywords []string, resumeText string, preferredLocation string, candidateYOE float64) float64 {
 	if job == nil {
 		return 0
 	}
@@ -437,6 +473,13 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 
 	// Recency boost - favor recently posted jobs
 	score += computeRecencyBoost(job)
+
+	// YOE alignment bonus/penalty
+	if candidateYOE > 0 {
+		jobYOEReq := ExtractYOEFromJobDescription(description)
+		yoeAdjustment := ComputeYOEScoreAdjustment(candidateYOE, jobYOEReq)
+		score += yoeAdjustment
+	}
 
 	if skillMatches == 0 && keywordHits == 0 {
 		return 0
@@ -723,6 +766,12 @@ func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobM
 		base := scored[i].score
 		llmScore, ok := llmScores[i+1]
 		if !ok {
+			continue
+		}
+		// If LLM assigns 0, it means the job is in a completely different industry/category
+		// from the candidate's background. Set the score to 0 to filter it out.
+		if llmScore == 0 {
+			scored[i].score = 0
 			continue
 		}
 		combined := llmReRankAlpha*base + llmReRankBeta*llmScore
