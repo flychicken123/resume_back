@@ -73,10 +73,11 @@ var (
 )
 
 const (
-	llmReRankTopK   = 20
-	llmReRankAlpha  = 0.7
-	llmReRankBeta   = 0.3
+	llmReRankTopK    = 30
+	llmReRankAlpha   = 0.7
+	llmReRankBeta    = 0.3
 	llmReRankTimeout = 10 * time.Second
+	defaultMaxResults = 50
 )
 
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
@@ -160,7 +161,7 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 
 	maxResults := input.MaxResults
 	if maxResults <= 0 {
-		maxResults = 25
+		maxResults = defaultMaxResults
 	}
 
 	// Apply LangChain-based re-ranking on the top K matches (before trimming).
