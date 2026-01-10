@@ -187,6 +187,10 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	if err != nil {
 		return nil, err
 	}
+
+	// Compute skill gaps for each match
+	computeSkillGaps(results, input.Skills)
+
 	return results, nil
 }
 
@@ -483,6 +487,42 @@ func computeRecencyBoost(job *models.JobPosting) float64 {
 		return 1.0 // Within month: +1 point
 	default:
 		return 0.0 // Older jobs: no boost
+	}
+}
+
+// computeSkillGaps calculates which skills are required by each job but missing from the user's resume.
+func computeSkillGaps(matches []*models.ResumeJobMatchRecord, userSkills []string) {
+	if len(matches) == 0 {
+		return
+	}
+
+	// Normalize and canonicalize user's skills
+	userSkillSet := make(map[string]bool)
+	for _, s := range normaliseSkills(userSkills) {
+		canonical := GetCanonicalSkill(s)
+		userSkillSet[canonical] = true
+	}
+
+	// Calculate gaps for each match
+	for _, match := range matches {
+		// Extract required skills from job description
+		requiredSkills := ExtractSkillsFromText(match.JobDescription)
+		if len(requiredSkills) == 0 {
+			continue
+		}
+
+		var matched, missing []string
+		for _, reqSkill := range requiredSkills {
+			if userSkillSet[reqSkill] {
+				matched = append(matched, reqSkill)
+			} else {
+				missing = append(missing, reqSkill)
+			}
+		}
+
+		match.RequiredSkills = requiredSkills
+		match.MatchedSkills = matched
+		match.MissingSkills = missing
 	}
 }
 

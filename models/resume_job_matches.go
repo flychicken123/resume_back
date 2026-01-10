@@ -26,6 +26,11 @@ type ResumeJobMatchRecord struct {
 	JobDescription string    `json:"job_description"`
 	CompanyID      *int      `json:"company_id,omitempty"`
 	CompanyName    *string   `json:"company_name,omitempty"`
+
+	// Skill gap analysis (computed at runtime, not stored in DB)
+	RequiredSkills []string `json:"required_skills,omitempty"`
+	MatchedSkills  []string `json:"matched_skills,omitempty"`
+	MissingSkills  []string `json:"missing_skills,omitempty"`
 }
 
 // JobMatchCreate holds the data required to persist a match.

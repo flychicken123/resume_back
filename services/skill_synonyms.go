@@ -1,6 +1,9 @@
 package services
 
-import "strings"
+import (
+	"sort"
+	"strings"
+)
 
 // skillSynonyms maps canonical skill names to their common variations.
 // This enables matching "react" to find jobs mentioning "reactjs", "react.js", etc.
@@ -138,4 +141,39 @@ func GetCanonicalSkill(skill string) string {
 		return canonical
 	}
 	return skill
+}
+
+// ExtractSkillsFromText scans text for known skills from our synonym map.
+// Returns canonical skill names found in the text, sorted alphabetically.
+func ExtractSkillsFromText(text string) []string {
+	if text == "" {
+		return nil
+	}
+
+	text = strings.ToLower(text)
+	found := make(map[string]bool)
+
+	// Check each canonical skill and its variations
+	for canonical, variations := range skillSynonyms {
+		// Check canonical form
+		if strings.Contains(text, canonical) {
+			found[canonical] = true
+			continue
+		}
+		// Check variations
+		for _, v := range variations {
+			if strings.Contains(text, v) {
+				found[canonical] = true
+				break
+			}
+		}
+	}
+
+	// Convert to sorted slice
+	result := make([]string, 0, len(found))
+	for skill := range found {
+		result = append(result, skill)
+	}
+	sort.Strings(result)
+	return result
 }
