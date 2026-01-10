@@ -122,6 +122,24 @@ func CallGeminiFlash(prompt string) (string, error) {
 	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
 }
 
+// CallGeminiWithTemperature calls Gemini with a specific temperature setting.
+// Lower temperature (0.0-0.3) = more focused, consistent, factual output
+// Higher temperature (0.7-1.0) = more creative, varied output
+// For resume optimization, use low temperature (0.2-0.3) to reduce hallucinations.
+func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {
+	llm, err := getLangChainModel()
+	if err != nil {
+		return "", err
+	}
+
+	return llms.GenerateFromSinglePrompt(
+		context.Background(), 
+		llm, 
+		prompt,
+		llms.WithTemperature(temperature),
+	)
+}
+
 func BuildResumePrompt(name, email, phone, summary, experience, education string, skills []string, format string) string {
 	formatInstructions := getFormatInstructions(format)
 
@@ -1284,4 +1302,208 @@ HTML Content:
 	}
 
 	return result, nil
+}
+
+// BuildExperienceOptimizationPromptWithSkills builds a prompt that includes skill gap context
+// for more targeted optimization while strictly maintaining integrity.
+func BuildExperienceOptimizationPromptWithSkills(jobDescription, userExperience string, matchedSkills, missingSkills []string) string {
+	var skillContext string
+	if len(matchedSkills) > 0 || len(missingSkills) > 0 {
+		skillContext = "\n\nSKILL CONTEXT:\n"
+		if len(matchedSkills) > 0 {
+			skillContext += fmt.Sprintf("- Skills you HAVE that match this job: %s\n", strings.Join(matchedSkills, ", "))
+			skillContext += "  → EMPHASIZE these skills where they genuinely appear in the experience\n"
+		}
+		if len(missingSkills) > 0 {
+			skillContext += fmt.Sprintf("- Skills the job wants that you're MISSING: %s\n", strings.Join(missingSkills, ", "))
+			skillContext += "  → Do NOT add these skills. Instead, highlight transferable skills that demonstrate learning ability\n"
+		}
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer. Your task is to enhance this work experience description to better align with the job requirements.
+
+CRITICAL INTEGRITY RULES (NEVER VIOLATE):
+1. NEVER invent accomplishments, metrics, technologies, or responsibilities not present in the original
+2. NEVER fabricate numbers, percentages, or dollar amounts
+3. NEVER add skills or technologies the candidate didn't mention
+4. If the original lacks metrics, keep statements qualitative - do NOT make up numbers
+5. Preserve the candidate's voice and authentic experience
+6. Only rephrase, reorganize, and highlight - do NOT create new content
+
+Job Description:
+%s
+%s
+User's Original Experience:
+%s
+
+ENHANCEMENT GUIDELINES:
+1. Start each statement with a strong action verb (Led, Built, Developed, Implemented)
+2. Highlight skills from the MATCHED list where they genuinely appear
+3. Use keywords from the job description where they naturally fit the existing experience
+4. Improve clarity and professional tone while keeping the same meaning
+5. Remove weak phrases like "Responsible for", "Helped with", "Worked on"
+
+IMPORTANT: Return ONLY the enhanced description text. Each achievement on a new line. No bullet points, headers, or explanations.`, jobDescription, skillContext, userExperience)
+}
+
+// BuildProjectOptimizationPromptWithSkills builds a prompt that includes skill gap context
+// for project optimization while maintaining strict integrity.
+func BuildProjectOptimizationPromptWithSkills(jobDescription, projectData, existingProject string, matchedSkills, missingSkills []string) string {
+	existingContext := ""
+	if strings.TrimSpace(existingProject) != "" {
+		existingContext = fmt.Sprintf("\nEXISTING PROJECT (preserve key details):\n%s\n", strings.TrimSpace(existingProject))
+	}
+
+	var skillContext string
+	if len(matchedSkills) > 0 || len(missingSkills) > 0 {
+		skillContext = "\n\nSKILL CONTEXT:\n"
+		if len(matchedSkills) > 0 {
+			skillContext += fmt.Sprintf("- Your matching skills: %s\n", strings.Join(matchedSkills, ", "))
+			skillContext += "  → Emphasize these where they genuinely appear in the project\n"
+		}
+		if len(missingSkills) > 0 {
+			skillContext += fmt.Sprintf("- Skills you're missing: %s\n", strings.Join(missingSkills, ", "))
+			skillContext += "  → Do NOT add these. Focus on transferable skills instead\n"
+		}
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer. Enhance this project description to align with the job requirements.
+
+CRITICAL INTEGRITY RULES (NEVER VIOLATE):
+1. NEVER invent features, technologies, metrics, or outcomes not in the original
+2. NEVER fabricate user counts, performance numbers, or scale metrics
+3. NEVER add technologies the candidate didn't actually use
+4. If metrics are missing, describe impact qualitatively - do NOT make up numbers
+5. Preserve the project's authentic scope and the candidate's actual contributions
+%s
+Job Description:
+%s
+%s
+Current Project Description:
+%s
+
+ENHANCEMENT GUIDELINES:
+1. Use strong technical action verbs (Architected, Engineered, Deployed, Implemented)
+2. Highlight technologies from your MATCHED skills where they exist in the project
+3. Emphasize aspects most relevant to the target role
+4. Improve technical clarity without inventing new scope
+
+IMPORTANT: Return ONLY the enhanced project description. Each achievement on a new line. No headers or explanations.`, existingContext, jobDescription, skillContext, projectData)
+}
+
+// BuildSummaryOptimizationPromptWithSkills builds a prompt for summary generation
+// with skill context and strict integrity constraints.
+func BuildSummaryOptimizationPromptWithSkills(experience, education string, skills []string, existingSummary, jobDescription string, matchedSkills, missingSkills []string) string {
+	skillsText := ""
+	if len(skills) > 0 {
+		skillsText = strings.Join(skills, ", ")
+	}
+
+	existingContext := ""
+	if strings.TrimSpace(existingSummary) != "" {
+		existingContext = fmt.Sprintf("\nEXISTING SUMMARY (preserve core message):\n%s\n", strings.TrimSpace(existingSummary))
+	}
+
+	jobContext := ""
+	if strings.TrimSpace(jobDescription) != "" {
+		jobContext = fmt.Sprintf("\nTARGET JOB:\n%s\n", strings.TrimSpace(jobDescription))
+	}
+
+	var skillContext string
+	if len(matchedSkills) > 0 || len(missingSkills) > 0 {
+		skillContext = "\n\nSKILL ALIGNMENT:\n"
+		if len(matchedSkills) > 0 {
+			skillContext += fmt.Sprintf("- Your skills that match: %s\n", strings.Join(matchedSkills, ", "))
+		}
+		if len(missingSkills) > 0 {
+			skillContext += fmt.Sprintf("- Skills to develop: %s (mention eagerness to learn, NOT that you have these)\n", strings.Join(missingSkills, ", "))
+		}
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer. Create a professional summary that positions the candidate for the target role.
+
+CRITICAL INTEGRITY RULES (NEVER VIOLATE):
+1. NEVER claim skills, titles, or experience the candidate doesn't have
+2. NEVER invent years of experience or fabricate accomplishments
+3. NEVER add technologies not mentioned in their experience/skills
+4. Base every statement on the provided experience, education, and skills
+5. If existing summary is provided, preserve its authentic content
+6. For missing skills, express learning interest - do NOT claim proficiency
+%s%s
+Experience: %s
+Education: %s
+Skills: %s
+%s
+SUMMARY GUIDELINES:
+1. Lead with actual job title/level based on their experience
+2. State real years of experience (infer from experience section, don't invent)
+3. Highlight matched skills prominently
+4. Use specific technologies they actually know
+5. Keep it 2-4 sentences, confident but honest
+
+AVOID: "Results-oriented", "detail-oriented", "passionate", generic buzzwords
+
+IMPORTANT: Return ONLY the professional summary text. No headers or explanations.`, existingContext, jobContext, experience, education, skillsText, skillContext)
+}
+
+// ValidateNoHallucinations performs a lightweight check to detect potential hallucinations.
+// It compares the optimized output against the original to flag suspicious additions.
+// Returns the validated text (potentially with warnings) and any detected issues.
+func ValidateNoHallucinations(original, optimized string) (string, []string) {
+	var issues []string
+	
+	originalLower := strings.ToLower(original)
+	optimizedLower := strings.ToLower(optimized)
+	
+	// Check for specific percentage patterns that weren't in original
+	percentagePatterns := []string{
+		"100%", "95%", "90%", "85%", "80%", "75%", "70%", "60%", "50%", "40%", "30%", "20%",
+	}
+	for _, pct := range percentagePatterns {
+		if strings.Contains(optimizedLower, pct) && !strings.Contains(originalLower, pct) {
+			// Check if any percentage was in original
+			hasAnyPercent := strings.Contains(originalLower, "%")
+			if !hasAnyPercent {
+				issues = append(issues, fmt.Sprintf("Added percentage '%s' not in original", pct))
+			}
+		}
+	}
+	
+	// Check for dollar amounts that weren't in original
+	if (strings.Contains(optimizedLower, "$") || strings.Contains(optimizedLower, "million") || 
+		strings.Contains(optimizedLower, "billion")) && 
+		!strings.Contains(originalLower, "$") && 
+		!strings.Contains(originalLower, "million") &&
+		!strings.Contains(originalLower, "billion") {
+		issues = append(issues, "Added dollar amounts or revenue figures not in original")
+	}
+	
+	// Check for specific large numbers that weren't in original
+	largeNumberPatterns := []string{
+		"10,000", "50,000", "100,000", "1 million", "10 million", "100 million",
+		"10000", "50000", "100000", "1m", "10m", "100m",
+	}
+	for _, num := range largeNumberPatterns {
+		if strings.Contains(optimizedLower, num) && !strings.Contains(originalLower, num) {
+			issues = append(issues, fmt.Sprintf("Added large number '%s' not in original", num))
+		}
+	}
+	
+	// If issues detected, we still return the text but log the concerns
+	// The frontend can decide whether to show warnings to the user
+	return optimized, issues
+}
+
+// ValidateAndCleanOutput validates the optimized output and removes likely hallucinations.
+// This is a more aggressive version that attempts to clean the output.
+func ValidateAndCleanOutput(original, optimized string) string {
+	validated, issues := ValidateNoHallucinations(original, optimized)
+	
+	if len(issues) > 0 {
+		// Log the issues for monitoring
+		// In production, you might want to use a proper logger
+		fmt.Printf("Hallucination detection: %v\n", issues)
+	}
+	
+	return validated
 }

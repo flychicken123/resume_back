@@ -52,9 +52,11 @@ func ParseProjects(c *gin.Context) {
 }
 
 type ProjectOptimizationRequest struct {
-	JobDescription  string `json:"jobDescription"`
-	ProjectData     string `json:"projectData" binding:"required"`
-	ExistingProject string `json:"existingProject,omitempty"` // For preserving/updating existing project
+	JobDescription  string   `json:"jobDescription"`
+	ProjectData     string   `json:"projectData" binding:"required"`
+	ExistingProject string   `json:"existingProject,omitempty"` // For preserving/updating existing project
+	MatchedSkills   []string `json:"matchedSkills,omitempty"`
+	MissingSkills   []string `json:"missingSkills,omitempty"`
 }
 
 type ProjectOptimizationResponse struct {
@@ -83,21 +85,24 @@ func OptimizeProject(c *gin.Context) {
 	// Otherwise, just improve grammar and professionalism
 	var prompt string
 	if req.JobDescription != "" {
-		prompt = services.BuildProjectOptimizationPrompt(req.JobDescription, req.ProjectData, req.ExistingProject)
+		prompt = services.BuildProjectOptimizationPromptWithSkills(req.JobDescription, req.ProjectData, req.ExistingProject, req.MatchedSkills, req.MissingSkills)
 	} else {
 		// Fall back to grammar improvement if no job description
 		prompt = services.BuildProjectGrammarPrompt(req.ProjectData, req.ExistingProject)
 	}
 
 	// Call AI service to generate optimized project
-	optimizedProject, err := services.CallGeminiWithAPIKey(prompt)
+	optimizedProject, err := services.CallGeminiWithTemperature(prompt, 0.3) // Low temp for consistency
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize project", err)
 		return
 	}
 
+	// Validate output to catch potential hallucinations
+	validatedProject := services.ValidateAndCleanOutput(req.ProjectData, optimizedProject)
+	
 	// Clean up the AI response
-	cleanedProject := cleanupProjectResponse(optimizedProject)
+	cleanedProject := cleanupProjectResponse(validatedProject)
 
 	message := "Project optimized successfully"
 	if req.JobDescription != "" {
@@ -126,7 +131,7 @@ func ImproveProjectGrammar(c *gin.Context) {
 	prompt := services.BuildProjectGrammarPrompt(req.ProjectData)
 
 	// Call AI service to improve grammar
-	improvedProject, err := services.CallGeminiWithAPIKey(prompt)
+	improvedProject, err := services.CallGeminiWithTemperature(prompt, 0.3)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -10,8 +10,10 @@ import (
 )
 
 type ExperienceOptimizationRequest struct {
-	JobDescription string `json:"jobDescription" binding:"required"`
-	UserExperience string `json:"userExperience" binding:"required"`
+	JobDescription string   `json:"jobDescription" binding:"required"`
+	UserExperience string   `json:"userExperience" binding:"required"`
+	MatchedSkills  []string `json:"matchedSkills,omitempty"`
+	MissingSkills  []string `json:"missingSkills,omitempty"`
 }
 
 type ExperienceOptimizationResponse struct {
@@ -26,18 +28,26 @@ func OptimizeExperience(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for experience optimization
-	prompt := services.BuildExperienceOptimizationPrompt(req.JobDescription, req.UserExperience)
+	// Build prompt for experience optimization with skill context
+	prompt := services.BuildExperienceOptimizationPromptWithSkills(
+		req.JobDescription, 
+		req.UserExperience, 
+		req.MatchedSkills, 
+		req.MissingSkills,
+	)
 
 	// Call AI service to generate optimized experience
-	optimizedExperience, err := services.CallGeminiWithAPIKey(prompt)
+	optimizedExperience, err := services.CallGeminiWithTemperature(prompt, 0.3) // Low temp for consistency
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize experience", err)
 		return
 	}
 
+	// Validate output to catch potential hallucinations
+	validatedExperience := services.ValidateAndCleanOutput(req.UserExperience, optimizedExperience)
+	
 	// Clean up the AI response to remove asterisks and format properly
-	cleanedExperience := cleanupAIResponse(optimizedExperience)
+	cleanedExperience := cleanupAIResponse(validatedExperience)
 
 	response := ExperienceOptimizationResponse{
 		OptimizedExperience: cleanedExperience,
@@ -105,7 +115,7 @@ func ImproveExperienceGrammar(c *gin.Context) {
 	prompt := services.BuildExperienceGrammarPrompt(req.UserExperience)
 
 	// Call AI service to improve grammar
-	improvedExperience, err := services.CallGeminiWithAPIKey(prompt)
+	improvedExperience, err := services.CallGeminiWithTemperature(prompt, 0.3)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

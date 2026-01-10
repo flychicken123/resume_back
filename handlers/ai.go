@@ -24,6 +24,9 @@ type SummaryOptimizationRequest struct {
 	Education       string   `json:"education"`
 	Skills          []string `json:"skills"`
 	ExistingSummary string   `json:"existingSummary,omitempty"` // For preserving/updating existing summary
+	JobDescription  string   `json:"jobDescription,omitempty"`
+	MatchedSkills   []string `json:"matchedSkills,omitempty"`
+	MissingSkills   []string `json:"missingSkills,omitempty"`
 }
 
 type SummaryOptimizationResponse struct {
@@ -66,18 +69,30 @@ func OptimizeSummary(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for summary optimization (with existing summary for preservation)
-	prompt := services.BuildSummaryOptimizationPrompt(req.Experience, req.Education, req.Skills, req.ExistingSummary)
+	// Build prompt for summary optimization with skill context
+	prompt := services.BuildSummaryOptimizationPromptWithSkills(
+		req.Experience, 
+		req.Education, 
+		req.Skills, 
+		req.ExistingSummary,
+		req.JobDescription,
+		req.MatchedSkills,
+		req.MissingSkills,
+	)
 
 	// Call AI service to generate optimized summary
-	optimizedSummary, err := services.CallGeminiWithAPIKey(prompt)
+	optimizedSummary, err := services.CallGeminiWithTemperature(prompt, 0.3) // Low temp for consistency
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
+	// Validate output to catch potential hallucinations
+	originalContext := req.Experience + " " + req.Education + " " + strings.Join(req.Skills, " ")
+	validatedSummary := services.ValidateAndCleanOutput(originalContext, optimizedSummary)
+	
 	// Clean up the AI response
-	cleanedSummary := cleanupAIResponse(optimizedSummary)
+	cleanedSummary := cleanupAIResponse(validatedSummary)
 
 	response := SummaryOptimizationResponse{
 		Summary: cleanedSummary,
@@ -107,7 +122,7 @@ func ImproveSummaryGrammar(c *gin.Context) {
 	prompt := services.BuildSummaryGrammarPrompt(req.Summary)
 
 	// Call AI service to improve grammar
-	improvedSummary, err := services.CallGeminiWithAPIKey(prompt)
+	improvedSummary, err := services.CallGeminiWithTemperature(prompt, 0.3)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
