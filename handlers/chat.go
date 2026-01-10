@@ -275,8 +275,11 @@ func ChatAssistant(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Check if this is a polish/optimize request
+	log.Printf("[DEBUG] Polish check: polishAgent=%v, resumeDataLen=%d, message=%q", polishAgent != nil, len(req.ResumeData), userMessage)
 	if polishAgent != nil && len(req.ResumeData) > 0 {
+		log.Printf("[DEBUG] Attempting polish request handling")
 		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
+			log.Printf("[DEBUG] Polish request handled successfully: %s", polishResponse.Reply)
 			// Persist chat exchange
 			if err := persistChatExchange(ctx, chatPersistencePayload{
 				sessionID:  sessionID,
@@ -369,16 +372,22 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		}
 	}
 	if !hasPolishKeyword {
+		log.Printf("[DEBUG] No polish keyword found in message")
 		return nil
 	}
+
+	log.Printf("[DEBUG] Polish keyword detected, processing...")
+	log.Printf("[DEBUG] ResumeData keys: %v", getMapKeys(resumeData))
 
 	// Use the PolishAgent to detect intent
 	intent, err := polishAgent.DetectPolishIntent(ctx, message, resumeData)
 	if err != nil {
-		log.Printf("polish intent detection failed: %v", err)
+		log.Printf("[DEBUG] polish intent detection failed: %v", err)
 		// Even if LLM fails, try to detect section from keywords
 		intent = detectSectionFromKeywords(msgLower, resumeData)
 	}
+
+	log.Printf("[DEBUG] Intent detected: section=%s, identifier=%s, entryIndex=%d", intent.Section, intent.Identifier, intent.EntryIndex)
 
 	// Force polish if keywords detected - don't rely on LLM's IsPolishRequest
 	// The LLM may incorrectly return false or ask for clarification
@@ -390,12 +399,14 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		intent.Section = detected.Section
 		intent.Identifier = detected.Identifier
 		intent.EntryIndex = detected.EntryIndex
+		log.Printf("[DEBUG] Keyword fallback: section=%s, identifier=%s, entryIndex=%d", intent.Section, intent.Identifier, intent.EntryIndex)
 	}
 
 	// Force clear any clarification flags - we never ask for clarification
 	intent.NeedsClarification = false
 	intent.ClarificationQuestion = ""
 	intent.Message = "" // Clear any clarification message from LLM
+	log.Printf("[DEBUG] Final intent: section=%s, proceeding to polish", intent.Section)
 
 	// Get job description from resume data if available
 	jobDesc, _ := resumeData["jobDescription"].(string)
@@ -879,4 +890,12 @@ func nullableSQLString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: strings.TrimSpace(value), Valid: true}
+}
+
+func getMapKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }
