@@ -716,9 +716,19 @@ const (
 	aiCareerFilterTimeout   = 12 * time.Second // Timeout per AI call
 )
 
+// batchResult holds the result of processing a single batch
+type batchResult struct {
+	batchStart      int
+	batchSize       int
+	relevantIndices []int
+	filteredCount   int
+	err             error
+}
+
 // applyAICareerFieldFilter uses AI to filter out jobs that don't match the candidate's career field.
 // This is a pre-filter that runs before heuristic scoring to eliminate obviously irrelevant jobs
 // (e.g., Account Manager jobs for a Software Engineer candidate).
+// Batches are processed in PARALLEL for faster execution.
 func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input ResumeJobMatchInput, jobs []*models.JobPosting) []*models.JobPosting {
 	if s.copilot == nil {
 		s.logger.Warn("AI career field filter skipped: copilot not available", nil)
@@ -728,67 +738,108 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		return jobs
 	}
 
-	// Build a map of original index to job for quick lookup
-	jobMap := make(map[int]*models.JobPosting, len(jobs))
-	for i, job := range jobs {
-		jobMap[i+1] = job // 1-indexed for AI prompt
-	}
+	// Calculate number of batches
+	numBatches := (len(jobs) + aiCareerFilterBatchSize - 1) / aiCareerFilterBatchSize
 
-	// Process jobs in batches to stay within token limits
-	relevantIndices := make(map[int]bool)
-	totalFiltered := 0
+	s.logger.Info("AI career field filter starting", map[string]interface{}{
+		"totalJobs":  len(jobs),
+		"numBatches": numBatches,
+		"batchSize":  aiCareerFilterBatchSize,
+	})
 
-	for batchStart := 0; batchStart < len(jobs); batchStart += aiCareerFilterBatchSize {
+	// Channel to collect results from all batches
+	resultsChan := make(chan batchResult, numBatches)
+
+	// Launch all batches in parallel
+	for batchIdx := 0; batchIdx < numBatches; batchIdx++ {
+		batchStart := batchIdx * aiCareerFilterBatchSize
 		batchEnd := batchStart + aiCareerFilterBatchSize
 		if batchEnd > len(jobs) {
 			batchEnd = len(jobs)
 		}
 
-		// Build batch of candidates
+		// Capture batch jobs for this goroutine
 		batchJobs := jobs[batchStart:batchEnd]
-		candidates := make([]JobRelevanceCandidate, len(batchJobs))
-		for i, job := range batchJobs {
-			candidates[i] = JobRelevanceCandidate{
-				Index:      batchStart + i + 1, // Global 1-indexed
-				Title:      job.Title,
-				Department: job.Department,
+		batchStartCopy := batchStart
+
+		go func(bStart int, bJobs []*models.JobPosting) {
+			// Build batch of candidates
+			candidates := make([]JobRelevanceCandidate, len(bJobs))
+			for i, job := range bJobs {
+				candidates[i] = JobRelevanceCandidate{
+					Index:      bStart + i + 1, // Global 1-indexed
+					Title:      job.Title,
+					Department: job.Department,
+				}
 			}
-		}
 
-		// Call AI to filter this batch
-		prompt := BuildJobRelevanceFilterPrompt(input, candidates)
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, aiCareerFilterTimeout)
+			// Call AI to filter this batch
+			prompt := BuildJobRelevanceFilterPrompt(input, candidates)
+			ctxWithTimeout, cancel := context.WithTimeout(ctx, aiCareerFilterTimeout)
+			defer cancel()
 
-		raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
-		cancel()
+			raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
 
-		if err != nil {
-			s.logger.Warn("AI career field filter failed for batch, keeping all jobs in batch", map[string]interface{}{
-				"error":      err.Error(),
-				"batchStart": batchStart,
-				"batchSize":  len(batchJobs),
-			})
-			// On failure, keep all jobs in this batch (fail open)
-			for i := range batchJobs {
-				relevantIndices[batchStart+i+1] = true
+			if err != nil {
+				s.logger.Warn("AI career field filter failed for batch, keeping all jobs in batch", map[string]interface{}{
+					"error":      err.Error(),
+					"batchStart": bStart,
+					"batchSize":  len(bJobs),
+				})
+				// On failure, keep all jobs in this batch (fail open)
+				allIndices := make([]int, len(bJobs))
+				for i := range bJobs {
+					allIndices[i] = bStart + i + 1
+				}
+				resultsChan <- batchResult{
+					batchStart:      bStart,
+					batchSize:       len(bJobs),
+					relevantIndices: allIndices,
+					filteredCount:   0,
+					err:             err,
+				}
+				return
 			}
-			continue
-		}
 
-		// Parse response
-		result := ParseJobRelevanceFilterResponse(raw, len(candidates))
-		for _, idx := range result.RelevantIndices {
+			// Parse response
+			parsed := ParseJobRelevanceFilterResponse(raw, len(candidates))
+			resultsChan <- batchResult{
+				batchStart:      bStart,
+				batchSize:       len(bJobs),
+				relevantIndices: parsed.RelevantIndices,
+				filteredCount:   parsed.FilteredCount,
+				err:             nil,
+			}
+		}(batchStartCopy, batchJobs)
+	}
+
+	// Collect results from all batches
+	relevantIndices := make(map[int]bool)
+	totalFiltered := 0
+	successfulBatches := 0
+	failedBatches := 0
+
+	for i := 0; i < numBatches; i++ {
+		result := <-resultsChan
+
+		for _, idx := range result.relevantIndices {
 			relevantIndices[idx] = true
 		}
-		totalFiltered += result.FilteredCount
+		totalFiltered += result.filteredCount
 
-		s.logger.Info("AI career field filter batch completed", map[string]interface{}{
-			"batchStart":    batchStart,
-			"batchSize":     len(batchJobs),
-			"relevantCount": len(result.RelevantIndices),
-			"filteredCount": result.FilteredCount,
-		})
+		if result.err != nil {
+			failedBatches++
+		} else {
+			successfulBatches++
+			s.logger.Info("AI career field filter batch completed", map[string]interface{}{
+				"batchStart":    result.batchStart,
+				"batchSize":     result.batchSize,
+				"relevantCount": len(result.relevantIndices),
+				"filteredCount": result.filteredCount,
+			})
+		}
 	}
+	close(resultsChan)
 
 	// Build filtered job list
 	filteredJobs := make([]*models.JobPosting, 0, len(relevantIndices))
@@ -799,9 +850,11 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	}
 
 	s.logger.Info("AI career field filter completed", map[string]interface{}{
-		"originalCount": len(jobs),
-		"filteredCount": len(filteredJobs),
-		"removedCount":  len(jobs) - len(filteredJobs),
+		"originalCount":     len(jobs),
+		"filteredCount":     len(filteredJobs),
+		"removedCount":      len(jobs) - len(filteredJobs),
+		"successfulBatches": successfulBatches,
+		"failedBatches":     failedBatches,
 	})
 
 	return filteredJobs
