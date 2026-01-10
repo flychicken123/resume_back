@@ -213,19 +213,14 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		return nil, err
 	}
 
-	// Wait for skill inference result (with fallback)
+	// Wait for skill inference result
+	sr := <-skillChan
 	var userSkills []string
-	select {
-	case sr := <-skillChan:
-		if sr.err != nil {
-			// Fallback to rule-based inference
-			userSkills = ExpandSkillsWithInference(input.Skills)
-		} else {
-			userSkills = sr.skills
-		}
-	case <-time.After(llmSkillInferenceTimeout + time.Second):
-		// Timeout - use rule-based fallback
+	if sr.err != nil {
+		// Fallback to rule-based inference on error
 		userSkills = ExpandSkillsWithInference(input.Skills)
+	} else {
+		userSkills = sr.skills
 	}
 
 	// Apply skill gaps using pre-computed skills
