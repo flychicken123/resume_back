@@ -73,11 +73,12 @@ var (
 )
 
 const (
-	llmReRankTopK    = 30
-	llmReRankAlpha   = 0.7
-	llmReRankBeta    = 0.3
-	llmReRankTimeout = 10 * time.Second
-	defaultMaxResults = 50
+	llmReRankTopK            = 15 // Reduced from 30 for faster response
+	llmReRankAlpha           = 0.7
+	llmReRankBeta            = 0.3
+	llmReRankTimeout         = 8 * time.Second
+	llmSkillInferenceTimeout = 8 * time.Second
+	defaultMaxResults        = 50
 )
 
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
@@ -164,7 +165,30 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		maxResults = defaultMaxResults
 	}
 
-	// Apply LangChain-based re-ranking on the top K matches (before trimming).
+	// Prepare resume content for skill inference
+	resumeContent := ResumeContent{
+		Position:   input.Position,
+		Summary:    input.Summary,
+		Experience: input.Experience,
+		Education:  input.Education,
+		Skills:     input.Skills,
+	}
+
+	// Start LLM skill inference in parallel (with timeout)
+	type skillResult struct {
+		skills []string
+		err    error
+	}
+	skillChan := make(chan skillResult, 1)
+	go func() {
+		inferCtx, cancel := context.WithTimeout(ctx, llmSkillInferenceTimeout)
+		defer cancel()
+		inferrer := GetSkillInferenceLLM()
+		skills, err := inferrer.InferSkillsFromResume(inferCtx, resumeContent)
+		skillChan <- skillResult{skills: skills, err: err}
+	}()
+
+	// Apply LangChain-based re-ranking on the top K matches (runs in parallel with skill inference)
 	s.applyLLMReRank(ctx, input, scored, maxResults)
 
 	// Trim to the requested maximum number of results after re-ranking.
@@ -189,15 +213,23 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		return nil, err
 	}
 
-	// Compute skill gaps for each match using LLM inference
-	resumeContent := ResumeContent{
-		Position:   input.Position,
-		Summary:    input.Summary,
-		Experience: input.Experience,
-		Education:  input.Education,
-		Skills:     input.Skills,
+	// Wait for skill inference result (with fallback)
+	var userSkills []string
+	select {
+	case sr := <-skillChan:
+		if sr.err != nil {
+			// Fallback to rule-based inference
+			userSkills = ExpandSkillsWithInference(input.Skills)
+		} else {
+			userSkills = sr.skills
+		}
+	case <-time.After(llmSkillInferenceTimeout + time.Second):
+		// Timeout - use rule-based fallback
+		userSkills = ExpandSkillsWithInference(input.Skills)
 	}
-	computeSkillGapsWithLLM(ctx, results, resumeContent)
+
+	// Apply skill gaps using pre-computed skills
+	computeSkillGapsFromSkills(results, userSkills)
 
 	return results, nil
 }
@@ -523,6 +555,41 @@ func computeSkillGapsWithLLM(ctx context.Context, matches []*models.ResumeJobMat
 	// Calculate gaps for each match
 	for _, match := range matches {
 		// Extract required skills from job description
+		requiredSkills := ExtractSkillsFromText(match.JobDescription)
+		if len(requiredSkills) == 0 {
+			continue
+		}
+
+		var matched, missing []string
+		for _, reqSkill := range requiredSkills {
+			if userSkillSet[reqSkill] {
+				matched = append(matched, reqSkill)
+			} else {
+				missing = append(missing, reqSkill)
+			}
+		}
+
+		match.RequiredSkills = requiredSkills
+		match.MatchedSkills = matched
+		match.MissingSkills = missing
+	}
+}
+
+// computeSkillGapsFromSkills calculates skill gaps using pre-computed user skills.
+// This is more efficient when skills are already inferred (e.g., from parallel LLM call).
+func computeSkillGapsFromSkills(matches []*models.ResumeJobMatchRecord, userSkills []string) {
+	if len(matches) == 0 {
+		return
+	}
+
+	// Build set of user skills
+	userSkillSet := make(map[string]bool, len(userSkills))
+	for _, s := range userSkills {
+		userSkillSet[s] = true
+	}
+
+	// Calculate gaps for each match
+	for _, match := range matches {
 		requiredSkills := ExtractSkillsFromText(match.JobDescription)
 		if len(requiredSkills) == 0 {
 			continue
