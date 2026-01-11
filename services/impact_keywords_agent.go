@@ -83,39 +83,47 @@ func (a *ImpactKeywordsAgent) ExtractImpactKeywords(ctx context.Context, input I
 		return ImpactKeywordsResult{}, fmt.Errorf("failed to marshal input: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`You are an expert resume analyzer. Your task is to identify keywords and phrases in resume text that demonstrate IMPACT, achievements, and accomplishments. Be thorough and generous in identifying impactful content.
+	prompt := fmt.Sprintf(`You are an expert resume analyzer. Your task is to identify keywords and phrases that demonstrate MEASURABLE IMPACT, concrete achievements, and quantifiable accomplishments.
 
-Analyze the following resume data and extract keywords/phrases that show impact:
+Analyze the following resume data and extract keywords/phrases that show REAL impact:
 
 INPUT DATA:
 %s
 
 WHAT TO IDENTIFY AS IMPACT KEYWORDS:
-1. Quantifiable metrics and numbers (percentages, dollar amounts, time savings, team sizes)
-   - Examples: "increased performance by 40%%", "$2M revenue", "team of 10 engineers", "reduced latency by 50ms", "3x improvement"
-2. Strong action verbs that show leadership and achievement
-   - Examples: "led", "spearheaded", "architected", "delivered", "launched", "pioneered", "drove", "owned"
-3. Business outcome phrases
-   - Examples: "increased revenue", "reduced costs", "improved efficiency", "accelerated delivery", "boosted engagement"
-4. Scale indicators
-   - Examples: "enterprise-wide", "1M+ users", "global deployment", "cross-functional", "company-wide"
-5. Technical achievement verbs
-   - Examples: "built", "developed", "implemented", "created", "designed", "engineered", "automated", "integrated"
-6. Improvement and optimization words
-   - Examples: "optimized", "streamlined", "enhanced", "upgraded", "modernized", "refactored", "revamped"
-7. Collaboration and scope words
-   - Examples: "collaborated", "partnered", "mentored", "trained", "coordinated", "managed", "supervised"
-8. Success and completion indicators
-   - Examples: "achieved", "accomplished", "completed", "delivered", "shipped", "released", "launched", "deployed"
+1. Quantifiable metrics and numbers (HIGHEST PRIORITY)
+   - Percentages: "40%%", "increased by 25%%", "reduced by 60%%"
+   - Dollar amounts: "$2M revenue", "saved $500K", "$10M budget"
+   - Time savings: "reduced latency by 50ms", "cut deployment time from 2 hours to 10 minutes"
+   - Scale numbers: "team of 10 engineers", "1M+ users", "500K daily requests", "100+ microservices"
+   - Multipliers: "3x improvement", "doubled throughput", "tripled efficiency"
+2. Business outcome phrases with results
+   - "increased revenue by", "reduced costs by", "improved efficiency by", "accelerated delivery"
+   - "boosted engagement", "grew user base", "expanded market share"
+3. Scale and scope indicators
+   - "enterprise-wide", "company-wide", "global deployment", "cross-functional"
+   - "production environment", "high-availability", "99.9%% uptime"
+4. Leadership with scope (only when followed by team size or scope)
+   - "led a team of 10", "mentored 5 junior developers", "managed 3 direct reports"
+   - NOT standalone verbs like "Led", "Managed", "Mentored"
+5. Concrete outcomes and deliverables
+   - "resulting in", "which led to", "achieving", "enabling"
+   - "launched to 50K users", "adopted by 200+ teams"
+
+DO NOT HIGHLIGHT (these are generic and don't show impact):
+- Standalone action verbs at the start of bullet points: "Developed", "Built", "Designed", "Architected", "Implemented", "Created", "Deployed", "Engineered", "Integrated", "Configured"
+- Generic technical work: "wrote code", "fixed bugs", "attended meetings"
+- Vague phrases: "worked on", "helped with", "responsible for", "participated in"
+- Standalone tools/technologies without context
 
 RULES:
+- Focus on RESULTS and OUTCOMES, not activities
 - Only extract actual phrases from the text - do not invent or modify them
-- Include meaningful context around metrics (e.g., "increased performance by 40%%" not just "40%%")
-- For numbers, always include surrounding context (e.g., "team of 10 engineers", "serving 1M users")
-- Extract strong action verbs even when standalone (e.g., "Developed", "Built", "Led")
-- Be generous - if a word or phrase suggests achievement or impact, include it
-- Try to find impact keywords in every description - look for any indicator of accomplishment
+- Always include the full context around metrics (e.g., "increased performance by 40%%" not just "40%%")
+- For numbers, include surrounding context (e.g., "team of 10 engineers", "serving 1M users")
+- DO NOT extract standalone action verbs like "Developed", "Built", "Designed" - these describe tasks, not impact
 - Match the exact text including any special characters
+- If a description has no measurable impact, return an empty array - don't force-find keywords
 
 OUTPUT FORMAT:
 Return ONLY a valid JSON object with this exact structure (no explanations):
