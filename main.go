@@ -168,6 +168,11 @@ func main() {
 	} else {
 		handlers.SetPolishAgent(polishAgent)
 	}
+	if impactKeywordsAgent, err := services.NewImpactKeywordsAgent(); err != nil {
+		log.Printf("Warning: Impact keywords agent disabled: %v", err)
+	} else {
+		handlers.SetImpactKeywordsAgent(impactKeywordsAgent)
+	}
 
 	// Initialize Stripe products (only run this once or on startup)
 	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
@@ -434,6 +439,7 @@ func main() {
 		public.POST("/assistant/resume/modify", handlers.AnalyzeResumeModification)
 		public.POST("/assistant/resume/polish", handlers.PolishResume)
 		public.POST("/template/preference", handlers.InferTemplatePreference)
+		public.POST("/impact-keywords/extract", handlers.ExtractImpactKeywords)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
 		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))
