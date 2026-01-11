@@ -109,12 +109,18 @@ WHAT TO IDENTIFY AS IMPACT KEYWORDS:
 5. Concrete outcomes and deliverables
    - "resulting in", "which led to", "achieving", "enabling"
    - "launched to 50K users", "adopted by 200+ teams"
+6. Technologies/tools WHEN PAIRED WITH RESULTS (helps recruiters verify technical fit)
+   - Include tech when it's part of an impact phrase: "built real-time pipeline in Kafka handling 500K events/sec", "reduced load time by 60%% using React lazy loading", "scaled to 1M users on AWS"
+   - Include tech with scale/scope: "migrated 50+ services to Kubernetes", "processed 10TB daily with Spark"
+   - Include tech with outcomes: "automated deployments with Jenkins saving 20 hours/week", "implemented Redis caching reducing latency by 80%%"
+   - Extract the technology name as a separate keyword when it appears in an impact context
 
 DO NOT HIGHLIGHT (these are generic and don't show impact):
 - Standalone action verbs at the start of bullet points: "Developed", "Built", "Designed", "Architected", "Implemented", "Created", "Deployed", "Engineered", "Integrated", "Configured"
 - Generic technical work: "wrote code", "fixed bugs", "attended meetings"
 - Vague phrases: "worked on", "helped with", "responsible for", "participated in"
-- Standalone tools/technologies without context
+- Standalone tools/technologies in lists: "Technologies: React, Node, MongoDB" or "Used Python and Django"
+- Tech without any result/impact context
 
 RULES:
 - Focus on RESULTS and OUTCOMES, not activities
@@ -122,6 +128,9 @@ RULES:
 - Always include the full context around metrics (e.g., "increased performance by 40%%" not just "40%%")
 - For numbers, include surrounding context (e.g., "team of 10 engineers", "serving 1M users")
 - DO NOT extract standalone action verbs like "Developed", "Built", "Designed" - these describe tasks, not impact
+- For technologies: extract BOTH the full impact phrase AND the technology name separately when tech is paired with a result
+  - Example: "reduced latency by 80%% with Redis" → extract ["reduced latency by 80%%", "Redis"]
+  - This helps recruiters quickly spot both the tech match and the impact
 - Match the exact text including any special characters
 - If a description has no measurable impact, return an empty array - don't force-find keywords
 
