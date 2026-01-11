@@ -1,7 +1,7 @@
 -- Revert resume quota limits to original values
--- Free: 100 → 1 (weekly)
--- Premium: 3000 → 30 (monthly)
--- Ultimate: 30000 → 300 (monthly)
+-- Free: 50 → 1 (weekly)
+-- Premium: 1,500 → 30 (monthly)
+-- Ultimate: 15,000 → 300 (monthly)
 
 UPDATE subscription_plans
 SET
