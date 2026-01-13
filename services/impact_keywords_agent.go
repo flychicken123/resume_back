@@ -83,59 +83,62 @@ func (a *ImpactKeywordsAgent) ExtractImpactKeywords(ctx context.Context, input I
 		return ImpactKeywordsResult{}, fmt.Errorf("failed to marshal input: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`You are an expert resume analyzer. Your task is to identify keywords and phrases that demonstrate MEASURABLE IMPACT, concrete achievements, and quantifiable accomplishments.
+	prompt := fmt.Sprintf(`You are an expert resume analyzer. Extract ONLY the most impactful SHORT keywords (1-4 words) that show measurable results.
 
-Analyze the following resume data and extract keywords/phrases that show REAL impact:
+=== ABSOLUTE RULE: MAXIMUM 4 WORDS PER KEYWORD ===
+Count the words before including any keyword. If it has more than 4 words, DO NOT include it.
 
 INPUT DATA:
 %s
 
-WHAT TO IDENTIFY AS IMPACT KEYWORDS:
-1. Quantifiable metrics and numbers (HIGHEST PRIORITY)
-   - Percentages: "40%%", "increased by 25%%", "reduced by 60%%"
-   - Dollar amounts: "$2M revenue", "saved $500K", "$10M budget"
-   - Time savings: "reduced latency by 50ms", "cut deployment time from 2 hours to 10 minutes"
-   - Scale numbers: "team of 10 engineers", "1M+ users", "500K daily requests", "100+ microservices"
-   - Multipliers: "3x improvement", "doubled throughput", "tripled efficiency"
-2. Business outcome phrases with results
-   - "increased revenue by", "reduced costs by", "improved efficiency by", "accelerated delivery"
-   - "boosted engagement", "grew user base", "expanded market share"
-3. Scale and scope indicators
-   - "enterprise-wide", "company-wide", "global deployment", "cross-functional"
-   - "production environment", "high-availability", "99.9%% uptime"
-4. Leadership with scope (only when followed by team size or scope)
-   - "led a team of 10", "mentored 5 junior developers", "managed 3 direct reports"
-   - NOT standalone verbs like "Led", "Managed", "Mentored"
-5. Concrete outcomes and deliverables
-   - "resulting in", "which led to", "achieving", "enabling"
-   - "launched to 50K users", "adopted by 200+ teams"
-6. Technologies/tools WHEN PAIRED WITH RESULTS (helps recruiters verify technical fit)
-   - Include tech when it's part of an impact phrase: "built real-time pipeline in Kafka handling 500K events/sec", "reduced load time by 60%% using React lazy loading", "scaled to 1M users on AWS"
-   - Include tech with scale/scope: "migrated 50+ services to Kubernetes", "processed 10TB daily with Spark"
-   - Include tech with outcomes: "automated deployments with Jenkins saving 20 hours/week", "implemented Redis caching reducing latency by 80%%"
-   - Extract the technology name as a separate keyword when it appears in an impact context
+=== WHAT TO EXTRACT (1-4 words ONLY) ===
 
-DO NOT HIGHLIGHT (these are generic and don't show impact):
-- Standalone action verbs at the start of bullet points: "Developed", "Built", "Designed", "Architected", "Implemented", "Created", "Deployed", "Engineered", "Integrated", "Configured"
-- Generic technical work: "wrote code", "fixed bugs", "attended meetings"
-- Vague phrases: "worked on", "helped with", "responsible for", "participated in"
-- Standalone tools/technologies in lists: "Technologies: React, Node, MongoDB" or "Used Python and Django"
-- Tech without any result/impact context
+PRIORITY 1 - Numbers and Metrics:
+- "40%%", "80%% reduction", "$2M", "saved $500K"
+- "3x faster", "10x improvement", "doubled throughput"
+- "1M+ users", "500K requests/day", "99.9%% uptime"
 
-RULES:
-- Focus on RESULTS and OUTCOMES, not activities
-- Only extract actual phrases from the text - do not invent or modify them
-- Always include the full context around metrics (e.g., "increased performance by 40%%" not just "40%%")
-- For numbers, include surrounding context (e.g., "team of 10 engineers", "serving 1M users")
-- DO NOT extract standalone action verbs like "Developed", "Built", "Designed" - these describe tasks, not impact
-- For technologies: extract BOTH the full impact phrase AND the technology name separately when tech is paired with a result
-  - Example: "reduced latency by 80%% with Redis" → extract ["reduced latency by 80%%", "Redis"]
-  - This helps recruiters quickly spot both the tech match and the impact
-- Match the exact text including any special characters
-- If a description has no measurable impact, return an empty array - don't force-find keywords
+PRIORITY 2 - Short Impact Phrases (max 3-4 words):
+- "increased revenue", "reduced costs", "improved efficiency"
+- "team of 10", "12 engineers", "5 direct reports"
 
-OUTPUT FORMAT:
-Return ONLY a valid JSON object with this exact structure (no explanations):
+PRIORITY 3 - Scale Words (1-2 words):
+- "enterprise-wide", "company-wide", "global"
+- "production", "high-availability"
+
+=== BANNED - NEVER EXTRACT ===
+❌ Full sentences or clauses
+❌ Anything with 5+ words
+❌ Action verbs: "Developed", "Built", "Designed", "Implemented", "Led", "Created", "Managed"
+❌ Phrases starting with verbs: "Reduced latency by...", "Increased sales through..."
+❌ Generic phrases: "worked on", "responsible for", "helped with"
+❌ Technology names without nearby metrics
+
+=== CORRECT vs WRONG EXAMPLES ===
+
+WRONG: "reduced API latency by 80%% using Redis caching" (9 words)
+CORRECT: ["80%%", "Redis"] (extract only the metric and tech)
+
+WRONG: "led a cross-functional team of 12 engineers" (8 words)
+CORRECT: ["12 engineers"] (extract only the number phrase)
+
+WRONG: "increased monthly revenue by $2M through optimization" (7 words)
+CORRECT: ["$2M"] (extract only the metric)
+
+WRONG: "Implemented microservices architecture improving scalability" (5 words)
+CORRECT: [] (no measurable metric, skip entirely)
+
+WRONG: "Built real-time data pipeline processing 500K events" (7 words)
+CORRECT: ["500K events"] (extract only the metric)
+
+=== VALIDATION BEFORE OUTPUT ===
+For each keyword you want to include:
+1. Count the words - if more than 4, DO NOT include it
+2. Check if it starts with an action verb - if yes, DO NOT include it
+3. Check if it contains a number/metric - if no, reconsider if it's truly impactful
+
+=== OUTPUT FORMAT ===
+Return ONLY valid JSON (no markdown, no explanations):
 {
   "experiences": {
     "<experience_id>": {
@@ -151,7 +154,7 @@ Return ONLY a valid JSON object with this exact structure (no explanations):
   }
 }
 
-Analyze the input and return ONLY the JSON output:`, string(inputJSON))
+Return ONLY the JSON:`, string(inputJSON))
 
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
 	if err != nil {
