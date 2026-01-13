@@ -83,62 +83,56 @@ func (a *ImpactKeywordsAgent) ExtractImpactKeywords(ctx context.Context, input I
 		return ImpactKeywordsResult{}, fmt.Errorf("failed to marshal input: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`You are an expert resume analyzer. Extract ONLY the most impactful SHORT keywords (1-4 words) that show measurable results.
+	prompt := fmt.Sprintf(`You are an expert resume analyzer. Extract SHORT keywords and phrases (1-5 words) that demonstrate impact and achievements.
 
-=== ABSOLUTE RULE: MAXIMUM 4 WORDS PER KEYWORD ===
-Count the words before including any keyword. If it has more than 4 words, DO NOT include it.
+=== RULE: MAXIMUM 5 WORDS PER KEYWORD ===
+Each keyword must be 1-5 words. Never extract full sentences.
 
 INPUT DATA:
 %s
 
-=== WHAT TO EXTRACT (1-4 words ONLY) ===
+=== WHAT TO EXTRACT (1-5 words each) ===
 
-PRIORITY 1 - Numbers and Metrics:
-- "40%%", "80%% reduction", "$2M", "saved $500K"
-- "3x faster", "10x improvement", "doubled throughput"
-- "1M+ users", "500K requests/day", "99.9%% uptime"
+1. Numbers and Metrics (highest priority):
+   - "40%%", "80%% reduction", "$2M revenue", "saved $500K"
+   - "3x faster", "10x improvement", "99.9%% uptime"
+   - "1M+ users", "500K requests/day", "50ms latency"
 
-PRIORITY 2 - Short Impact Phrases (max 3-4 words):
-- "increased revenue", "reduced costs", "improved efficiency"
-- "team of 10", "12 engineers", "5 direct reports"
+2. Team and Scale:
+   - "team of 10", "12 engineers", "cross-functional team"
+   - "enterprise-wide", "company-wide", "global deployment"
+   - "production environment", "high-availability system"
 
-PRIORITY 3 - Scale Words (1-2 words):
-- "enterprise-wide", "company-wide", "global"
-- "production", "high-availability"
+3. Key Technologies (when significant):
+   - "Redis", "Kubernetes", "AWS", "microservices"
+   - "real-time pipeline", "distributed system"
 
-=== BANNED - NEVER EXTRACT ===
-❌ Full sentences or clauses
-❌ Anything with 5+ words
-❌ Action verbs: "Developed", "Built", "Designed", "Implemented", "Led", "Created", "Managed"
-❌ Phrases starting with verbs: "Reduced latency by...", "Increased sales through..."
-❌ Generic phrases: "worked on", "responsible for", "helped with"
-❌ Technology names without nearby metrics
+4. Outcome Words:
+   - "increased revenue", "reduced costs", "improved performance"
+   - "automated deployment", "streamlined workflow"
+   - "award-winning", "patent pending"
 
-=== CORRECT vs WRONG EXAMPLES ===
+=== DO NOT EXTRACT ===
+- Full sentences or bullet points (6+ words)
+- Standalone action verbs: "Developed", "Built", "Implemented"
+- Generic phrases: "worked on", "responsible for", "helped with"
 
-WRONG: "reduced API latency by 80%% using Redis caching" (9 words)
-CORRECT: ["80%%", "Redis"] (extract only the metric and tech)
+=== EXAMPLES ===
 
-WRONG: "led a cross-functional team of 12 engineers" (8 words)
-CORRECT: ["12 engineers"] (extract only the number phrase)
+Input: "Reduced API latency by 80%% using Redis caching for production"
+Extract: ["80%%", "Redis", "production"] ✓
+NOT: ["Reduced API latency by 80%% using Redis caching for production"] ✗
 
-WRONG: "increased monthly revenue by $2M through optimization" (7 words)
-CORRECT: ["$2M"] (extract only the metric)
+Input: "Led a cross-functional team of 12 engineers to deliver on time"
+Extract: ["cross-functional team", "12 engineers"] ✓
+NOT: ["Led a cross-functional team of 12 engineers to deliver on time"] ✗
 
-WRONG: "Implemented microservices architecture improving scalability" (5 words)
-CORRECT: [] (no measurable metric, skip entirely)
-
-WRONG: "Built real-time data pipeline processing 500K events" (7 words)
-CORRECT: ["500K events"] (extract only the metric)
-
-=== VALIDATION BEFORE OUTPUT ===
-For each keyword you want to include:
-1. Count the words - if more than 4, DO NOT include it
-2. Check if it starts with an action verb - if yes, DO NOT include it
-3. Check if it contains a number/metric - if no, reconsider if it's truly impactful
+Input: "Built scalable microservices architecture handling 1M requests"
+Extract: ["scalable microservices", "1M requests"] ✓
+NOT: ["Built scalable microservices architecture handling 1M requests"] ✗
 
 === OUTPUT FORMAT ===
-Return ONLY valid JSON (no markdown, no explanations):
+Return ONLY valid JSON:
 {
   "experiences": {
     "<experience_id>": {
