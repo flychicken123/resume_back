@@ -607,7 +607,7 @@ func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, 
 		return nil, "I don't see any work experiences to polish.", -1, nil
 	}
 
-	// If specific entry identified
+	// If specific entry identified, polish only that one
 	if intent.EntryIndex >= 0 && intent.EntryIndex < len(experiences) {
 		expMap, ok := experiences[intent.EntryIndex].(map[string]interface{})
 		if !ok {
@@ -630,21 +630,23 @@ func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, 
 		return polished, fmt.Sprintf("I've polished your experience at %s with impact-focused bullet points. The changes are ready to apply.", company), intent.EntryIndex, nil
 	}
 
-	// Polish all experiences (when user says "all" or doesn't specify)
-	polishedExperiences := make([]interface{}, 0, len(experiences))
+	// Polish all experiences using batch method (single API call)
+	expMaps := make([]map[string]interface{}, 0, len(experiences))
 	for _, exp := range experiences {
-		expMap, ok := exp.(map[string]interface{})
-		if !ok {
-			polishedExperiences = append(polishedExperiences, exp)
-			continue
+		if expMap, ok := exp.(map[string]interface{}); ok {
+			expMaps = append(expMaps, expMap)
 		}
+	}
 
-		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
-		if err != nil {
-			polishedExperiences = append(polishedExperiences, exp)
-			continue
-		}
-		polishedExperiences = append(polishedExperiences, polished)
+	polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc)
+	if err != nil {
+		return nil, "", -1, err
+	}
+
+	// Convert back to []interface{}
+	polishedExperiences := make([]interface{}, len(polishedMaps))
+	for i, p := range polishedMaps {
+		polishedExperiences[i] = p
 	}
 
 	updatedData["experiences"] = polishedExperiences
@@ -678,25 +680,27 @@ func polishEducationInChat(ctx context.Context, intent services.PolishIntent, re
 		return polished, fmt.Sprintf("I've polished your education at %s. The changes are ready to apply.", school), intent.EntryIndex, nil
 	}
 
-	// Polish all education entries
-	polishedEducation := make([]interface{}, 0, len(education))
+	// Polish all education entries using batch method (single API call)
+	eduMaps := make([]map[string]interface{}, 0, len(education))
 	for _, edu := range education {
-		eduMap, ok := edu.(map[string]interface{})
-		if !ok {
-			polishedEducation = append(polishedEducation, edu)
-			continue
+		if eduMap, ok := edu.(map[string]interface{}); ok {
+			eduMaps = append(eduMaps, eduMap)
 		}
+	}
 
-		polished, err := polishAgent.PolishEducation(ctx, eduMap)
-		if err != nil {
-			polishedEducation = append(polishedEducation, edu)
-			continue
-		}
-		polishedEducation = append(polishedEducation, polished)
+	polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps)
+	if err != nil {
+		return nil, "", -1, err
+	}
+
+	// Convert back to []interface{}
+	polishedEducation := make([]interface{}, len(polishedMaps))
+	for i, p := range polishedMaps {
+		polishedEducation[i] = p
 	}
 
 	updatedData["education"] = polishedEducation
-	return polishedEducation, "I've polished all your education entries. The changes are ready to apply.", -1, nil
+	return polishedEducation, fmt.Sprintf("I've polished all %d of your education entries. The changes are ready to apply.", len(education)), -1, nil
 }
 
 func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (interface{}, string, int, error) {
@@ -705,6 +709,7 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 		return nil, "I don't see any projects to polish.", -1, nil
 	}
 
+	// If specific entry identified, polish only that one
 	if intent.EntryIndex >= 0 && intent.EntryIndex < len(projects) {
 		projMap, ok := projects[intent.EntryIndex].(map[string]interface{})
 		if !ok {
@@ -726,21 +731,23 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 		return polished, fmt.Sprintf("I've polished your project '%s'. The changes are ready to apply.", projectName), intent.EntryIndex, nil
 	}
 
-	// Polish all projects
-	polishedProjects := make([]interface{}, 0, len(projects))
+	// Polish all projects using batch method (single API call)
+	projMaps := make([]map[string]interface{}, 0, len(projects))
 	for _, proj := range projects {
-		projMap, ok := proj.(map[string]interface{})
-		if !ok {
-			polishedProjects = append(polishedProjects, proj)
-			continue
+		if projMap, ok := proj.(map[string]interface{}); ok {
+			projMaps = append(projMaps, projMap)
 		}
+	}
 
-		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
-		if err != nil {
-			polishedProjects = append(polishedProjects, proj)
-			continue
-		}
-		polishedProjects = append(polishedProjects, polished)
+	polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc)
+	if err != nil {
+		return nil, "", -1, err
+	}
+
+	// Convert back to []interface{}
+	polishedProjects := make([]interface{}, len(polishedMaps))
+	for i, p := range polishedMaps {
+		polishedProjects[i] = p
 	}
 
 	updatedData["projects"] = polishedProjects
@@ -750,64 +757,70 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (string, error) {
 	var polishedSections []string
 
-	// Polish experiences
+	// Polish experiences using batch method (single API call for all experiences)
 	if experiences, ok := resumeData["experiences"].([]interface{}); ok && len(experiences) > 0 {
-		polishedExperiences := make([]interface{}, 0, len(experiences))
+		expMaps := make([]map[string]interface{}, 0, len(experiences))
 		for _, exp := range experiences {
 			if expMap, ok := exp.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
-				if err != nil {
-					polishedExperiences = append(polishedExperiences, exp)
-				} else {
-					polishedExperiences = append(polishedExperiences, polished)
-				}
-			} else {
-				polishedExperiences = append(polishedExperiences, exp)
+				expMaps = append(expMaps, expMap)
 			}
 		}
-		updatedData["experiences"] = polishedExperiences
-		polishedSections = append(polishedSections, "work experiences")
+		if len(expMaps) > 0 {
+			polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc)
+			if err == nil {
+				polishedExperiences := make([]interface{}, len(polishedMaps))
+				for i, p := range polishedMaps {
+					polishedExperiences[i] = p
+				}
+				updatedData["experiences"] = polishedExperiences
+				polishedSections = append(polishedSections, "work experiences")
+			}
+		}
 	}
 
-	// Polish education
+	// Polish education using batch method (single API call for all education)
 	if education, ok := resumeData["education"].([]interface{}); ok && len(education) > 0 {
-		polishedEducation := make([]interface{}, 0, len(education))
+		eduMaps := make([]map[string]interface{}, 0, len(education))
 		for _, edu := range education {
 			if eduMap, ok := edu.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishEducation(ctx, eduMap)
-				if err != nil {
-					polishedEducation = append(polishedEducation, edu)
-				} else {
-					polishedEducation = append(polishedEducation, polished)
-				}
-			} else {
-				polishedEducation = append(polishedEducation, edu)
+				eduMaps = append(eduMaps, eduMap)
 			}
 		}
-		updatedData["education"] = polishedEducation
-		polishedSections = append(polishedSections, "education")
+		if len(eduMaps) > 0 {
+			polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps)
+			if err == nil {
+				polishedEducation := make([]interface{}, len(polishedMaps))
+				for i, p := range polishedMaps {
+					polishedEducation[i] = p
+				}
+				updatedData["education"] = polishedEducation
+				polishedSections = append(polishedSections, "education")
+			}
+		}
 	}
 
-	// Polish projects
+	// Polish projects using batch method (single API call for all projects)
 	if projects, ok := resumeData["projects"].([]interface{}); ok && len(projects) > 0 {
-		polishedProjects := make([]interface{}, 0, len(projects))
+		projMaps := make([]map[string]interface{}, 0, len(projects))
 		for _, proj := range projects {
 			if projMap, ok := proj.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
-				if err != nil {
-					polishedProjects = append(polishedProjects, proj)
-				} else {
-					polishedProjects = append(polishedProjects, polished)
-				}
-			} else {
-				polishedProjects = append(polishedProjects, proj)
+				projMaps = append(projMaps, projMap)
 			}
 		}
-		updatedData["projects"] = polishedProjects
-		polishedSections = append(polishedSections, "projects")
+		if len(projMaps) > 0 {
+			polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc)
+			if err == nil {
+				polishedProjects := make([]interface{}, len(polishedMaps))
+				for i, p := range polishedMaps {
+					polishedProjects[i] = p
+				}
+				updatedData["projects"] = polishedProjects
+				polishedSections = append(polishedSections, "projects")
+			}
+		}
 	}
 
-	// Polish summary
+	// Polish summary (single item, no batch needed)
 	if summary, ok := resumeData["summary"].(string); ok && summary != "" {
 		polished, err := polishAgent.PolishSummary(ctx, summary, resumeData)
 		if err == nil {
@@ -816,7 +829,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 		}
 	}
 
-	// Polish skills
+	// Polish skills (single item, no batch needed)
 	if skills, ok := resumeData["skills"].(string); ok && skills != "" {
 		polished, err := polishAgent.PolishSkills(ctx, skills, jobDesc)
 		if err == nil {

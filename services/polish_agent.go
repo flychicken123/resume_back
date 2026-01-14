@@ -437,3 +437,288 @@ func cleanupPolishedText(text string) string {
 
 	return strings.Join(cleanedLines, "\n\n")
 }
+
+// PolishExperiencesBatch polishes multiple experiences in a single API call.
+// This reduces API calls from N to 1, helping avoid rate limits.
+func (a *PolishAgent) PolishExperiencesBatch(ctx context.Context, experiences []map[string]interface{}, jobDescription string) ([]map[string]interface{}, error) {
+	if a == nil || a.llm == nil {
+		return nil, fmt.Errorf("polish agent is not initialized")
+	}
+
+	if len(experiences) == 0 {
+		return experiences, nil
+	}
+
+	// If only one experience, use the single method
+	if len(experiences) == 1 {
+		polished, err := a.PolishExperience(ctx, experiences[0], jobDescription)
+		if err != nil {
+			return nil, err
+		}
+		return []map[string]interface{}{polished}, nil
+	}
+
+	// Build batch input
+	var inputBuilder strings.Builder
+	for i, exp := range experiences {
+		description, _ := exp["description"].(string)
+		if description == "" {
+			continue
+		}
+		jobTitle, _ := exp["jobTitle"].(string)
+		company, _ := exp["company"].(string)
+		inputBuilder.WriteString(fmt.Sprintf("=== EXPERIENCE %d ===\n", i))
+		inputBuilder.WriteString(fmt.Sprintf("Job Title: %s\n", jobTitle))
+		inputBuilder.WriteString(fmt.Sprintf("Company: %s\n", company))
+		inputBuilder.WriteString(fmt.Sprintf("Description:\n%s\n\n", description))
+	}
+
+	if inputBuilder.Len() == 0 {
+		return experiences, nil // No descriptions to polish
+	}
+
+	prompt := fmt.Sprintf(`You are an expert resume writer. Polish multiple work experience descriptions to be more impactful.
+
+Job Description (for context):
+%s
+
+%s
+
+For EACH experience, transform the description using: [ACTION VERB] + [WHAT YOU DID] + [HOW/WHY] + [MEASURABLE IMPACT]
+
+CRITICAL RULES:
+1. NEVER invent accomplishments, metrics, or technologies not in the original
+2. Start each bullet with strong action verbs (Led, Built, Developed, Implemented)
+3. Keep statements qualitative if original lacks metrics - do NOT fabricate numbers
+4. Each achievement on a new line, no bullet symbols
+
+Return ONLY valid JSON array with polished descriptions:
+[
+  {"index": 0, "description": "polished description for experience 0"},
+  {"index": 1, "description": "polished description for experience 1"}
+]
+
+Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
+
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	clean := sanitizeLLMJSON(raw)
+
+	var polishedResults []struct {
+		Index       int    `json:"index"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(clean), &polishedResults); err != nil {
+		return nil, fmt.Errorf("failed to parse batch polish JSON: %w", err)
+	}
+
+	// Map polished descriptions back to experiences
+	result := make([]map[string]interface{}, len(experiences))
+	for i, exp := range experiences {
+		// Copy original
+		result[i] = make(map[string]interface{})
+		for k, v := range exp {
+			result[i][k] = v
+		}
+	}
+
+	// Apply polished descriptions
+	for _, p := range polishedResults {
+		if p.Index >= 0 && p.Index < len(result) {
+			result[p.Index]["description"] = cleanupPolishedText(p.Description)
+		}
+	}
+
+	return result, nil
+}
+
+// PolishProjectsBatch polishes multiple projects in a single API call.
+func (a *PolishAgent) PolishProjectsBatch(ctx context.Context, projects []map[string]interface{}, jobDescription string) ([]map[string]interface{}, error) {
+	if a == nil || a.llm == nil {
+		return nil, fmt.Errorf("polish agent is not initialized")
+	}
+
+	if len(projects) == 0 {
+		return projects, nil
+	}
+
+	// If only one project, use the single method
+	if len(projects) == 1 {
+		polished, err := a.PolishProject(ctx, projects[0], jobDescription)
+		if err != nil {
+			return nil, err
+		}
+		return []map[string]interface{}{polished}, nil
+	}
+
+	// Build batch input
+	var inputBuilder strings.Builder
+	for i, proj := range projects {
+		description, _ := proj["description"].(string)
+		if description == "" {
+			continue
+		}
+		projectName, _ := proj["projectName"].(string)
+		technologies, _ := proj["technologies"].(string)
+		inputBuilder.WriteString(fmt.Sprintf("=== PROJECT %d ===\n", i))
+		inputBuilder.WriteString(fmt.Sprintf("Name: %s\n", projectName))
+		inputBuilder.WriteString(fmt.Sprintf("Technologies: %s\n", technologies))
+		inputBuilder.WriteString(fmt.Sprintf("Description:\n%s\n\n", description))
+	}
+
+	if inputBuilder.Len() == 0 {
+		return projects, nil
+	}
+
+	prompt := fmt.Sprintf(`You are an expert resume writer. Polish multiple project descriptions to be more impactful.
+
+Job Description (for context):
+%s
+
+%s
+
+For EACH project, enhance the description to highlight technical achievements and impact.
+
+CRITICAL RULES:
+1. NEVER invent features, technologies, or metrics not in the original
+2. Use strong technical action verbs (Architected, Engineered, Deployed, Implemented)
+3. Keep statements qualitative if original lacks metrics
+4. Each achievement on a new line, no bullet symbols
+
+Return ONLY valid JSON array:
+[
+  {"index": 0, "description": "polished description for project 0"},
+  {"index": 1, "description": "polished description for project 1"}
+]
+
+Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
+
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	clean := sanitizeLLMJSON(raw)
+
+	var polishedResults []struct {
+		Index       int    `json:"index"`
+		Description string `json:"description"`
+	}
+	if err := json.Unmarshal([]byte(clean), &polishedResults); err != nil {
+		return nil, fmt.Errorf("failed to parse batch polish JSON: %w", err)
+	}
+
+	// Map polished descriptions back to projects
+	result := make([]map[string]interface{}, len(projects))
+	for i, proj := range projects {
+		result[i] = make(map[string]interface{})
+		for k, v := range proj {
+			result[i][k] = v
+		}
+	}
+
+	for _, p := range polishedResults {
+		if p.Index >= 0 && p.Index < len(result) {
+			result[p.Index]["description"] = cleanupPolishedText(p.Description)
+		}
+	}
+
+	return result, nil
+}
+
+// PolishEducationBatch polishes multiple education entries in a single API call.
+func (a *PolishAgent) PolishEducationBatch(ctx context.Context, educations []map[string]interface{}) ([]map[string]interface{}, error) {
+	if a == nil || a.llm == nil {
+		return nil, fmt.Errorf("polish agent is not initialized")
+	}
+
+	if len(educations) == 0 {
+		return educations, nil
+	}
+
+	// If only one education, use the single method
+	if len(educations) == 1 {
+		polished, err := a.PolishEducation(ctx, educations[0])
+		if err != nil {
+			return nil, err
+		}
+		return []map[string]interface{}{polished}, nil
+	}
+
+	// Build batch input
+	var inputBuilder strings.Builder
+	for i, edu := range educations {
+		degree, _ := edu["degree"].(string)
+		school, _ := edu["school"].(string)
+		field, _ := edu["field"].(string)
+		honors, _ := edu["honors"].(string)
+		gpa, _ := edu["gpa"].(string)
+
+		inputBuilder.WriteString(fmt.Sprintf("=== EDUCATION %d ===\n", i))
+		inputBuilder.WriteString(fmt.Sprintf("Degree: %s\n", degree))
+		inputBuilder.WriteString(fmt.Sprintf("School: %s\n", school))
+		inputBuilder.WriteString(fmt.Sprintf("Field: %s\n", field))
+		if gpa != "" {
+			inputBuilder.WriteString(fmt.Sprintf("GPA: %s\n", gpa))
+		}
+		if honors != "" {
+			inputBuilder.WriteString(fmt.Sprintf("Honors/Achievements: %s\n", honors))
+		}
+		inputBuilder.WriteString("\n")
+	}
+
+	prompt := fmt.Sprintf(`You are an expert resume writer. Polish multiple education entries to be more professional.
+
+%s
+
+For EACH education entry, create or enhance the honors/achievements section.
+
+CRITICAL RULES:
+1. NEVER invent achievements, honors, or activities not implied by the original
+2. Make descriptions more professional and impactful
+3. Focus on relevant coursework, achievements, and honors
+4. Keep it concise
+
+Return ONLY valid JSON array:
+[
+  {"index": 0, "honors": "polished honors/achievements for education 0"},
+  {"index": 1, "honors": "polished honors/achievements for education 1"}
+]
+
+Return ONLY the JSON array, no explanations.`, inputBuilder.String())
+
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	if err != nil {
+		return nil, err
+	}
+
+	clean := sanitizeLLMJSON(raw)
+
+	var polishedResults []struct {
+		Index  int    `json:"index"`
+		Honors string `json:"honors"`
+	}
+	if err := json.Unmarshal([]byte(clean), &polishedResults); err != nil {
+		return nil, fmt.Errorf("failed to parse batch polish JSON: %w", err)
+	}
+
+	// Map polished honors back to educations
+	result := make([]map[string]interface{}, len(educations))
+	for i, edu := range educations {
+		result[i] = make(map[string]interface{})
+		for k, v := range edu {
+			result[i][k] = v
+		}
+	}
+
+	for _, p := range polishedResults {
+		if p.Index >= 0 && p.Index < len(result) {
+			result[p.Index]["honors"] = cleanupPolishedText(p.Honors)
+		}
+	}
+
+	return result, nil
+}
