@@ -126,7 +126,7 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	}
 
 	// Pass 2: Full heuristic scoring
-	sourceText := strings.Join([]string{input.Summary, input.Experience, input.Education, input.JobDescription}, " ")
+	sourceText := strings.Join([]string{input.Summary, input.Experience, input.Education}, " ")
 	resumeText := strings.ToLower(strings.TrimSpace(sourceText))
 	keywords := extractKeywords(resumeText, 40)
 	preferredLocation := strings.ToLower(strings.TrimSpace(input.PreferredLocation))
