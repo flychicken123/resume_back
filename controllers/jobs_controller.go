@@ -452,7 +452,7 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		}()
 	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to compute job matches"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to compute job matches", "details": err.Error()})
 		return
 	}
 
