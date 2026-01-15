@@ -99,7 +99,7 @@ func (rl *RateLimiter) cleanupVisitors() {
 // CreateRateLimiters creates different rate limiters for different endpoints
 func CreateRateLimiters() map[string]*RateLimiter {
 	return map[string]*RateLimiter{
-		"ai":      NewRateLimiter(10, 1*time.Minute), // 10 requests per minute for AI
+		"ai":      NewRateLimiter(30, 1*time.Minute), // 30 requests per minute for AI
 		"auth":    NewRateLimiter(5, 1*time.Minute),  // 5 requests per minute for auth
 		"general": NewRateLimiter(60, 1*time.Minute), // 60 requests per minute general
 	}
