@@ -171,7 +171,7 @@ func TestCreateRateLimiters(t *testing.T) {
 	assert.NotNil(t, limiters["general"])
 
 	// Check rates
-	assert.Equal(t, 10, limiters["ai"].rate)
+	assert.Equal(t, 30, limiters["ai"].rate)
 	assert.Equal(t, 5, limiters["auth"].rate)
 	assert.Equal(t, 60, limiters["general"].rate)
 }
