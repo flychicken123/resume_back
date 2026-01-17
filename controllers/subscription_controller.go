@@ -146,6 +146,7 @@ func (sc *SubscriptionController) GetCurrentSubscription(c *gin.Context) {
 		"usage": gin.H{
 			"can_generate": canGenerate,
 			"remaining":    remaining,
+			"limit":        subscription.ResumeLimit,
 			"reset_date":   resetDate,
 		},
 	})
