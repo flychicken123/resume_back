@@ -92,6 +92,7 @@ func main() {
 	}
 	resumeService := services.NewResumeService(resumeHistoryModel, s3Service)
 	stripeService := services.NewStripeService(db)
+	adService := services.NewAdService(db)
 	emailService := services.NewEmailService(logger)
 	jobsService := services.NewJobIngestionService(db, logger)
 	experimentService := services.NewExperimentService(experimentModel)
@@ -189,6 +190,7 @@ func main() {
 	geoController := controllers.NewGeoController(geoService)
 	dataAnalysisController := controllers.NewDataAnalysisController(jobPostingModel)
 	experimentController := controllers.NewExperimentController(experimentService)
+	adsController := controllers.NewAdsController(db, adService, stripeService)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -489,6 +491,10 @@ func main() {
 		protected.POST("/subscription/portal", subscriptionController.CreateCustomerPortal)
 		protected.GET("/subscription/check-limit", subscriptionController.CheckResumeLimit)
 		protected.POST("/subscription/confirm", subscriptionController.ConfirmSuccess)
+
+		// Ads rewards routes
+		protected.GET("/ads/status", adsController.GetAdStatus)
+		protected.POST("/ads/watch-complete", adsController.AdWatchComplete)
 
 		admin := protected.Group("/admin")
 		admin.Use(middleware.RequireAdmin())
