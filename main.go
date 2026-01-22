@@ -56,12 +56,12 @@ func main() {
 	log.Println("Database connection successful!")
 
 	// Run database migrations on startup
-	migrationsPath := "./database/migrations"
-	if err := database.RunMigrations(db, migrationsPath); err != nil {
-		log.Printf("Warning: Database migration error: %v", err)
-		// Don't fatal - allow app to start even if migrations have issues
-		// This prevents deployment failures when migrations were already applied
-	}
+	// migrationsPath := "./database/migrations"
+	// if err := database.RunMigrations(db, migrationsPath); err != nil {
+	// 	log.Printf("Warning: Database migration error: %v", err)
+	// 	// Don't fatal - allow app to start even if migrations have issues
+	// 	// This prevents deployment failures when migrations were already applied
+	// }
 
 	// Initialize models
 	userModel := models.NewUserModel(db)
