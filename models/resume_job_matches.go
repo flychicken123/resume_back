@@ -187,6 +187,9 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 		return nil, err
 	}
 
+	// Limit to at most 3 jobs per company for diverse results.
+	results = limitPerCompany(results, 3)
+
 	return results, nil
 }
 
@@ -292,6 +295,9 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 		return nil, err
 	}
 
+	// Limit to at most 3 jobs per company for diverse results.
+	results = limitPerCompany(results, 3)
+
 	return results, nil
 }
 
@@ -312,4 +318,22 @@ func (m *ResumeJobMatchModel) DebugDump(userID int, resumeHash string) error {
 		fmt.Printf("match %d user=%d resume=%s job=%d score=%.2f\n", match.ID, match.UserID, match.ResumeHash, match.JobPostingID, match.MatchScore)
 	}
 	return nil
+}
+
+// limitPerCompany keeps at most maxPerCompany jobs from the same company.
+// Results are assumed to be sorted by score so the highest-scoring jobs are kept.
+func limitPerCompany(records []*ResumeJobMatchRecord, maxPerCompany int) []*ResumeJobMatchRecord {
+	companyCount := make(map[int]int)
+	filtered := make([]*ResumeJobMatchRecord, 0, len(records))
+	for _, r := range records {
+		cid := 0
+		if r.CompanyID != nil {
+			cid = *r.CompanyID
+		}
+		if companyCount[cid] < maxPerCompany {
+			filtered = append(filtered, r)
+			companyCount[cid]++
+		}
+	}
+	return filtered
 }

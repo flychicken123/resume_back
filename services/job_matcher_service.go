@@ -238,6 +238,20 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	}
 	scored = filteredScored
 
+	// Limit to at most 3 jobs per company so results stay diverse.
+	{
+		companyCount := make(map[int]int)
+		diverseScored := make([]scoredJob, 0, len(scored))
+		for _, sj := range scored {
+			cid := sj.posting.CompanyID
+			if companyCount[cid] < 3 {
+				diverseScored = append(diverseScored, sj)
+				companyCount[cid]++
+			}
+		}
+		scored = diverseScored
+	}
+
 	// Trim to the requested maximum number of results after re-ranking.
 	if len(scored) > maxResults {
 		scored = scored[:maxResults]
