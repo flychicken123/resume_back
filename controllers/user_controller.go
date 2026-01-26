@@ -191,6 +191,9 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
+			"name":             resume.Name,
+			"email":            resume.Email,
+			"phone":            resume.Phone,
 			"summary":          resume.Summary,
 			"skills":           resume.Skills,
 			"skillsCategorized": resume.SkillsCategorized,
