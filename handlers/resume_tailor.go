@@ -3,6 +3,7 @@ package handlers
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -86,10 +87,10 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 
 		timestamp := time.Now().UnixNano()
 
-		// Step 1: Generate HTML from template (reuses generateHTMLResumeWithPython)
+		// Step 1: Render HTML directly from polished data (no frontend needed)
 		htmlFilename := fmt.Sprintf("tailored_%d.html", timestamp)
 		htmlPath := filepath.Join(saveDir, htmlFilename)
-		if err := generateHTMLResumeWithPython(templateSlug, userData, htmlPath); err != nil {
+		if err := renderTailorHTML(userData, htmlPath); err != nil {
 			fmt.Printf("[Tailor] HTML generation failed: %v\n", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate resume HTML"})
 			return
@@ -292,4 +293,192 @@ func tailorFormatExperiences(experiences []interface{}) string {
 		parts = append(parts, entry)
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+// renderTailorHTML builds a complete HTML resume from the polished data and writes it to outputPath.
+// This replaces the need for pre-rendered htmlContent from the frontend.
+func renderTailorHTML(data map[string]interface{}, outputPath string) error {
+	name, _ := data["name"].(string)
+	email, _ := data["email"].(string)
+	phone, _ := data["phone"].(string)
+	location, _ := data["location"].(string)
+	summary, _ := data["summary"].(string)
+	experience, _ := data["experience"].(string)
+	education, _ := data["education"].(string)
+
+	// Build contact line
+	var contactParts []string
+	if email != "" {
+		contactParts = append(contactParts, html.EscapeString(email))
+	}
+	if phone != "" {
+		contactParts = append(contactParts, html.EscapeString(phone))
+	}
+	if location != "" {
+		contactParts = append(contactParts, html.EscapeString(location))
+	}
+	contactLine := strings.Join(contactParts, " &bull; ")
+
+	// Build skills HTML
+	var skillsSection string
+	if skills, ok := data["skills"].([]string); ok && len(skills) > 0 {
+		var escaped []string
+		for _, sk := range skills {
+			escaped = append(escaped, html.EscapeString(sk))
+		}
+		skillsSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Skills</div>
+        <div class="skills">%s</div>
+    </div>`, strings.Join(escaped, " &bull; "))
+	}
+
+	// Build summary section
+	var summarySection string
+	if summary != "" {
+		summarySection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Summary</div>
+        <p class="summary-text">%s</p>
+    </div>`, html.EscapeString(summary))
+	}
+
+	// Build experience section
+	var experienceSection string
+	if experience != "" {
+		entries := strings.Split(experience, "\n\n")
+		var items string
+		for _, entry := range entries {
+			lines := strings.Split(strings.TrimSpace(entry), "\n")
+			if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+				continue
+			}
+			items += fmt.Sprintf(`        <div class="experience-item">
+            <div class="job-title">%s</div>`, html.EscapeString(lines[0]))
+			for _, line := range lines[1:] {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				// Remove leading bullet characters
+				line = strings.TrimLeft(line, "•-*· ")
+				if line != "" {
+					items += fmt.Sprintf(`
+            <div class="achievement">&bull; %s</div>`, html.EscapeString(line))
+				}
+			}
+			items += `
+        </div>`
+		}
+		experienceSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Experience</div>
+%s
+    </div>`, items)
+	}
+
+	// Build education section
+	var educationSection string
+	if education != "" {
+		educationSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Education</div>
+        <div class="education-text">%s</div>
+    </div>`, html.EscapeString(education))
+	}
+
+	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>%s - Resume</title>
+    <style>
+        @page { size: Letter; margin: 0; }
+        body {
+            font-family: Arial, Helvetica, sans-serif;
+            line-height: 1.5;
+            margin: 0;
+            padding: 36px 48px;
+            background-color: white;
+            font-size: 11pt;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            border-bottom: 2px solid #2c3e50;
+            padding-bottom: 12px;
+            margin-bottom: 20px;
+        }
+        .name {
+            font-size: 22pt;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 4px;
+        }
+        .contact {
+            color: #555;
+            font-size: 10pt;
+        }
+        .section {
+            margin-bottom: 16px;
+        }
+        .section-title {
+            font-size: 12pt;
+            font-weight: bold;
+            color: #2c3e50;
+            border-bottom: 1px solid #2c3e50;
+            padding-bottom: 3px;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+        }
+        .summary-text {
+            margin: 0;
+            font-size: 10pt;
+            line-height: 1.5;
+        }
+        .skills {
+            font-size: 10pt;
+            line-height: 1.6;
+        }
+        .experience-item {
+            margin-bottom: 12px;
+        }
+        .job-title {
+            font-size: 11pt;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .achievement {
+            margin-left: 16px;
+            margin-bottom: 2px;
+            font-size: 10pt;
+            line-height: 1.5;
+        }
+        .education-text {
+            font-size: 10pt;
+            line-height: 1.5;
+            white-space: pre-line;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="name">%s</div>
+        <div class="contact">%s</div>
+    </div>
+%s%s%s%s
+</body>
+</html>`,
+		html.EscapeString(name),
+		html.EscapeString(name),
+		contactLine,
+		summarySection,
+		skillsSection,
+		experienceSection,
+		educationSection,
+	)
+
+	return os.WriteFile(outputPath, []byte(htmlContent), 0644)
 }
