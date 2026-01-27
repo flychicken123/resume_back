@@ -601,6 +601,7 @@ func main() {
 		resumeGenRoutes.POST("/resume/generate", handlers.GenerateResume)
 		resumeGenRoutes.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		resumeGenRoutes.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel))
+		resumeGenRoutes.POST("/resume/tailor", handlers.TailorResume(resumeModel, resumeHistoryModel))
 	}
 
 	log.Println("Server starting on port 8081")
