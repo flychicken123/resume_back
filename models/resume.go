@@ -35,9 +35,11 @@ type Resume struct {
 
 // ResumeWithUser carries a resume along with its owning user's contact info.
 type ResumeWithUser struct {
-	Resume         Resume
-	UserEmail      string
-	UserName       string
+	Resume            Resume
+	UserEmail         string
+	UserName          string
+	EmailUnsubscribed bool
+	MarketingOptIn    bool
 }
 
 // ResumeProfileSaveInput captures the complete resume payload we store per user.
@@ -200,7 +202,9 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		SELECT r.id, r.user_id, r.name, r.email, r.phone, r.summary, r.skills, r.selected_format,
 		       r.skills_categorized, r.experience, r.education, r.job_description, r.location,
 		       r.created_at, r.updated_at,
-		       u.email AS user_email, u.name AS user_name
+		       u.email AS user_email, u.name AS user_name,
+		       COALESCE(u.email_unsubscribed, false) AS email_unsubscribed,
+		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in
 		FROM resumes r
 		JOIN users u ON u.id = r.user_id
 	`)
@@ -214,6 +218,7 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		var resume Resume
 		var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
 		var userEmail, userName string
+		var emailUnsubscribed, marketingOptIn bool
 
 		if err := rows.Scan(
 			&resume.ID,
@@ -233,6 +238,8 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 			&resume.UpdatedAt,
 			&userEmail,
 			&userName,
+			&emailUnsubscribed,
+			&marketingOptIn,
 		); err != nil {
 			return nil, err
 		}
@@ -246,9 +253,11 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		resume.Location = stringFromAny(locationVal)
 
 		results = append(results, &ResumeWithUser{
-			Resume:         resume,
-			UserEmail:      userEmail,
-			UserName:       userName,
+			Resume:            resume,
+			UserEmail:         userEmail,
+			UserName:          userName,
+			EmailUnsubscribed: emailUnsubscribed,
+			MarketingOptIn:    marketingOptIn,
 		})
 	}
 
@@ -264,7 +273,9 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 		SELECT r.id, r.user_id, r.name, r.email, r.phone, r.summary, r.skills, r.selected_format,
 		       r.skills_categorized, r.experience, r.education, r.job_description, r.location,
 		       r.created_at, r.updated_at,
-		       u.email AS user_email, u.name AS user_name
+		       u.email AS user_email, u.name AS user_name,
+		       COALESCE(u.email_unsubscribed, false) AS email_unsubscribed,
+		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in
 		FROM resumes r
 		JOIN users u ON u.id = r.user_id
 		WHERE r.user_id = $1
@@ -273,6 +284,7 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 	var resume Resume
 	var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
 	var userEmail, userName string
+	var emailUnsubscribed, marketingOptIn bool
 	if err := row.Scan(
 		&resume.ID,
 		&resume.UserID,
@@ -291,6 +303,8 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 		&resume.UpdatedAt,
 		&userEmail,
 		&userName,
+		&emailUnsubscribed,
+		&marketingOptIn,
 	); err != nil {
 		return nil, err
 	}
@@ -304,9 +318,11 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 	resume.Location = stringFromAny(locationVal)
 
 	return &ResumeWithUser{
-		Resume:    resume,
-		UserEmail: userEmail,
-		UserName:  userName,
+		Resume:            resume,
+		UserEmail:         userEmail,
+		UserName:          userName,
+		EmailUnsubscribed: emailUnsubscribed,
+		MarketingOptIn:    marketingOptIn,
 	}, nil
 }
 

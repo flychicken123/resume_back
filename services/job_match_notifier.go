@@ -2,10 +2,14 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	stdhtml "html"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -182,7 +186,20 @@ func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.Resum
 	if !sendEmail {
 		return len(matches), false, recipient, nil
 	}
-	body := formatMatchEmailBody(item.UserName, matches)
+
+	// Skip sending email if user has unsubscribed or opted out of marketing (unless using email override for testing)
+	if emailOverride == "" {
+		if item.EmailUnsubscribed {
+			n.logger.Debug("skipping email for unsubscribed user", map[string]interface{}{"user_id": resume.UserID, "email": recipient})
+			return len(matches), false, recipient, nil
+		}
+		if !item.MarketingOptIn {
+			n.logger.Debug("skipping email for user who opted out of marketing", map[string]interface{}{"user_id": resume.UserID, "email": recipient})
+			return len(matches), false, recipient, nil
+		}
+	}
+
+	body := formatMatchEmailBody(item.UserName, recipient, matches)
 	if err := n.email.SendHTMLEmail(recipient, "New job matches for your resume", body); err != nil {
 		return len(matches), false, recipient, err
 	}
@@ -405,7 +422,7 @@ func summariseExperiences(exps []models.ExperienceRecord) string {
 	return strings.Join(parts, "\n")
 }
 
-func formatMatchEmailBody(userName string, matches []*models.ResumeJobMatchRecord) string {
+func formatMatchEmailBody(userName, recipientEmail string, matches []*models.ResumeJobMatchRecord) string {
 	maxCards := 6
 	if len(matches) < maxCards {
 		maxCards = len(matches)
@@ -419,6 +436,7 @@ func formatMatchEmailBody(userName string, matches []*models.ResumeJobMatchRecor
 	brand := getBrandName()
 	appURL := htmlEscape(getAppURL())
 	support := htmlEscape(getSupportEmail())
+	unsubscribeURL := htmlEscape(buildUnsubscribeURL(recipientEmail))
 
 	var cards []string
 	for i := 0; i < maxCards; i++ {
@@ -448,12 +466,13 @@ func formatMatchEmailBody(userName string, matches []*models.ResumeJobMatchRecor
     </div>
     <div style="padding:12px 24px 18px 24px; font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb;">
       <div style="margin-bottom:6px;">You received this because you saved a resume on %s.</div>
-      <div>Need help? Contact <a href="mailto:%s" style="color:#0b66c3; text-decoration:none;">%s</a>.</div>
+      <div style="margin-bottom:6px;">Need help? Contact <a href="mailto:%s" style="color:#0b66c3; text-decoration:none;">%s</a>.</div>
+      <div><a href="%s" style="color:#9ca3af; text-decoration:underline;">Unsubscribe</a> from these emails.</div>
     </div>
   </div>
 </body>
 </html>
-`, brand, greeting, jobCount, pluralize(jobCount), strings.Join(cards, ""), appURL, appURL, brand, support, support)
+`, brand, greeting, jobCount, pluralize(jobCount), strings.Join(cards, ""), appURL, appURL, brand, support, support, unsubscribeURL)
 }
 
 func htmlEscape(s string) string {
@@ -486,6 +505,30 @@ func getSupportEmail() string {
 		return v
 	}
 	return "support@hihired.org"
+}
+
+func getUnsubscribeSecret() string {
+	secret := strings.TrimSpace(os.Getenv("UNSUBSCRIBE_SECRET"))
+	if secret == "" {
+		secret = strings.TrimSpace(os.Getenv("JWT_SECRET"))
+	}
+	if secret == "" {
+		secret = "default-unsubscribe-secret-change-me"
+	}
+	return secret
+}
+
+func generateUnsubscribeToken(email string) string {
+	secret := getUnsubscribeSecret()
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func buildUnsubscribeURL(email string) string {
+	base := strings.TrimRight(getAppURL(), "/")
+	token := generateUnsubscribeToken(email)
+	return fmt.Sprintf("%s/api/email/unsubscribe?email=%s&token=%s", base, url.QueryEscape(email), url.QueryEscape(token))
 }
 
 func pluralize(n int) string {

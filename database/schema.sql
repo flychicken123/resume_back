@@ -12,6 +12,8 @@ CREATE TABLE users (
     auth_provider VARCHAR(50) DEFAULT 'email',
     google_id VARCHAR(255),
     profile_picture VARCHAR(500),
+    email_unsubscribed BOOLEAN DEFAULT FALSE,
+    email_unsubscribed_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

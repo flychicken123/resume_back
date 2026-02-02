@@ -446,6 +446,7 @@ func main() {
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
 		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))
 		public.POST("/contact", handlers.CreateContactRequest(db, emailService))
+		public.GET("/email/unsubscribe", handlers.HandleUnsubscribeGET(userModel))
 		public.GET("/analysis/job-count", dataAnalysisController.GetJobCount)
 
 		// Job automation endpoints removed - feature in development

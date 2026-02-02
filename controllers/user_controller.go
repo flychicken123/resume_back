@@ -156,6 +156,12 @@ func (c *UserController) SaveUserData(ctx *gin.Context) {
 		return
 	}
 
+	// Auto-resubscribe user to emails when they build/save a resume
+	user, userErr := c.userModel.GetByID(userID.(int))
+	if userErr == nil && user != nil && user.EmailUnsubscribed {
+		_ = c.userModel.SetEmailUnsubscribed(user.Email, false)
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "User data saved successfully",

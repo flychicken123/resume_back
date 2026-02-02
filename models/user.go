@@ -19,6 +19,8 @@ type User struct {
 	MarketingOptedAt     *time.Time `json:"marketing_opted_at,omitempty"`
 	MarketingOptInSource string     `json:"marketing_opt_in_source,omitempty"`
 	SignupPlanPreference string     `json:"signup_plan_preference,omitempty"`
+	EmailUnsubscribed    bool       `json:"email_unsubscribed"`
+	EmailUnsubscribedAt  *time.Time `json:"email_unsubscribed_at,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
 	UpdatedAt            time.Time  `json:"updated_at"`
 }
@@ -122,16 +124,19 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 	var marketingOptedAt sql.NullTime
 	var marketingSource sql.NullString
 	var planPreference sql.NullString
+	var emailUnsubscribedAt sql.NullTime
 	query := `
 		SELECT id, email, name, password,
-		       COALESCE(auth_provider, 'email') as auth_provider, 
-		       google_id, 
-		       profile_picture, 
-		       is_admin, 
+		       COALESCE(auth_provider, 'email') as auth_provider,
+		       google_id,
+		       profile_picture,
+		       is_admin,
 		       marketing_opt_in,
 		       marketing_opted_at,
 		       marketing_opt_in_source,
 		       signup_plan_preference,
+		       COALESCE(email_unsubscribed, false),
+		       email_unsubscribed_at,
 		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
@@ -148,6 +153,8 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		&marketingOptedAt,
 		&marketingSource,
 		&planPreference,
+		&user.EmailUnsubscribed,
+		&emailUnsubscribedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -155,6 +162,7 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		return nil, err
 	}
 	user.MarketingOptedAt = nullTimeToPtr(marketingOptedAt)
+	user.EmailUnsubscribedAt = nullTimeToPtr(emailUnsubscribedAt)
 	if marketingSource.Valid {
 		user.MarketingOptInSource = marketingSource.String
 	}
@@ -169,12 +177,15 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 	var marketingOptedAt sql.NullTime
 	var marketingSource sql.NullString
 	var planPreference sql.NullString
+	var emailUnsubscribedAt sql.NullTime
 	query := `
 		SELECT id, email, name, is_admin,
 		       marketing_opt_in,
 		       marketing_opted_at,
 		       marketing_opt_in_source,
 		       signup_plan_preference,
+		       COALESCE(email_unsubscribed, false),
+		       email_unsubscribed_at,
 		       created_at, updated_at
 		FROM users WHERE id = $1
 	`
@@ -187,6 +198,8 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		&marketingOptedAt,
 		&marketingSource,
 		&planPreference,
+		&user.EmailUnsubscribed,
+		&emailUnsubscribedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -194,6 +207,7 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		return nil, err
 	}
 	user.MarketingOptedAt = nullTimeToPtr(marketingOptedAt)
+	user.EmailUnsubscribedAt = nullTimeToPtr(emailUnsubscribedAt)
 	if marketingSource.Valid {
 		user.MarketingOptInSource = marketingSource.String
 	}
@@ -213,6 +227,29 @@ func (m *UserModel) UpdatePassword(id int, password string) error {
 	query := `UPDATE users SET password = $1, updated_at = $2 WHERE id = $3`
 	_, err := m.DB.Exec(query, password, time.Now(), id)
 	return err
+}
+
+// SetEmailUnsubscribed updates the email_unsubscribed status for a user by email
+func (m *UserModel) SetEmailUnsubscribed(email string, unsubscribed bool) error {
+	now := time.Now()
+	var unsubscribedAt sql.NullTime
+	if unsubscribed {
+		unsubscribedAt = sql.NullTime{Time: now, Valid: true}
+	}
+	query := `UPDATE users SET email_unsubscribed = $1, email_unsubscribed_at = $2, updated_at = $3 WHERE email = $4`
+	_, err := m.DB.Exec(query, unsubscribed, unsubscribedAt, now, email)
+	return err
+}
+
+// IsEmailUnsubscribed checks if a user has unsubscribed from emails
+func (m *UserModel) IsEmailUnsubscribed(email string) (bool, error) {
+	var unsubscribed bool
+	query := `SELECT COALESCE(email_unsubscribed, false) FROM users WHERE email = $1`
+	err := m.DB.QueryRow(query, email).Scan(&unsubscribed)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	return unsubscribed, err
 }
 
 func nullTimeToPtr(nt sql.NullTime) *time.Time {
