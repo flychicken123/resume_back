@@ -133,11 +133,98 @@ func CallGeminiWithTemperature(prompt string, temperature float64) (string, erro
 	}
 
 	return llms.GenerateFromSinglePrompt(
-		context.Background(), 
-		llm, 
+		context.Background(),
+		llm,
 		prompt,
 		llms.WithTemperature(temperature),
 	)
+}
+
+// CallGeminiStrict calls Gemini with very low temperature (0.1) for factual tasks
+// where we want to minimize hallucination and maximize adherence to source material.
+// Use this for resume optimization, polishing, and any task where inventing content is bad.
+func CallGeminiStrict(prompt string) (string, error) {
+	return CallGeminiWithTemperature(prompt, 0.1)
+}
+
+// ValidateOutputWithAI performs a two-pass validation by asking the AI to check
+// if the optimized output contains any invented content not in the original.
+// Returns the validated output and any detected fabrications.
+func ValidateOutputWithAI(original, optimized string) (string, []string, error) {
+	validationPrompt := fmt.Sprintf(`You are a strict fact-checker. Compare the ORIGINAL text with the OPTIMIZED text and identify ANY fabricated content.
+
+ORIGINAL TEXT:
+%s
+
+OPTIMIZED TEXT:
+%s
+
+Check for these specific fabrications:
+1. Numbers/percentages not in original (e.g., "50%%" improvement when no percentage existed)
+2. Dollar amounts or revenue figures not in original
+3. Technologies or tools not mentioned in original
+4. Company names or project names not in original
+5. Specific metrics (users, transactions, time savings) not in original
+6. Job titles or responsibilities not in original
+
+Return ONLY valid JSON:
+{
+  "has_fabrications": true/false,
+  "fabrications": ["list of specific fabricated items found"],
+  "clean_version": "If fabrications found, rewrite the optimized text removing ALL fabricated content while keeping improvements to grammar and structure. If no fabrications, return the optimized text unchanged."
+}
+
+Be STRICT. If ANY metric, number, or specific detail appears in the optimized version that was not in the original, it is a fabrication.`, original, optimized)
+
+	result, err := CallGeminiStrict(validationPrompt)
+	if err != nil {
+		// If validation fails, return original optimized text with warning
+		return optimized, []string{"validation_failed"}, err
+	}
+
+	// Parse the response
+	clean := sanitizeLLMJSON(result)
+
+	var response struct {
+		HasFabrications bool     `json:"has_fabrications"`
+		Fabrications    []string `json:"fabrications"`
+		CleanVersion    string   `json:"clean_version"`
+	}
+
+	if err := json.Unmarshal([]byte(clean), &response); err != nil {
+		// If parsing fails, return original with warning
+		return optimized, []string{"parse_failed"}, nil
+	}
+
+	if response.HasFabrications && response.CleanVersion != "" {
+		return response.CleanVersion, response.Fabrications, nil
+	}
+
+	return optimized, response.Fabrications, nil
+}
+
+// OptimizeWithValidation performs optimization with low temperature and two-pass validation.
+// This is the recommended function for all resume content optimization.
+func OptimizeWithValidation(original, prompt string) (string, []string, error) {
+	// Step 1: Generate optimized content with low temperature
+	optimized, err := CallGeminiStrict(prompt)
+	if err != nil {
+		return "", nil, err
+	}
+
+	// Step 2: Validate the output for fabrications
+	validated, fabrications, err := ValidateOutputWithAI(original, optimized)
+	if err != nil {
+		// Log but continue with the optimized version
+		fmt.Printf("Validation error (continuing with optimized): %v\n", err)
+		return optimized, fabrications, nil
+	}
+
+	if len(fabrications) > 0 {
+		fmt.Printf("Fabrications detected and removed: %v\n", fabrications)
+	}
+
+	return validated, fabrications, nil
 }
 
 func BuildResumePrompt(name, email, phone, summary, experience, education string, skills []string, format string) string {

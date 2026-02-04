@@ -136,7 +136,7 @@ User input: %s`, resumeContext, input)
 	return result, nil
 }
 
-// PolishExperience polishes a specific experience entry using AI.
+// PolishExperience polishes a specific experience entry using AI with low temperature and validation.
 func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[string]interface{}, jobDescription string) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
@@ -150,11 +150,19 @@ func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[strin
 	jobTitle, _ := experience["jobTitle"].(string)
 	company, _ := experience["company"].(string)
 
-	prompt := BuildExperienceOptimizationPrompt(jobDescription, fmt.Sprintf("%s at %s:\n%s", jobTitle, company, description))
+	originalText := fmt.Sprintf("%s at %s:\n%s", jobTitle, company, description)
+	prompt := BuildExperienceOptimizationPrompt(jobDescription, originalText)
 
-	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
+	}
+
+	// Two-pass validation to catch fabrications
+	validated, fabrications, _ := ValidateOutputWithAI(description, polished)
+	if len(fabrications) > 0 {
+		fmt.Printf("[PolishExperience] Fabrications removed: %v\n", fabrications)
 	}
 
 	// Create a copy with polished description
@@ -162,12 +170,12 @@ func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[strin
 	for k, v := range experience {
 		result[k] = v
 	}
-	result["description"] = cleanupPolishedText(polished)
+	result["description"] = cleanupPolishedText(validated)
 
 	return result, nil
 }
 
-// PolishEducation polishes education entry using AI.
+// PolishEducation polishes education entry using AI with low temperature and validation.
 func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]interface{}) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
@@ -190,9 +198,16 @@ func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]
 
 	prompt := BuildEducationOptimizationPrompt(educationText, "")
 
-	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
+	}
+
+	// Two-pass validation
+	validated, fabrications, _ := ValidateOutputWithAI(educationText, polished)
+	if len(fabrications) > 0 {
+		fmt.Printf("[PolishEducation] Fabrications removed: %v\n", fabrications)
 	}
 
 	// Create a copy with polished honors/achievements
@@ -200,12 +215,12 @@ func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]
 	for k, v := range education {
 		result[k] = v
 	}
-	result["honors"] = cleanupPolishedText(polished)
+	result["honors"] = cleanupPolishedText(validated)
 
 	return result, nil
 }
 
-// PolishProject polishes a project entry using AI.
+// PolishProject polishes a project entry using AI with low temperature and validation.
 func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]interface{}, jobDescription string) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
@@ -223,21 +238,28 @@ func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]inte
 
 	prompt := BuildProjectOptimizationPrompt(jobDescription, projectText, "")
 
-	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
+	}
+
+	// Two-pass validation
+	validated, fabrications, _ := ValidateOutputWithAI(description, polished)
+	if len(fabrications) > 0 {
+		fmt.Printf("[PolishProject] Fabrications removed: %v\n", fabrications)
 	}
 
 	result := make(map[string]interface{})
 	for k, v := range project {
 		result[k] = v
 	}
-	result["description"] = cleanupPolishedText(polished)
+	result["description"] = cleanupPolishedText(validated)
 
 	return result, nil
 }
 
-// PolishSummary polishes the professional summary using AI.
+// PolishSummary polishes the professional summary using AI with low temperature and validation.
 func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeData map[string]interface{}) (string, error) {
 	if a == nil || a.llm == nil {
 		return "", fmt.Errorf("polish agent is not initialized")
@@ -264,15 +286,22 @@ func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeD
 
 	prompt := BuildSummaryOptimizationPrompt(experience, education, skills, summary)
 
-	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return "", err
 	}
 
-	return cleanupPolishedText(polished), nil
+	// Two-pass validation
+	validated, fabrications, _ := ValidateOutputWithAI(summary, polished)
+	if len(fabrications) > 0 {
+		fmt.Printf("[PolishSummary] Fabrications removed: %v\n", fabrications)
+	}
+
+	return cleanupPolishedText(validated), nil
 }
 
-// PolishSkills polishes the skills section using AI.
+// PolishSkills polishes the skills section using AI with low temperature.
 func (a *PolishAgent) PolishSkills(ctx context.Context, skills string, jobDescription string) (string, error) {
 	if a == nil || a.llm == nil {
 		return "", fmt.Errorf("polish agent is not initialized")
@@ -290,17 +319,23 @@ Job Description (for context):
 Current Skills:
 %s
 
+CRITICAL RULES:
+1. ONLY include skills that are explicitly listed in "Current Skills" above
+2. Do NOT add any new skills, even if they seem implied or relevant to the job
+3. Do NOT invent certifications, tools, or technologies not listed
+4. Organize and format the existing skills only
+
 Instructions:
 1. Organize skills by category if appropriate (e.g., Programming Languages, Frameworks, Tools, Soft Skills)
 2. Use proper capitalization and formatting
 3. Remove redundant or overly generic skills
-4. Add relevant skills that might be implied but not stated
-5. Keep the most relevant skills for the job description at the top
-6. Format as a clean, comma-separated list or categorized format
+4. Keep the most relevant skills for the job description at the top
+5. Format as a clean, comma-separated list or categorized format
 
 Return only the polished skills, no explanations.`, jobDescription, skills)
 
-	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return "", err
 	}
@@ -500,7 +535,8 @@ Return ONLY valid JSON array with polished descriptions:
 
 Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
 
-	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
 	}
@@ -525,10 +561,15 @@ Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.Stri
 		}
 	}
 
-	// Apply polished descriptions
+	// Apply polished descriptions with validation
 	for _, p := range polishedResults {
 		if p.Index >= 0 && p.Index < len(result) {
-			result[p.Index]["description"] = cleanupPolishedText(p.Description)
+			originalDesc, _ := experiences[p.Index]["description"].(string)
+			validated, fabrications, _ := ValidateOutputWithAI(originalDesc, p.Description)
+			if len(fabrications) > 0 {
+				fmt.Printf("[PolishExperiencesBatch] Index %d fabrications removed: %v\n", p.Index, fabrications)
+			}
+			result[p.Index]["description"] = cleanupPolishedText(validated)
 		}
 	}
 
@@ -596,7 +637,8 @@ Return ONLY valid JSON array:
 
 Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
 
-	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
 	}
@@ -620,9 +662,15 @@ Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.Stri
 		}
 	}
 
+	// Apply polished descriptions with validation
 	for _, p := range polishedResults {
 		if p.Index >= 0 && p.Index < len(result) {
-			result[p.Index]["description"] = cleanupPolishedText(p.Description)
+			originalDesc, _ := projects[p.Index]["description"].(string)
+			validated, fabrications, _ := ValidateOutputWithAI(originalDesc, p.Description)
+			if len(fabrications) > 0 {
+				fmt.Printf("[PolishProjectsBatch] Index %d fabrications removed: %v\n", p.Index, fabrications)
+			}
+			result[p.Index]["description"] = cleanupPolishedText(validated)
 		}
 	}
 
@@ -690,7 +738,8 @@ Return ONLY valid JSON array:
 
 Return ONLY the JSON array, no explanations.`, inputBuilder.String())
 
-	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
+	// Use low temperature (0.1) to reduce hallucination
+	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
 	if err != nil {
 		return nil, err
 	}
@@ -714,9 +763,15 @@ Return ONLY the JSON array, no explanations.`, inputBuilder.String())
 		}
 	}
 
+	// Apply polished honors with validation
 	for _, p := range polishedResults {
 		if p.Index >= 0 && p.Index < len(result) {
-			result[p.Index]["honors"] = cleanupPolishedText(p.Honors)
+			originalHonors, _ := educations[p.Index]["honors"].(string)
+			validated, fabrications, _ := ValidateOutputWithAI(originalHonors, p.Honors)
+			if len(fabrications) > 0 {
+				fmt.Printf("[PolishEducationBatch] Index %d fabrications removed: %v\n", p.Index, fabrications)
+			}
+			result[p.Index]["honors"] = cleanupPolishedText(validated)
 		}
 	}
 
