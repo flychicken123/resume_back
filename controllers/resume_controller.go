@@ -171,15 +171,6 @@ func (c *ResumeController) UploadHistoryPDF(ctx *gin.Context) {
 		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
 		return
 	}
-	emailVal, hasEmail := ctx.Get("user_email")
-	email := ""
-	if hasEmail {
-		email = strings.ToLower(fmt.Sprint(emailVal))
-	}
-	if email != "harwtalk@gmail.com" {
-		ctx.JSON(http.StatusForbidden, gin.H{"error": "Upload is currently limited to administrators."})
-		return
-	}
 	file, err := ctx.FormFile("file")
 	if err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "PDF file is required"})
