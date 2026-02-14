@@ -223,7 +223,7 @@ Known contact info - use these if found:
 Email: %s
 Phone: %s`, schema, rawText, email, phone)
 
-	fmt.Printf("[parse] Calling Gemini AI for extraction (temperature=0)...\n")
+	fmt.Printf("[parse] BUILD=2026-02-14-v2 Calling Gemini AI with temperature=0...\n")
 	aiResp, err := services.CallGeminiWithTemperature(prompt, 0.0)
 	if err != nil {
 		fmt.Printf("[parse] AI extraction failed: %v\n", err)

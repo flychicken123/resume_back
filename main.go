@@ -32,6 +32,8 @@ func main() {
 
 	dbConfig := appConfig.Database
 
+	fmt.Println("[BUILD] version=2026-02-14-v2 temperature=0 parse")
+
 	logger.Info("Starting application", map[string]interface{}{
 		"db_host":   dbConfig.Host,
 		"db_port":   dbConfig.Port,
