@@ -194,6 +194,11 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 		return
 	}
 
+	jobPrefs, _ := c.userModel.GetJobPreferences(userID.(int))
+	if jobPrefs == nil {
+		jobPrefs = json.RawMessage(`{}`)
+	}
+
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
@@ -209,7 +214,55 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 			"jobDescription":   resume.JobDescription,
 			"location":         resume.Location,
 			"selectedFormat":   resume.SelectedFormat,
+			"jobPreferences":   jobPrefs,
 		},
+	})
+}
+
+// GetJobPreferences returns the user's saved job application preferences
+func (c *UserController) GetJobPreferences(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	prefs, err := c.userModel.GetJobPreferences(userID.(int))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load job preferences"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":     true,
+		"preferences": prefs,
+	})
+}
+
+// SaveJobPreferences saves the user's job application preferences
+func (c *UserController) SaveJobPreferences(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var req struct {
+		Preferences json.RawMessage `json:"preferences" binding:"required"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		return
+	}
+
+	if err := c.userModel.SetJobPreferences(userID.(int), req.Preferences); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job preferences"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Job preferences saved successfully",
 	})
 }
 

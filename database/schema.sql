@@ -14,6 +14,7 @@ CREATE TABLE users (
     profile_picture VARCHAR(500),
     email_unsubscribed BOOLEAN DEFAULT FALSE,
     email_unsubscribed_at TIMESTAMP,
+    job_preferences JSONB DEFAULT '{}',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

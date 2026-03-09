@@ -465,6 +465,8 @@ func main() {
 		protected.POST("/user/change-password", userController.ChangePassword)
 		protected.POST("/user/save", userController.SaveUserData)
 		protected.GET("/user/load", userController.LoadUserData)
+		protected.GET("/user/job-preferences", userController.GetJobPreferences)
+		protected.PUT("/user/job-preferences", userController.SaveJobPreferences)
 
 		// Resume History routes using new controllers
 		protected.GET("/resume/history", resumeController.GetHistory)

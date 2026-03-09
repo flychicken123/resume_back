@@ -2,6 +2,7 @@ package models
 
 import (
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -19,10 +20,11 @@ type User struct {
 	MarketingOptedAt     *time.Time `json:"marketing_opted_at,omitempty"`
 	MarketingOptInSource string     `json:"marketing_opt_in_source,omitempty"`
 	SignupPlanPreference string     `json:"signup_plan_preference,omitempty"`
-	EmailUnsubscribed    bool       `json:"email_unsubscribed"`
-	EmailUnsubscribedAt  *time.Time `json:"email_unsubscribed_at,omitempty"`
-	CreatedAt            time.Time  `json:"created_at"`
-	UpdatedAt            time.Time  `json:"updated_at"`
+	EmailUnsubscribed    bool            `json:"email_unsubscribed"`
+	EmailUnsubscribedAt  *time.Time      `json:"email_unsubscribed_at,omitempty"`
+	JobPreferences       json.RawMessage `json:"job_preferences,omitempty"`
+	CreatedAt            time.Time       `json:"created_at"`
+	UpdatedAt            time.Time       `json:"updated_at"`
 }
 
 type UserModel struct {
@@ -250,6 +252,28 @@ func (m *UserModel) IsEmailUnsubscribed(email string) (bool, error) {
 		return false, nil
 	}
 	return unsubscribed, err
+}
+
+// GetJobPreferences returns the job_preferences JSON for a user
+func (m *UserModel) GetJobPreferences(userID int) (json.RawMessage, error) {
+	var prefs sql.NullString
+	err := m.DB.QueryRow(`SELECT COALESCE(job_preferences::text, '{}') FROM users WHERE id = $1`, userID).Scan(&prefs)
+	if err != nil {
+		return nil, err
+	}
+	if !prefs.Valid || prefs.String == "" {
+		return json.RawMessage(`{}`), nil
+	}
+	return json.RawMessage(prefs.String), nil
+}
+
+// SetJobPreferences updates the job_preferences JSON for a user
+func (m *UserModel) SetJobPreferences(userID int, prefs json.RawMessage) error {
+	_, err := m.DB.Exec(
+		`UPDATE users SET job_preferences = $1, updated_at = $2 WHERE id = $3`,
+		string(prefs), time.Now(), userID,
+	)
+	return err
 }
 
 func nullTimeToPtr(nt sql.NullTime) *time.Time {
