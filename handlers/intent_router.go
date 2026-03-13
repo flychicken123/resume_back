@@ -771,7 +771,7 @@ func handleJobApplicationQuery(req chatRequest) *chatResponse {
 
 	if len(apps) == 0 {
 		return &chatResponse{
-			Reply:         "You haven't tracked any applications yet. You can start tracking from the Job Matches section in the builder.",
+			Reply:         "You haven't tracked any applications yet — but that's okay, everyone starts somewhere! You can begin tracking from the Job Matches section in the builder. You've got this!",
 			FeatureAction: IntentJobApplicationQuery,
 		}
 	}
@@ -790,6 +790,8 @@ func handleJobApplicationQuery(req chatRequest) *chatResponse {
 	prompt := fmt.Sprintf(`You are HiHired's AI assistant. The user is asking about their job applications.
 Answer their question based ONLY on the application data provided below. Be concise, friendly, and accurate.
 If the data doesn't contain the answer, say so honestly.
+
+TONE: Be warm, encouraging, and emotionally supportive. Job searching is stressful and exhausting — acknowledge the user's effort and resilience. Celebrate their progress (e.g., "Great news — you have 2 interviews lined up!"). If they have rejections or withdrawals, be empathetic (e.g., "Rejections are tough, but they're a normal part of the process — every 'no' brings you closer to the right 'yes'"). Always end on an encouraging note.
 
 %s
 %s`, appContext, conversationCtx)
