@@ -39,6 +39,8 @@ type chatResponse struct {
 	Section           string                 `json:"section,omitempty"`
 	EntryIndex        int                    `json:"entryIndex,omitempty"`
 	UpdatedResumeData map[string]interface{} `json:"updatedResumeData,omitempty"`
+	FeatureAction     string                 `json:"featureAction,omitempty"`
+	FeatureResult     interface{}            `json:"featureResult,omitempty"`
 }
 
 type knowledgeEntry struct {
@@ -274,13 +276,62 @@ func ChatAssistant(c *gin.Context) {
 	userEmail := strings.TrimSpace(req.UserEmail)
 	ctx := c.Request.Context()
 
-	// Check if this is a polish/optimize request
-	log.Printf("[DEBUG] Polish check: polishAgent=%v, resumeDataLen=%d, message=%q", polishAgent != nil, len(req.ResumeData), userMessage)
+	// --- AI Intent Router (primary) ---
+	intent, intentErr := classifyIntent(ctx, userMessage, req.ResumeData, req.History)
+	if intentErr == nil && intent.Intent != IntentGeneralChat && intent.Confidence >= intentConfidenceThreshold {
+		log.Printf("[INTENT] Classified intent=%s confidence=%.2f for message=%q", intent.Intent, intent.Confidence, userMessage)
+
+		if intent.Intent == IntentPolish {
+			// Route to existing polish handler
+			if polishAgent != nil && len(req.ResumeData) > 0 {
+				if resp := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); resp != nil {
+					if err := persistChatExchange(ctx, chatPersistencePayload{
+						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+					}); err != nil {
+						log.Printf("failed to persist chat exchange: %v", err)
+					}
+					c.JSON(http.StatusOK, resp)
+					return
+				}
+			}
+		} else {
+			// Check for missing required params
+			if missing := checkMissingParams(intent, req.ResumeData); len(missing) > 0 {
+				resp := buildMissingParamResponse(intent)
+				if err := persistChatExchange(ctx, chatPersistencePayload{
+					sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+					userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+				}); err != nil {
+					log.Printf("failed to persist chat exchange: %v", err)
+				}
+				c.JSON(http.StatusOK, resp)
+				return
+			}
+			// Route to the feature
+			if resp, err := routeToFeature(ctx, intent, req); err == nil {
+				if err := persistChatExchange(ctx, chatPersistencePayload{
+					sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+					userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+				}); err != nil {
+					log.Printf("failed to persist chat exchange: %v", err)
+				}
+				c.JSON(http.StatusOK, resp)
+				return
+			} else {
+				log.Printf("[INTENT] Feature routing failed for intent=%s: %v", intent.Intent, err)
+			}
+		}
+	} else if intentErr != nil {
+		log.Printf("[INTENT-FALLBACK] Intent classification failed (err=%v), falling back to keyword polish check for message=%q", intentErr, userMessage)
+	} else if intent.Intent != IntentGeneralChat {
+		log.Printf("[INTENT-FALLBACK] Low confidence=%.2f intent=%s, falling back to keyword polish check for message=%q", intent.Confidence, intent.Intent, userMessage)
+	}
+
+	// --- Polish keyword fallback (improved) ---
 	if polishAgent != nil && len(req.ResumeData) > 0 {
-		log.Printf("[DEBUG] Attempting polish request handling")
 		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
-			log.Printf("[DEBUG] Polish request handled successfully: %s", polishResponse.Reply)
-			// Persist chat exchange
+			log.Printf("[INTENT-FALLBACK] Keyword polish fallback handled message=%q", userMessage)
 			if err := persistChatExchange(ctx, chatPersistencePayload{
 				sessionID:  sessionID,
 				pagePath:   pagePath,
@@ -296,6 +347,8 @@ func ChatAssistant(c *gin.Context) {
 		}
 	}
 
+	log.Printf("[INTENT] No feature matched, using general chat for message=%q", userMessage)
+
 	const systemInstructions = `You are HiHired's AI resume assistant. Keep answers short, clear, and friendly (120 words max).
 Focus on HiHired features: AI resume builder, templates, PDF export, memberships, workflow steps, and support.
 When pricing is mentioned, explicitly list the Free, Premium, and Ultimate plans with their benefits.
@@ -304,13 +357,8 @@ When the user asks about their resume data (like "what is my name", "what did I 
 If the question is outside scope, briefly say you can only help with HiHired resumes and suggest contacting us via the Help bubble or at hihired_support@tactechs.net.`
 
 	var historyBuilder strings.Builder
-	maxHistory := 6
-	history := req.History
-	if len(history) > maxHistory {
-		history = history[len(history)-maxHistory:]
-	}
 	titleCaser := cases.Title(language.English)
-	for _, msg := range history {
+	for _, msg := range req.History {
 		role := strings.ToLower(msg.Role)
 		if role != "assistant" && role != "bot" {
 			role = "user"
@@ -319,7 +367,7 @@ If the question is outside scope, briefly say you can only help with HiHired res
 		fmt.Fprintf(&historyBuilder, "%s: %s\n", roleTitle, strings.TrimSpace(msg.Text))
 	}
 
-	knowledgeContext := buildKnowledgeContext(findRelevantKnowledge(userMessage, history))
+	knowledgeContext := buildKnowledgeContext(findRelevantKnowledge(userMessage, req.History))
 	resumeContext := buildResumeContext(req.ResumeData)
 
 	var prompt string
@@ -348,7 +396,7 @@ If the question is outside scope, briefly say you can only help with HiHired res
 		userEmail:  userEmail,
 		userInput:  userMessage,
 		assistant:  cleaned,
-		historyLen: len(history),
+		historyLen: len(req.History),
 	}); err != nil {
 		log.Printf("failed to persist chat exchange: %v", err)
 	}
@@ -360,10 +408,16 @@ If the question is outside scope, briefly say you can only help with HiHired res
 // Returns nil if not a polish request, allowing normal chat flow to continue.
 // Simplified approach: uses existing resumeData directly, polishes all entries if none specified.
 func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[string]interface{}, history []chatMessage) *chatResponse {
+	// Self-contained guard: need resumeData to polish
+	if len(resumeData) == 0 {
+		return nil
+	}
+
 	msgLower := strings.ToLower(message)
 
-	// Quick keyword check to avoid unnecessary AI calls
-	polishKeywords := []string{"polish", "improve", "enhance", "optimize", "rewrite", "refine", "make better", "fix"}
+	// Tightened keywords — removed generic terms ("fix", "improve", "optimize")
+	// that cause false positives. The intent router handles broader terms with AI understanding.
+	polishKeywords := []string{"polish", "enhance", "rewrite", "refine", "make better"}
 	hasPolishKeyword := false
 	for _, kw := range polishKeywords {
 		if strings.Contains(msgLower, kw) {
@@ -379,8 +433,16 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 	log.Printf("[DEBUG] Polish keyword detected, processing...")
 	log.Printf("[DEBUG] ResumeData keys: %v", getMapKeys(resumeData))
 
-	// Use the PolishAgent to detect intent
-	intent, err := polishAgent.DetectPolishIntent(ctx, message, resumeData)
+	// Use the PolishAgent to detect intent (with timeout to prevent hanging)
+	polishCtx, polishCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer polishCancel()
+	// Convert handler chatMessage to services.ChatMessage for polish agent
+	svcHistory := make([]services.ChatMessage, 0, len(history))
+	for _, h := range history {
+		svcHistory = append(svcHistory, services.ChatMessage{Role: h.Role, Text: h.Text})
+	}
+	conversationCtx := buildConversationContext(message, history)
+	intent, err := polishAgent.DetectPolishIntent(polishCtx, message, resumeData, svcHistory)
 	if err != nil {
 		log.Printf("[DEBUG] polish intent detection failed: %v", err)
 		// Even if LLM fails, try to detect section from keywords
@@ -428,17 +490,17 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 
 	switch intent.Section {
 	case "experience":
-		polishedContent, reply, entryIndex, err = polishExperiencesInChat(ctx, intent, resumeData, jobDesc, updatedData)
+		polishedContent, reply, entryIndex, err = polishExperiencesInChat(ctx, intent, resumeData, jobDesc, updatedData, conversationCtx)
 	case "education":
-		polishedContent, reply, entryIndex, err = polishEducationInChat(ctx, intent, resumeData, updatedData)
+		polishedContent, reply, entryIndex, err = polishEducationInChat(ctx, intent, resumeData, updatedData, conversationCtx)
 	case "projects":
-		polishedContent, reply, entryIndex, err = polishProjectsInChat(ctx, intent, resumeData, jobDesc, updatedData)
+		polishedContent, reply, entryIndex, err = polishProjectsInChat(ctx, intent, resumeData, jobDesc, updatedData, conversationCtx)
 	case "summary":
 		summary, _ := resumeData["summary"].(string)
 		if summary == "" {
 			return &chatResponse{Reply: "I don't see a professional summary to polish. Please add one first."}
 		}
-		polished, polishErr := polishAgent.PolishSummary(ctx, summary, resumeData)
+		polished, polishErr := polishAgent.PolishSummary(ctx, summary, resumeData, conversationCtx)
 		if polishErr != nil {
 			err = polishErr
 		} else {
@@ -451,7 +513,7 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 		if skills == "" {
 			return &chatResponse{Reply: "I don't see any skills to polish. Please add some skills first."}
 		}
-		polished, polishErr := polishAgent.PolishSkills(ctx, skills, jobDesc)
+		polished, polishErr := polishAgent.PolishSkills(ctx, skills, jobDesc, conversationCtx)
 		if polishErr != nil {
 			err = polishErr
 		} else {
@@ -460,13 +522,14 @@ func tryHandlePolishRequest(ctx context.Context, message string, resumeData map[
 			reply = "I've polished and organized your skills section."
 		}
 	case "all":
-		reply, err = polishAllInChat(ctx, resumeData, jobDesc, updatedData)
+		reply, err = polishAllInChat(ctx, resumeData, jobDesc, updatedData, conversationCtx)
 		polishedContent = updatedData
 	default:
-		// Fallback: if section is unrecognized but we have polish keywords, polish everything
-		log.Printf("Unrecognized section '%s', falling back to polish all", intent.Section)
-		reply, err = polishAllInChat(ctx, resumeData, jobDesc, updatedData)
-		polishedContent = updatedData
+		// Instead of silently polishing everything, ask the user which section
+		log.Printf("[INTENT-FALLBACK] Unrecognized section '%s', asking user to clarify", intent.Section)
+		return &chatResponse{
+			Reply: "Which section would you like me to polish — experience, education, projects, summary, or skills?",
+		}
 	}
 
 	if err != nil {
@@ -601,7 +664,7 @@ func detectSectionFromKeywords(msgLower string, resumeData map[string]interface{
 	return intent
 }
 
-func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (interface{}, string, int, error) {
+func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}, conversationCtx string) (interface{}, string, int, error) {
 	experiences, ok := resumeData["experiences"].([]interface{})
 	if !ok || len(experiences) == 0 {
 		return nil, "I don't see any work experiences to polish.", -1, nil
@@ -614,7 +677,7 @@ func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, 
 			return nil, "I couldn't read that experience entry.", -1, nil
 		}
 
-		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
+		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, conversationCtx)
 		if err != nil {
 			return nil, "", -1, err
 		}
@@ -638,7 +701,7 @@ func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, 
 		}
 	}
 
-	polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc)
+	polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc, conversationCtx)
 	if err != nil {
 		return nil, "", -1, err
 	}
@@ -653,7 +716,7 @@ func polishExperiencesInChat(ctx context.Context, intent services.PolishIntent, 
 	return polishedExperiences, fmt.Sprintf("I've polished all %d of your work experiences with impact-focused bullet points. The changes are ready to apply.", len(experiences)), -1, nil
 }
 
-func polishEducationInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, updatedData map[string]interface{}) (interface{}, string, int, error) {
+func polishEducationInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, updatedData map[string]interface{}, conversationCtx string) (interface{}, string, int, error) {
 	education, ok := resumeData["education"].([]interface{})
 	if !ok || len(education) == 0 {
 		return nil, "I don't see any education entries to polish.", -1, nil
@@ -665,7 +728,7 @@ func polishEducationInChat(ctx context.Context, intent services.PolishIntent, re
 			return nil, "I couldn't read that education entry.", -1, nil
 		}
 
-		polished, err := polishAgent.PolishEducation(ctx, eduMap)
+		polished, err := polishAgent.PolishEducation(ctx, eduMap, conversationCtx)
 		if err != nil {
 			return nil, "", -1, err
 		}
@@ -688,7 +751,7 @@ func polishEducationInChat(ctx context.Context, intent services.PolishIntent, re
 		}
 	}
 
-	polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps)
+	polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps, conversationCtx)
 	if err != nil {
 		return nil, "", -1, err
 	}
@@ -703,7 +766,7 @@ func polishEducationInChat(ctx context.Context, intent services.PolishIntent, re
 	return polishedEducation, fmt.Sprintf("I've polished all %d of your education entries. The changes are ready to apply.", len(education)), -1, nil
 }
 
-func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (interface{}, string, int, error) {
+func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}, conversationCtx string) (interface{}, string, int, error) {
 	projects, ok := resumeData["projects"].([]interface{})
 	if !ok || len(projects) == 0 {
 		return nil, "I don't see any projects to polish.", -1, nil
@@ -716,7 +779,7 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 			return nil, "I couldn't read that project entry.", -1, nil
 		}
 
-		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
+		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc, conversationCtx)
 		if err != nil {
 			return nil, "", -1, err
 		}
@@ -739,7 +802,7 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 		}
 	}
 
-	polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc)
+	polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc, conversationCtx)
 	if err != nil {
 		return nil, "", -1, err
 	}
@@ -754,7 +817,7 @@ func polishProjectsInChat(ctx context.Context, intent services.PolishIntent, res
 	return polishedProjects, fmt.Sprintf("I've polished all %d of your projects. The changes are ready to apply.", len(projects)), -1, nil
 }
 
-func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}) (string, error) {
+func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, jobDesc string, updatedData map[string]interface{}, conversationCtx string) (string, error) {
 	var polishedSections []string
 
 	// Polish experiences using batch method (single API call for all experiences)
@@ -766,7 +829,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 			}
 		}
 		if len(expMaps) > 0 {
-			polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc)
+			polishedMaps, err := polishAgent.PolishExperiencesBatch(ctx, expMaps, jobDesc, conversationCtx)
 			if err == nil {
 				polishedExperiences := make([]interface{}, len(polishedMaps))
 				for i, p := range polishedMaps {
@@ -787,7 +850,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 			}
 		}
 		if len(eduMaps) > 0 {
-			polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps)
+			polishedMaps, err := polishAgent.PolishEducationBatch(ctx, eduMaps, conversationCtx)
 			if err == nil {
 				polishedEducation := make([]interface{}, len(polishedMaps))
 				for i, p := range polishedMaps {
@@ -808,7 +871,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 			}
 		}
 		if len(projMaps) > 0 {
-			polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc)
+			polishedMaps, err := polishAgent.PolishProjectsBatch(ctx, projMaps, jobDesc, conversationCtx)
 			if err == nil {
 				polishedProjects := make([]interface{}, len(polishedMaps))
 				for i, p := range polishedMaps {
@@ -822,7 +885,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 
 	// Polish summary (single item, no batch needed)
 	if summary, ok := resumeData["summary"].(string); ok && summary != "" {
-		polished, err := polishAgent.PolishSummary(ctx, summary, resumeData)
+		polished, err := polishAgent.PolishSummary(ctx, summary, resumeData, conversationCtx)
 		if err == nil {
 			updatedData["summary"] = polished
 			polishedSections = append(polishedSections, "summary")
@@ -831,7 +894,7 @@ func polishAllInChat(ctx context.Context, resumeData map[string]interface{}, job
 
 	// Polish skills (single item, no batch needed)
 	if skills, ok := resumeData["skills"].(string); ok && skills != "" {
-		polished, err := polishAgent.PolishSkills(ctx, skills, jobDesc)
+		polished, err := polishAgent.PolishSkills(ctx, skills, jobDesc, conversationCtx)
 		if err == nil {
 			updatedData["skills"] = polished
 			polishedSections = append(polishedSections, "skills")

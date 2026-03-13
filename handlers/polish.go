@@ -59,7 +59,7 @@ func PolishResume(c *gin.Context) {
 	ctx := c.Request.Context()
 
 	// Detect polish intent
-	intent, err := polishAgent.DetectPolishIntent(ctx, message, req.ResumeData)
+	intent, err := polishAgent.DetectPolishIntent(ctx, message, req.ResumeData, nil)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to analyze request: " + err.Error()})
 		return
@@ -123,7 +123,7 @@ func PolishResume(c *gin.Context) {
 
 	case "summary":
 		summary, _ := req.ResumeData["summary"].(string)
-		polished, err := polishAgent.PolishSummary(ctx, summary, req.ResumeData)
+		polished, err := polishAgent.PolishSummary(ctx, summary, req.ResumeData, "")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to polish summary: " + err.Error()})
 			return
@@ -135,7 +135,7 @@ func PolishResume(c *gin.Context) {
 
 	case "skills":
 		skills, _ := req.ResumeData["skills"].(string)
-		polished, err := polishAgent.PolishSkills(ctx, skills, req.JobDescription)
+		polished, err := polishAgent.PolishSkills(ctx, skills, req.JobDescription, "")
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to polish skills: " + err.Error()})
 			return
@@ -174,7 +174,7 @@ func polishExperienceSection(ctx context.Context, intent services.PolishIntent, 
 			return nil, "Could not read experience entry.", nil
 		}
 
-		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
+		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
 		if err != nil {
 			return nil, "", err
 		}
@@ -199,7 +199,7 @@ func polishExperienceSection(ctx context.Context, intent services.PolishIntent, 
 			continue
 		}
 
-		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
+		polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
 		if err != nil {
 			polishedExperiences = append(polishedExperiences, exp)
 			continue
@@ -224,7 +224,7 @@ func polishEducationSection(ctx context.Context, intent services.PolishIntent, r
 			return nil, "Could not read education entry.", nil
 		}
 
-		polished, err := polishAgent.PolishEducation(ctx, eduMap)
+		polished, err := polishAgent.PolishEducation(ctx, eduMap, "")
 		if err != nil {
 			return nil, "", err
 		}
@@ -249,7 +249,7 @@ func polishEducationSection(ctx context.Context, intent services.PolishIntent, r
 			continue
 		}
 
-		polished, err := polishAgent.PolishEducation(ctx, eduMap)
+		polished, err := polishAgent.PolishEducation(ctx, eduMap, "")
 		if err != nil {
 			polishedEducation = append(polishedEducation, edu)
 			continue
@@ -274,7 +274,7 @@ func polishProjectsSection(ctx context.Context, intent services.PolishIntent, re
 			return nil, "Could not read project entry.", nil
 		}
 
-		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
+		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc, "")
 		if err != nil {
 			return nil, "", err
 		}
@@ -299,7 +299,7 @@ func polishProjectsSection(ctx context.Context, intent services.PolishIntent, re
 			continue
 		}
 
-		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
+		polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc, "")
 		if err != nil {
 			polishedProjects = append(polishedProjects, proj)
 			continue
@@ -319,7 +319,7 @@ func polishAllSections(ctx context.Context, resumeData map[string]interface{}, j
 		polishedExperiences := make([]interface{}, 0, len(experiences))
 		for _, exp := range experiences {
 			if expMap, ok := exp.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc)
+				polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
 				if err != nil {
 					polishedExperiences = append(polishedExperiences, exp)
 				} else {
@@ -338,7 +338,7 @@ func polishAllSections(ctx context.Context, resumeData map[string]interface{}, j
 		polishedEducation := make([]interface{}, 0, len(education))
 		for _, edu := range education {
 			if eduMap, ok := edu.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishEducation(ctx, eduMap)
+				polished, err := polishAgent.PolishEducation(ctx, eduMap, "")
 				if err != nil {
 					polishedEducation = append(polishedEducation, edu)
 				} else {
@@ -357,7 +357,7 @@ func polishAllSections(ctx context.Context, resumeData map[string]interface{}, j
 		polishedProjects := make([]interface{}, 0, len(projects))
 		for _, proj := range projects {
 			if projMap, ok := proj.(map[string]interface{}); ok {
-				polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc)
+				polished, err := polishAgent.PolishProject(ctx, projMap, jobDesc, "")
 				if err != nil {
 					polishedProjects = append(polishedProjects, proj)
 				} else {
@@ -373,7 +373,7 @@ func polishAllSections(ctx context.Context, resumeData map[string]interface{}, j
 
 	// Polish summary
 	if summary, ok := resumeData["summary"].(string); ok && summary != "" {
-		polished, err := polishAgent.PolishSummary(ctx, summary, resumeData)
+		polished, err := polishAgent.PolishSummary(ctx, summary, resumeData, "")
 		if err == nil {
 			updatedData["summary"] = polished
 			messages = append(messages, "summary")
@@ -382,7 +382,7 @@ func polishAllSections(ctx context.Context, resumeData map[string]interface{}, j
 
 	// Polish skills
 	if skills, ok := resumeData["skills"].(string); ok && skills != "" {
-		polished, err := polishAgent.PolishSkills(ctx, skills, jobDesc)
+		polished, err := polishAgent.PolishSkills(ctx, skills, jobDesc, "")
 		if err == nil {
 			updatedData["skills"] = polished
 			messages = append(messages, "skills")

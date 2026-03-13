@@ -11,6 +11,12 @@ import (
 	"github.com/tmc/langchaingo/llms/googleai"
 )
 
+// ChatMessage represents a single message in conversation history.
+type ChatMessage struct {
+	Role string
+	Text string
+}
+
 // PolishAgent detects resume polish/optimize intents and identifies target sections.
 type PolishAgent struct {
 	llm llms.Model
@@ -53,15 +59,31 @@ func NewPolishAgent() (*PolishAgent, error) {
 }
 
 // DetectPolishIntent analyzes user input to detect polish/optimize requests.
-func (a *PolishAgent) DetectPolishIntent(ctx context.Context, input string, resumeData map[string]interface{}) (PolishIntent, error) {
+func (a *PolishAgent) DetectPolishIntent(ctx context.Context, input string, resumeData map[string]interface{}, history []ChatMessage) (PolishIntent, error) {
 	if a == nil || a.llm == nil {
 		return PolishIntent{}, fmt.Errorf("polish agent is not initialized")
 	}
 
 	resumeContext := buildResumeContextForPolish(resumeData)
 
+	// Build conversation history context
+	var historyText string
+	if len(history) > 0 {
+		var sb strings.Builder
+		sb.WriteString("\nConversation context:\n")
+		for _, msg := range history {
+			role := strings.ToLower(msg.Role)
+			if role != "assistant" && role != "bot" {
+				role = "user"
+			}
+			fmt.Fprintf(&sb, "%s: %s\n", role, strings.TrimSpace(msg.Text))
+		}
+		historyText = sb.String()
+	}
+
 	prompt := fmt.Sprintf(`You are analyzing user input to detect if they want to polish, optimize, or improve their resume content.
 
+%s
 %s
 
 The user may use words like:
@@ -108,7 +130,7 @@ Return ONLY valid JSON:
   "clarificationQuestion": ""
 }
 
-User input: %s`, resumeContext, input)
+User input: %s`, resumeContext, historyText, input)
 
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt)
 	if err != nil {
@@ -137,7 +159,7 @@ User input: %s`, resumeContext, input)
 }
 
 // PolishExperience polishes a specific experience entry using AI with low temperature and validation.
-func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[string]interface{}, jobDescription string) (map[string]interface{}, error) {
+func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[string]interface{}, jobDescription string, conversationContext string) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -151,7 +173,7 @@ func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[strin
 	company, _ := experience["company"].(string)
 
 	originalText := fmt.Sprintf("%s at %s:\n%s", jobTitle, company, description)
-	prompt := BuildExperienceOptimizationPrompt(jobDescription, originalText)
+	prompt := BuildExperienceOptimizationPrompt(jobDescription, originalText) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -176,7 +198,7 @@ func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[strin
 }
 
 // PolishEducation polishes education entry using AI with low temperature and validation.
-func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]interface{}) (map[string]interface{}, error) {
+func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]interface{}, conversationContext string) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -196,7 +218,7 @@ func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]
 		educationText += fmt.Sprintf(", %s", honors)
 	}
 
-	prompt := BuildEducationOptimizationPrompt(educationText, "")
+	prompt := BuildEducationOptimizationPrompt(educationText, "") + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -221,7 +243,7 @@ func (a *PolishAgent) PolishEducation(ctx context.Context, education map[string]
 }
 
 // PolishProject polishes a project entry using AI with low temperature and validation.
-func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]interface{}, jobDescription string) (map[string]interface{}, error) {
+func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]interface{}, jobDescription string, conversationContext string) (map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -236,7 +258,7 @@ func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]inte
 
 	projectText := fmt.Sprintf("Project: %s\nTechnologies: %s\nDescription: %s", projectName, technologies, description)
 
-	prompt := BuildProjectOptimizationPrompt(jobDescription, projectText, "")
+	prompt := BuildProjectOptimizationPrompt(jobDescription, projectText, "") + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -260,7 +282,7 @@ func (a *PolishAgent) PolishProject(ctx context.Context, project map[string]inte
 }
 
 // PolishSummary polishes the professional summary using AI with low temperature and validation.
-func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeData map[string]interface{}) (string, error) {
+func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeData map[string]interface{}, conversationContext string) (string, error) {
 	if a == nil || a.llm == nil {
 		return "", fmt.Errorf("polish agent is not initialized")
 	}
@@ -284,7 +306,7 @@ func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeD
 		}
 	}
 
-	prompt := BuildSummaryOptimizationPrompt(experience, education, skills, summary)
+	prompt := BuildSummaryOptimizationPrompt(experience, education, skills, summary) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -302,7 +324,7 @@ func (a *PolishAgent) PolishSummary(ctx context.Context, summary string, resumeD
 }
 
 // PolishSkills polishes the skills section using AI with low temperature.
-func (a *PolishAgent) PolishSkills(ctx context.Context, skills string, jobDescription string) (string, error) {
+func (a *PolishAgent) PolishSkills(ctx context.Context, skills string, jobDescription string, conversationContext string) (string, error) {
 	if a == nil || a.llm == nil {
 		return "", fmt.Errorf("polish agent is not initialized")
 	}
@@ -332,7 +354,7 @@ Instructions:
 4. Keep the most relevant skills for the job description at the top
 5. Format as a clean, comma-separated list or categorized format
 
-Return only the polished skills, no explanations.`, jobDescription, skills)
+Return only the polished skills, no explanations.`, jobDescription, skills) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	polished, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -475,7 +497,7 @@ func cleanupPolishedText(text string) string {
 
 // PolishExperiencesBatch polishes multiple experiences in a single API call.
 // This reduces API calls from N to 1, helping avoid rate limits.
-func (a *PolishAgent) PolishExperiencesBatch(ctx context.Context, experiences []map[string]interface{}, jobDescription string) ([]map[string]interface{}, error) {
+func (a *PolishAgent) PolishExperiencesBatch(ctx context.Context, experiences []map[string]interface{}, jobDescription string, conversationContext string) ([]map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -486,7 +508,7 @@ func (a *PolishAgent) PolishExperiencesBatch(ctx context.Context, experiences []
 
 	// If only one experience, use the single method
 	if len(experiences) == 1 {
-		polished, err := a.PolishExperience(ctx, experiences[0], jobDescription)
+		polished, err := a.PolishExperience(ctx, experiences[0], jobDescription, conversationContext)
 		if err != nil {
 			return nil, err
 		}
@@ -533,7 +555,7 @@ Return ONLY valid JSON array with polished descriptions:
   {"index": 1, "description": "polished description for experience 1"}
 ]
 
-Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
+Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String()) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -577,7 +599,7 @@ Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.Stri
 }
 
 // PolishProjectsBatch polishes multiple projects in a single API call.
-func (a *PolishAgent) PolishProjectsBatch(ctx context.Context, projects []map[string]interface{}, jobDescription string) ([]map[string]interface{}, error) {
+func (a *PolishAgent) PolishProjectsBatch(ctx context.Context, projects []map[string]interface{}, jobDescription string, conversationContext string) ([]map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -588,7 +610,7 @@ func (a *PolishAgent) PolishProjectsBatch(ctx context.Context, projects []map[st
 
 	// If only one project, use the single method
 	if len(projects) == 1 {
-		polished, err := a.PolishProject(ctx, projects[0], jobDescription)
+		polished, err := a.PolishProject(ctx, projects[0], jobDescription, conversationContext)
 		if err != nil {
 			return nil, err
 		}
@@ -635,7 +657,7 @@ Return ONLY valid JSON array:
   {"index": 1, "description": "polished description for project 1"}
 ]
 
-Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String())
+Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.String()) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
@@ -678,7 +700,7 @@ Return ONLY the JSON array, no explanations.`, jobDescription, inputBuilder.Stri
 }
 
 // PolishEducationBatch polishes multiple education entries in a single API call.
-func (a *PolishAgent) PolishEducationBatch(ctx context.Context, educations []map[string]interface{}) ([]map[string]interface{}, error) {
+func (a *PolishAgent) PolishEducationBatch(ctx context.Context, educations []map[string]interface{}, conversationContext string) ([]map[string]interface{}, error) {
 	if a == nil || a.llm == nil {
 		return nil, fmt.Errorf("polish agent is not initialized")
 	}
@@ -689,7 +711,7 @@ func (a *PolishAgent) PolishEducationBatch(ctx context.Context, educations []map
 
 	// If only one education, use the single method
 	if len(educations) == 1 {
-		polished, err := a.PolishEducation(ctx, educations[0])
+		polished, err := a.PolishEducation(ctx, educations[0], conversationContext)
 		if err != nil {
 			return nil, err
 		}
@@ -736,7 +758,7 @@ Return ONLY valid JSON array:
   {"index": 1, "honors": "polished honors/achievements for education 1"}
 ]
 
-Return ONLY the JSON array, no explanations.`, inputBuilder.String())
+Return ONLY the JSON array, no explanations.`, inputBuilder.String()) + conversationContext
 
 	// Use low temperature (0.1) to reduce hallucination
 	raw, err := llms.GenerateFromSinglePrompt(ctx, a.llm, prompt, llms.WithTemperature(0.1))
