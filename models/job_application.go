@@ -175,7 +175,7 @@ func (m *JobApplicationModel) Create(app *JobApplication) error {
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	err = tx.QueryRow(`
 		INSERT INTO job_applications (
@@ -281,7 +281,7 @@ func (m *JobApplicationModel) UpdateStatus(userID int, appID int64, newStatus, n
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	var currentStatus string
 	err = tx.QueryRow(
