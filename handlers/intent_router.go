@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"resumeai/models"
 	"resumeai/services"
 )
 
@@ -31,6 +32,7 @@ const (
 	IntentCategorizeSkills     = "categorize_skills"
 	IntentOptimizeProject      = "optimize_project"
 	IntentPolish               = "polish"
+	IntentJobApplicationQuery  = "job_application_query"
 	IntentGeneralChat          = "general_chat"
 )
 
@@ -74,6 +76,7 @@ Given the user's message and conversation history, classify it into exactly one 
 - categorize_skills: User wants to organize/categorize/group their existing skills
 - optimize_project: User wants to optimize/tailor project descriptions for a job
 - polish: User wants to polish/enhance/refine/rewrite a resume section for better impact (not job-specific tailoring)
+- job_application_query: User is asking about their job applications, application status, which companies they applied to, how many applications they have, tracking progress, etc.
 - general_chat: General question, conversational reply, or anything not matching above
 
 IMPORTANT RULES:
@@ -130,7 +133,7 @@ Respond ONLY with valid JSON (no markdown, no code fences):
 	case IntentCoverLetter, IntentRecommendationLetter, IntentResumeAdvice,
 		IntentGenerateSummary, IntentOptimizeExperience, IntentImproveGrammar,
 		IntentGenerateSkills, IntentCategorizeSkills, IntentOptimizeProject,
-		IntentPolish, IntentGeneralChat:
+		IntentPolish, IntentJobApplicationQuery, IntentGeneralChat:
 		// valid
 	default:
 		log.Printf("[INTENT] Unknown intent from classifier: %s, treating as general_chat", intent.Intent)
@@ -508,6 +511,9 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 			FeatureResult: cleaned,
 		}, nil
 
+	case IntentJobApplicationQuery:
+		return handleJobApplicationQuery(req), nil
+
 	default:
 		return nil, fmt.Errorf("unsupported intent: %s", intent.Intent)
 	}
@@ -671,6 +677,141 @@ If this is not a job posting page, return "NOT_A_JOB_POSTING"`
 	}
 
 	return description, company
+}
+
+// ---------------------------------------------------------------------------
+// Job Application Query
+// ---------------------------------------------------------------------------
+
+// buildJobApplicationContext formats the user's applications and stats into a
+// text block that can be included in a Gemini prompt.
+func buildJobApplicationContext(apps []*models.JobApplication, byStatus map[string]int, total int) string {
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "Your Job Applications (Total: %d):\n", total)
+
+	if len(apps) == 0 {
+		sb.WriteString("No applications tracked yet.\n")
+	} else {
+		for _, app := range apps {
+			fmt.Fprintf(&sb, "- %s at %s — Status: %s — Applied: %s",
+				app.JobTitle, app.CompanyName, app.Status,
+				app.AppliedAt.Format("Jan 2, 2006"))
+			if app.JobURL != "" {
+				fmt.Fprintf(&sb, " — URL: %s", app.JobURL)
+			}
+			if app.JobLocation != "" {
+				fmt.Fprintf(&sb, " — Location: %s", app.JobLocation)
+			}
+			if app.CoverLetterUsed {
+				sb.WriteString(" — Cover Letter: Yes")
+			}
+			if app.Notes != "" {
+				fmt.Fprintf(&sb, " — Notes: %s", app.Notes)
+			}
+			if app.SalaryOffered != nil {
+				fmt.Fprintf(&sb, " — Salary: %.0f %s", *app.SalaryOffered, app.SalaryCurrency)
+			}
+			sb.WriteString("\n")
+		}
+	}
+
+	if len(byStatus) > 0 {
+		sb.WriteString("\nSummary: ")
+		first := true
+		for status, count := range byStatus {
+			if !first {
+				sb.WriteString(", ")
+			}
+			fmt.Fprintf(&sb, "%d %s", count, status)
+			first = false
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// handleJobApplicationQuery answers natural-language questions about the
+// user's tracked job applications by fetching data from the DB and passing
+// it to Gemini along with conversation context.
+func handleJobApplicationQuery(req chatRequest) *chatResponse {
+	email := strings.TrimSpace(req.UserEmail)
+	if email == "" {
+		return &chatResponse{
+			Reply:         "Please log in to view your application tracking data.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	if chatUserModel == nil || chatJobAppModel == nil {
+		log.Printf("[JOB_APP_QUERY] models not initialised")
+		return &chatResponse{
+			Reply:         "Job application tracking is currently unavailable. Please try again later.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	user, err := chatUserModel.GetByEmail(email)
+	if err != nil {
+		log.Printf("[JOB_APP_QUERY] GetByEmail(%s) error: %v", email, err)
+		return &chatResponse{
+			Reply:         "I couldn't find an account associated with your email. Please make sure you're logged in.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	apps, _, err := chatJobAppModel.ListByUser(user.ID, 200, 0, "")
+	if err != nil {
+		log.Printf("[JOB_APP_QUERY] ListByUser error: %v", err)
+		return &chatResponse{
+			Reply:         "I had trouble fetching your applications. Please try again.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	if len(apps) == 0 {
+		return &chatResponse{
+			Reply:         "You haven't tracked any applications yet. You can start tracking from the Job Matches section in the builder.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	byStatus, total, _, _, err := chatJobAppModel.GetStatsByUser(user.ID)
+	if err != nil {
+		log.Printf("[JOB_APP_QUERY] GetStatsByUser error: %v", err)
+		// Non-fatal: proceed without stats
+		byStatus = map[string]int{}
+		total = len(apps)
+	}
+
+	appContext := buildJobApplicationContext(apps, byStatus, total)
+	conversationCtx := buildConversationContext(req.Message, req.History)
+
+	prompt := fmt.Sprintf(`You are HiHired's AI assistant. The user is asking about their job applications.
+Answer their question based ONLY on the application data provided below. Be concise, friendly, and accurate.
+If the data doesn't contain the answer, say so honestly.
+
+%s
+%s`, appContext, conversationCtx)
+
+	reply, err := services.CallGeminiWithAPIKey(prompt)
+	if err != nil {
+		log.Printf("[JOB_APP_QUERY] Gemini call failed: %v", err)
+		return &chatResponse{
+			Reply:         "I had trouble processing your question. Please try again.",
+			FeatureAction: IntentJobApplicationQuery,
+		}
+	}
+
+	cleaned := strings.TrimSpace(reply)
+	if cleaned == "" {
+		cleaned = "I couldn't generate a response. Please try rephrasing your question."
+	}
+
+	return &chatResponse{
+		Reply:         cleaned,
+		FeatureAction: IntentJobApplicationQuery,
+	}
 }
 
 // copyResumeData is defined in polish.go

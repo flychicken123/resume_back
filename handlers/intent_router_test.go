@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
+
+	"resumeai/models"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -616,4 +619,93 @@ func TestChatAssistant_FeatureRoute_MissingJobDesc(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Contains(t, resp.Reply, "job description",
 		"should ask user to provide job description")
+}
+
+// ===========================================================================
+// Test: Job Application Query
+// ===========================================================================
+
+func TestBuildJobApplicationContext_MultipleApps(t *testing.T) {
+	apps := []*models.JobApplication{
+		{
+			JobTitle:    "Software Engineer",
+			CompanyName: "Google",
+			Status:      "interviewing",
+			AppliedAt:   time.Date(2026, 3, 5, 0, 0, 0, 0, time.UTC),
+			JobURL:      "https://careers.google.com/jobs/123",
+			JobLocation: "Mountain View, CA",
+		},
+		{
+			JobTitle:    "Data Analyst",
+			CompanyName: "Meta",
+			Status:      "applied",
+			AppliedAt:   time.Date(2026, 3, 10, 0, 0, 0, 0, time.UTC),
+			Notes:       "Referred by John",
+		},
+	}
+	byStatus := map[string]int{"applied": 1, "interviewing": 1}
+	got := buildJobApplicationContext(apps, byStatus, 2)
+
+	assert.Contains(t, got, "Total: 2")
+	assert.Contains(t, got, "Google")
+	assert.Contains(t, got, "Meta")
+	assert.Contains(t, got, "interviewing")
+	assert.Contains(t, got, "applied")
+	assert.Contains(t, got, "Mar 5, 2026")
+	assert.Contains(t, got, "Mar 10, 2026")
+	assert.Contains(t, got, "https://careers.google.com/jobs/123")
+	assert.Contains(t, got, "Mountain View, CA")
+	assert.Contains(t, got, "Referred by John")
+}
+
+func TestBuildJobApplicationContext_Empty(t *testing.T) {
+	got := buildJobApplicationContext(nil, map[string]int{}, 0)
+	assert.Contains(t, got, "Total: 0")
+	assert.Contains(t, got, "No applications tracked yet")
+}
+
+func TestHandleJobApplicationQuery_NoEmail(t *testing.T) {
+	req := chatRequest{Message: "How many jobs did I apply to?", UserEmail: ""}
+	resp := handleJobApplicationQuery(req)
+	assert.NotNil(t, resp)
+	assert.Contains(t, resp.Reply, "log in")
+	assert.Equal(t, IntentJobApplicationQuery, resp.FeatureAction)
+}
+
+func TestHandleJobApplicationQuery_ModelsNotInitialised(t *testing.T) {
+	// Save and restore original values
+	origUser := chatUserModel
+	origApp := chatJobAppModel
+	defer func() {
+		chatUserModel = origUser
+		chatJobAppModel = origApp
+	}()
+
+	chatUserModel = nil
+	chatJobAppModel = nil
+
+	req := chatRequest{Message: "How many jobs did I apply to?", UserEmail: "test@example.com"}
+	resp := handleJobApplicationQuery(req)
+	assert.NotNil(t, resp)
+	assert.Contains(t, resp.Reply, "unavailable")
+	assert.Equal(t, IntentJobApplicationQuery, resp.FeatureAction)
+}
+
+func TestClassifyIntent_JobApplicationQuery(t *testing.T) {
+	messages := []string{
+		"How many jobs have I applied to?",
+		"Have I applied to Google?",
+		"What's the status of my applications?",
+		"Show me my rejected applications",
+	}
+	for _, msg := range messages {
+		t.Run(msg, func(t *testing.T) {
+			intent, err := classifyIntent(t.Context(), msg, sampleResumeData(), nil)
+			if err != nil {
+				t.Skipf("Skipping (API call failed): %v", err)
+			}
+			assert.Equal(t, IntentJobApplicationQuery, intent.Intent)
+			assert.GreaterOrEqual(t, intent.Confidence, intentConfidenceThreshold)
+		})
+	}
 }

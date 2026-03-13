@@ -114,6 +114,7 @@ func main() {
 	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger, copilotAgent)
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
+	handlers.SetChatModels(userModel, jobAppModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
 	jobAppController := controllers.NewJobApplicationController(jobAppModel, jobPostingModel, jobMatchModel)
 	geoService := services.NewGeoService(time.Now().UTC())

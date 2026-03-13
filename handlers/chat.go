@@ -103,10 +103,18 @@ var assistantKnowledge = []knowledgeEntry{
 }
 
 var chatHistoryModel *models.ChatHistoryModel
+var chatUserModel *models.UserModel
+var chatJobAppModel *models.JobApplicationModel
 
 // SetChatHistoryModel injects the persistence layer for chat transcripts.
 func SetChatHistoryModel(m *models.ChatHistoryModel) {
 	chatHistoryModel = m
+}
+
+// SetChatModels injects models needed for job application queries in chat.
+func SetChatModels(um *models.UserModel, jam *models.JobApplicationModel) {
+	chatUserModel = um
+	chatJobAppModel = jam
 }
 
 func findRelevantKnowledge(query string, history []chatMessage) []knowledgeEntry {
