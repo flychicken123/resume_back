@@ -1192,15 +1192,32 @@ func BuildCoverLetterPrompt(resumeData map[string]interface{}, jobDescription, c
 			}
 		}
 	}
+	// Fallback: experience field may be a plain string from the DB
+	if experience == "" {
+		if expStr, ok := resumeData["experience"].(string); ok && expStr != "" {
+			experience = expStr
+		}
+	}
 
 	skills := ""
 	if s, ok := resumeData["skills"].(string); ok {
 		skills = s
 	}
+	// Fallback: skills may be stored as skillsCategorized
+	if skills == "" {
+		if s, ok := resumeData["skillsCategorized"].(string); ok && s != "" {
+			skills = s
+		}
+	}
 
 	summary := ""
 	if s, ok := resumeData["summary"].(string); ok {
 		summary = s
+	}
+
+	education := ""
+	if e, ok := resumeData["education"].(string); ok {
+		education = e
 	}
 
 	companyContext := ""
@@ -1218,18 +1235,19 @@ Job Description:
 Please tailor the cover letter specifically to this role and its requirements.`, jobDescription)
 	}
 
-	return fmt.Sprintf(`You are an expert career coach and professional writer.
+	return fmt.Sprintf(`You are an expert career coach and professional writer. You MUST output ONLY the final cover letter text. Do NOT ask questions, request more information, provide templates, or include any commentary. Use whatever information is provided and write the best cover letter possible with it.
 
-Create a compelling cover letter for this candidate:
+Write a compelling cover letter for this candidate:
 
 Name: %s
 Current/Recent Experience: %s
 Key Skills: %s
 Professional Summary: %s
+Education: %s
 
 %s%s
 
-Please write a professional cover letter that:
+The cover letter must:
 
 1. **Opening**: Strong hook that grabs attention
 2. **Value Proposition**: Clearly shows how the candidate's experience matches the role
@@ -1244,20 +1262,23 @@ Please write a professional cover letter that:
 - Customize based on the job requirements
 - Make it genuine and authentic
 - Include proper business letter formatting
-- Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project and its goals]".
-- If you don't know specific project names or details, describe them naturally (for example, "one of my recent infrastructure projects") instead of leaving blanks.
+- Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project and its goals]"
+- If you don't know specific project names or details, describe them naturally (for example, "one of my recent infrastructure projects") instead of leaving blanks
+- Do NOT ask follow-up questions or request additional information
+- Do NOT include example fill-ins, templates, or instructions
+- Output ONLY the cover letter itself, nothing else
 
 **Format:**
-[Date]
+[Today's Date]
 
 Dear Hiring Manager,
 
-[Cover letter content]
+[Cover letter content - 3 to 4 paragraphs]
 
 Sincerely,
 %s
 
-IMPORTANT: Return the complete cover letter ready to send. Make it compelling and specific to this opportunity.`, name, experience, skills, summary, companyContext, jobContext, name)
+IMPORTANT: Return ONLY the complete cover letter ready to send. Do NOT include any preamble, commentary, or follow-up questions.`, name, experience, skills, summary, education, companyContext, jobContext, name)
 }
 
 // BuildRecommendationLetterPrompt builds a prompt for generating a third-party
