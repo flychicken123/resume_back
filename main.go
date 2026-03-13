@@ -84,6 +84,7 @@ func main() {
 	jobPostingModel := models.NewJobPostingModel(db)
 	jobSyncModel := models.NewJobSyncRunModel(db)
 	jobMatchModel := models.NewResumeJobMatchModel(db)
+	jobAppModel := models.NewJobApplicationModel(db)
 	experimentModel := models.NewExperimentModel(db)
 
 	// Initialize services
@@ -114,6 +115,7 @@ func main() {
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
+	jobAppController := controllers.NewJobApplicationController(jobAppModel, jobPostingModel, jobMatchModel)
 	geoService := services.NewGeoService(time.Now().UTC())
 	if jobIntentAgent, err := services.NewJobIntentAgent(); err != nil {
 		log.Printf("Warning: Job intent agent disabled: %v", err)
@@ -486,6 +488,14 @@ func main() {
 		protected.POST("/jobs/matches", jobsController.ComputeMatches)
 		protected.GET("/jobs/matches", jobsController.ListMatchedJobs)
 		protected.GET("/jobs/:id", jobsController.GetJobByID)
+
+		// Job application tracking routes
+		protected.POST("/job/apply", jobAppController.SubmitApplication)
+		protected.GET("/job/applications", jobAppController.ListApplications)
+		protected.GET("/job/applications/stats", jobAppController.GetStats)
+		protected.GET("/job/applications/:id", jobAppController.GetApplication)
+		protected.PUT("/job/applications/:id/status", jobAppController.UpdateStatus)
+		protected.DELETE("/job/applications/:id", jobAppController.DeleteApplication)
 
 		// Subscription routes
 		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)
