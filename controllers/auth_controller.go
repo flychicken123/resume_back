@@ -1,6 +1,8 @@
 package controllers
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -201,8 +203,8 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 	user, err := c.userModel.GetByEmail(req.Email)
 	isNewUser := false
 
-	if err != nil {
-		fmt.Printf("User not found, will create new user. Error: %v\n", err)
+	if errors.Is(err, sql.ErrNoRows) {
+		fmt.Printf("User not found, will create new user.\n")
 		// User doesn't exist, create them as a Google user
 		// Use the name from Google if provided, otherwise use email
 		userName := req.Name
@@ -222,6 +224,13 @@ func (c *AuthController) GoogleLogin(ctx *gin.Context) {
 			return
 		}
 		isNewUser = true
+	} else if err != nil {
+		fmt.Printf("Database error looking up user: %v\n", err)
+		ctx.JSON(http.StatusInternalServerError, AuthResponse{
+			Success: false,
+			Message: "Database error: " + err.Error(),
+		})
+		return
 	} else {
 		fmt.Printf("User found, existing user ID: %d, Name: %s, AuthProvider: %s\n", user.ID, user.Name, user.AuthProvider)
 		// User exists, just log them in
