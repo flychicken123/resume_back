@@ -508,6 +508,26 @@ func (m *JobApplicationModel) SetRemindersEnabled(userID int, appID int64, enabl
 	return nil
 }
 
+// UpdateNotes updates the notes for a specific application.
+func (m *JobApplicationModel) UpdateNotes(userID int, appID int64, notes string) error {
+	if m == nil || m.db == nil {
+		return errors.New("JobApplicationModel is not initialised")
+	}
+	result, err := m.db.Exec(
+		`UPDATE job_applications SET notes = $1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND user_id = $3`,
+		notes, appID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update notes: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
 // FindStaleApplications returns applications that haven't been updated in staleDays days,
 // excluding terminal statuses and apps with reminders disabled.
 func (m *JobApplicationModel) FindStaleApplications(userID int, staleDays int) ([]*JobApplication, error) {

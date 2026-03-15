@@ -500,6 +500,7 @@ func main() {
 		protected.PUT("/job/applications/:id/status", jobAppController.UpdateStatus)
 		protected.DELETE("/job/applications/:id", jobAppController.DeleteApplication)
 		protected.PUT("/job/applications/:id/reminders", jobAppController.UpdateReminders)
+		protected.PUT("/job/applications/:id/notes", jobAppController.UpdateNotes)
 
 		// Subscription routes
 		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)

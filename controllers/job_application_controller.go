@@ -404,3 +404,54 @@ func (jac *JobApplicationController) UpdateReminders(c *gin.Context) {
 		"application": app,
 	})
 }
+
+// ---------------------------------------------------------------------------
+// PUT /api/job/applications/:id/notes
+// ---------------------------------------------------------------------------
+
+func (jac *JobApplicationController) UpdateNotes(c *gin.Context) {
+	rawUserID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	userID, ok := normalizeUserID(rawUserID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	appID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || appID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid application id"})
+		return
+	}
+
+	var req struct {
+		Notes *string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Notes == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "missing notes field"})
+		return
+	}
+
+	if err := jac.applications.UpdateNotes(userID, appID, *req.Notes); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "application not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update notes"})
+		return
+	}
+
+	app, err := jac.applications.GetByID(userID, appID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "notes updated"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "notes updated",
+		"application": app,
+	})
+}
