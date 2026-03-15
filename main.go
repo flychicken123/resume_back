@@ -470,6 +470,8 @@ func main() {
 		protected.GET("/user/load", userController.LoadUserData)
 		protected.GET("/user/job-preferences", userController.GetJobPreferences)
 		protected.PUT("/user/job-preferences", userController.SaveJobPreferences)
+		protected.GET("/user/followup-reminders", userController.GetFollowupReminders)
+		protected.PUT("/user/followup-reminders", userController.UpdateFollowupReminders)
 
 		// Resume History routes using new controllers
 		protected.GET("/resume/history", resumeController.GetHistory)
@@ -497,6 +499,7 @@ func main() {
 		protected.GET("/job/applications/:id", jobAppController.GetApplication)
 		protected.PUT("/job/applications/:id/status", jobAppController.UpdateStatus)
 		protected.DELETE("/job/applications/:id", jobAppController.DeleteApplication)
+		protected.PUT("/job/applications/:id/reminders", jobAppController.UpdateReminders)
 
 		// Subscription routes
 		protected.GET("/subscription/current", subscriptionController.GetCurrentSubscription)

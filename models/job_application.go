@@ -26,6 +26,7 @@ type JobApplication struct {
 	SalaryOffered    *float64   `json:"salary_offered"`
 	SalaryCurrency   string     `json:"salary_currency"`
 	StatusUpdatedAt  time.Time  `json:"status_updated_at"`
+	RemindersEnabled bool       `json:"reminders_enabled"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 }
@@ -130,6 +131,7 @@ func scanJobApplication(scanner rowScanner) (*JobApplication, error) {
 		&salaryOffered,
 		&salaryCurrency,
 		&a.StatusUpdatedAt,
+		&a.RemindersEnabled,
 		&a.CreatedAt,
 		&a.UpdatedAt,
 	); err != nil {
@@ -159,7 +161,7 @@ const jobAppColumns = `id, user_id, job_posting_id, resume_job_match_id,
 	job_title, company_name, job_url, job_location,
 	status, applied_at, resume_hash, cover_letter_used,
 	notes, salary_offered, salary_currency,
-	status_updated_at, created_at, updated_at`
+	status_updated_at, COALESCE(reminders_enabled, true), created_at, updated_at`
 
 // ---------------------------------------------------------------------------
 // CRUD
@@ -183,11 +185,11 @@ func (m *JobApplicationModel) Create(app *JobApplication) error {
 			job_title, company_name, job_url, job_location,
 			status, resume_hash, cover_letter_used, notes
 		) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		RETURNING id, applied_at, status_updated_at, created_at, updated_at`,
+		RETURNING id, applied_at, status_updated_at, COALESCE(reminders_enabled, true), created_at, updated_at`,
 		app.UserID, app.JobPostingID, app.ResumeJobMatchID,
 		app.JobTitle, app.CompanyName, app.JobURL, app.JobLocation,
 		app.Status, app.ResumeHash, app.CoverLetterUsed, app.Notes,
-	).Scan(&app.ID, &app.AppliedAt, &app.StatusUpdatedAt, &app.CreatedAt, &app.UpdatedAt)
+	).Scan(&app.ID, &app.AppliedAt, &app.StatusUpdatedAt, &app.RemindersEnabled, &app.CreatedAt, &app.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("insert application: %w", err)
 	}
@@ -484,4 +486,56 @@ func (m *JobApplicationModel) GetStatsByUser(userID int) (map[string]int, int, i
 	).Scan(&thisMonth)
 
 	return byStatus, total, thisWeek, thisMonth, nil
+}
+
+// SetRemindersEnabled updates the reminders_enabled flag for a specific application.
+func (m *JobApplicationModel) SetRemindersEnabled(userID int, appID int64, enabled bool) error {
+	if m == nil || m.db == nil {
+		return errors.New("JobApplicationModel is not initialised")
+	}
+	result, err := m.db.Exec(
+		`UPDATE job_applications SET reminders_enabled = $1, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $2 AND user_id = $3`,
+		enabled, appID, userID,
+	)
+	if err != nil {
+		return fmt.Errorf("update reminders_enabled: %w", err)
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// FindStaleApplications returns applications that haven't been updated in staleDays days,
+// excluding terminal statuses and apps with reminders disabled.
+func (m *JobApplicationModel) FindStaleApplications(userID int, staleDays int) ([]*JobApplication, error) {
+	if m == nil || m.db == nil {
+		return nil, errors.New("JobApplicationModel is not initialised")
+	}
+
+	query := fmt.Sprintf(
+		`SELECT %s FROM job_applications
+		 WHERE user_id = $1
+		   AND status NOT IN ('rejected', 'withdrawn', 'accepted')
+		   AND COALESCE(reminders_enabled, true) = true
+		   AND status_updated_at < NOW() - ($2 * interval '1 day')
+		 ORDER BY status_updated_at ASC`, jobAppColumns)
+
+	rows, err := m.db.Query(query, userID, staleDays)
+	if err != nil {
+		return nil, fmt.Errorf("find stale applications: %w", err)
+	}
+	defer rows.Close()
+
+	var apps []*JobApplication
+	for rows.Next() {
+		app, err := scanJobApplication(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan stale application: %w", err)
+		}
+		apps = append(apps, app)
+	}
+	return apps, rows.Err()
 }

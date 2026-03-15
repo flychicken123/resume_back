@@ -143,6 +143,31 @@ func TestDeleteApplication_InvalidID(t *testing.T) {
 // InvalidTransitionError formatting
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// UpdateReminders endpoint tests
+// ---------------------------------------------------------------------------
+
+func TestUpdateReminders_InvalidID(t *testing.T) {
+	ctrl := NewJobApplicationController(nil, nil, nil)
+	router := setupJobAppTestRouter(ctrl)
+	router.PUT("/api/job/applications/:id/reminders", ctrl.UpdateReminders)
+
+	w := putJSON(t, router, "/api/job/applications/abc/reminders", map[string]any{"enabled": true})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	w = putJSON(t, router, "/api/job/applications/0/reminders", map[string]any{"enabled": true})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestUpdateReminders_MissingEnabled(t *testing.T) {
+	ctrl := NewJobApplicationController(nil, nil, nil)
+	router := setupJobAppTestRouter(ctrl)
+	router.PUT("/api/job/applications/:id/reminders", ctrl.UpdateReminders)
+
+	w := putJSON(t, router, "/api/job/applications/1/reminders", map[string]any{})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
 func TestInvalidTransitionError_Message(t *testing.T) {
 	err := &models.InvalidTransitionError{
 		CurrentStatus:   "rejected",

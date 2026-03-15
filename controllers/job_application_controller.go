@@ -353,3 +353,54 @@ func (jac *JobApplicationController) DeleteApplication(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"message": "application deleted"})
 }
+
+// ---------------------------------------------------------------------------
+// PUT /api/job/applications/:id/reminders
+// ---------------------------------------------------------------------------
+
+func (jac *JobApplicationController) UpdateReminders(c *gin.Context) {
+	rawUserID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	userID, ok := normalizeUserID(rawUserID)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	appID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil || appID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid application id"})
+		return
+	}
+
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	if err := jac.applications.SetRemindersEnabled(userID, appID, *req.Enabled); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "application not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update reminder"})
+		return
+	}
+
+	app, err := jac.applications.GetByID(userID, appID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "application reminder updated"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":     "application reminder updated",
+		"application": app,
+	})
+}

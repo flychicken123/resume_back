@@ -266,6 +266,52 @@ func (c *UserController) SaveJobPreferences(ctx *gin.Context) {
 	})
 }
 
+// GetFollowupReminders returns the user's followup_reminders_enabled setting
+func (c *UserController) GetFollowupReminders(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	user, err := c.userModel.GetByID(userID.(int))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch user"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"followup_reminders_enabled": user.FollowupRemindersEnabled,
+	})
+}
+
+// UpdateFollowupReminders updates the user's followup_reminders_enabled setting
+func (c *UserController) UpdateFollowupReminders(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var req struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := ctx.ShouldBindJSON(&req); err != nil || req.Enabled == nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request"})
+		return
+	}
+
+	if err := c.userModel.SetFollowupReminders(userID.(int), *req.Enabled); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to update reminder settings"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"message":                    "Follow-up reminders updated",
+		"followup_reminders_enabled": *req.Enabled,
+	})
+}
+
 // stringFromAnyOrJSON extracts a field from raw JSON and marshals non-strings.
 func stringFromAnyOrJSON(raw json.RawMessage, key string) string {
 	if len(raw) == 0 || key == "" {

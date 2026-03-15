@@ -691,6 +691,78 @@ func TestHandleJobApplicationQuery_ModelsNotInitialised(t *testing.T) {
 	assert.Equal(t, IntentJobApplicationQuery, resp.FeatureAction)
 }
 
+// ===========================================================================
+// Test: buildStaleAppReminder
+// ===========================================================================
+
+func TestBuildStaleAppReminder_Empty(t *testing.T) {
+	result := buildStaleAppReminder(nil)
+	assert.Empty(t, result)
+
+	result = buildStaleAppReminder([]*models.JobApplication{})
+	assert.Empty(t, result)
+}
+
+func TestBuildStaleAppReminder_FewApps(t *testing.T) {
+	now := time.Now()
+	apps := []*models.JobApplication{
+		{
+			JobTitle:        "Software Engineer",
+			CompanyName:     "Google",
+			Status:          "screening",
+			StatusUpdatedAt: now.Add(-10 * 24 * time.Hour),
+		},
+		{
+			JobTitle:        "Data Analyst",
+			CompanyName:     "Meta",
+			Status:          "applied",
+			StatusUpdatedAt: now.Add(-8 * 24 * time.Hour),
+		},
+	}
+	result := buildStaleAppReminder(apps)
+
+	assert.Contains(t, result, "2 application(s)")
+	assert.Contains(t, result, "Google")
+	assert.Contains(t, result, "Meta")
+	assert.Contains(t, result, "10 days ago")
+	assert.Contains(t, result, "8 days ago")
+	assert.NotContains(t, result, "...and")
+}
+
+func TestBuildStaleAppReminder_MoreThanFive(t *testing.T) {
+	now := time.Now()
+	apps := make([]*models.JobApplication, 7)
+	for i := range apps {
+		apps[i] = &models.JobApplication{
+			JobTitle:        "Role " + string(rune('A'+i)),
+			CompanyName:     "Company " + string(rune('A'+i)),
+			Status:          "applied",
+			StatusUpdatedAt: now.Add(-time.Duration(14-i) * 24 * time.Hour),
+		}
+	}
+	result := buildStaleAppReminder(apps)
+
+	assert.Contains(t, result, "7 application(s)")
+	assert.Contains(t, result, "...and 2 more")
+}
+
+func TestBuildStaleAppReminder_SingleApp(t *testing.T) {
+	now := time.Now()
+	apps := []*models.JobApplication{
+		{
+			JobTitle:        "Frontend Dev",
+			CompanyName:     "Stripe",
+			Status:          "interviewing",
+			StatusUpdatedAt: now.Add(-9 * 24 * time.Hour),
+		},
+	}
+	result := buildStaleAppReminder(apps)
+
+	assert.Contains(t, result, "1 application(s)")
+	assert.Contains(t, result, "Stripe")
+	assert.Contains(t, result, "9 days ago")
+}
+
 func TestClassifyIntent_JobApplicationQuery(t *testing.T) {
 	messages := []string{
 		"How many jobs have I applied to?",

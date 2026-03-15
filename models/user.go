@@ -20,11 +20,12 @@ type User struct {
 	MarketingOptedAt     *time.Time `json:"marketing_opted_at,omitempty"`
 	MarketingOptInSource string     `json:"marketing_opt_in_source,omitempty"`
 	SignupPlanPreference string     `json:"signup_plan_preference,omitempty"`
-	EmailUnsubscribed    bool            `json:"email_unsubscribed"`
-	EmailUnsubscribedAt  *time.Time      `json:"email_unsubscribed_at,omitempty"`
-	JobPreferences       json.RawMessage `json:"job_preferences,omitempty"`
-	CreatedAt            time.Time       `json:"created_at"`
-	UpdatedAt            time.Time       `json:"updated_at"`
+	EmailUnsubscribed        bool            `json:"email_unsubscribed"`
+	EmailUnsubscribedAt      *time.Time      `json:"email_unsubscribed_at,omitempty"`
+	JobPreferences           json.RawMessage `json:"job_preferences,omitempty"`
+	FollowupRemindersEnabled bool            `json:"followup_reminders_enabled"`
+	CreatedAt                time.Time       `json:"created_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
 }
 
 type UserModel struct {
@@ -78,6 +79,7 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11, $11)
 		RETURNING id, email, name, auth_provider, google_id, profile_picture, is_admin,
 		          marketing_opt_in, marketing_opted_at, marketing_opt_in_source, signup_plan_preference,
+		          COALESCE(followup_reminders_enabled, true),
 		          created_at, updated_at
 	`
 
@@ -105,6 +107,7 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		&marketingOptedAt,
 		&marketingSourceNS,
 		&planPreferenceNS,
+		&user.FollowupRemindersEnabled,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -139,6 +142,7 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		       signup_plan_preference,
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
+		       COALESCE(followup_reminders_enabled, true),
 		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
@@ -157,6 +161,7 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		&planPreference,
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
+		&user.FollowupRemindersEnabled,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -188,6 +193,7 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		       signup_plan_preference,
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
+		       COALESCE(followup_reminders_enabled, true),
 		       created_at, updated_at
 		FROM users WHERE id = $1
 	`
@@ -202,6 +208,7 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		&planPreference,
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
+		&user.FollowupRemindersEnabled,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -252,6 +259,20 @@ func (m *UserModel) IsEmailUnsubscribed(email string) (bool, error) {
 		return false, nil
 	}
 	return unsubscribed, err
+}
+
+// SetFollowupReminders updates the followup_reminders_enabled flag for a user
+func (m *UserModel) SetFollowupReminders(userID int, enabled bool) error {
+	query := `UPDATE users SET followup_reminders_enabled = $1, updated_at = $2 WHERE id = $3`
+	result, err := m.DB.Exec(query, enabled, time.Now(), userID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // GetJobPreferences returns the job_preferences JSON for a user

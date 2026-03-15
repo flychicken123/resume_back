@@ -787,14 +787,29 @@ func handleJobApplicationQuery(req chatRequest) *chatResponse {
 	appContext := buildJobApplicationContext(apps, byStatus, total)
 	conversationCtx := buildConversationContext(req.Message, req.History)
 
+	// Compute stale highlight for job application queries
+	staleNote := ""
+	now := time.Now()
+	staleCount := 0
+	for _, app := range apps {
+		if app.Status != "rejected" && app.Status != "withdrawn" && app.Status != "accepted" {
+			if now.Sub(app.StatusUpdatedAt).Hours()/24 >= 7 {
+				staleCount++
+			}
+		}
+	}
+	if staleCount > 0 {
+		staleNote = fmt.Sprintf("\nNote: %d of the user's applications haven't been updated in 7+ days. If the user's question is relevant, mention which ones may need follow-up.\n", staleCount)
+	}
+
 	prompt := fmt.Sprintf(`You are HiHired's AI assistant. The user is asking about their job applications.
 Answer their question based ONLY on the application data provided below. Be concise, friendly, and accurate.
 If the data doesn't contain the answer, say so honestly.
 
 TONE: Be warm, encouraging, and emotionally supportive. Job searching is stressful and exhausting — acknowledge the user's effort and resilience. Celebrate their progress (e.g., "Great news — you have 2 interviews lined up!"). If they have rejections or withdrawals, be empathetic (e.g., "Rejections are tough, but they're a normal part of the process — every 'no' brings you closer to the right 'yes'"). Always end on an encouraging note.
 
-%s
-%s`, appContext, conversationCtx)
+%s%s
+%s`, appContext, staleNote, conversationCtx)
 
 	reply, err := services.CallGeminiWithAPIKey(prompt)
 	if err != nil {

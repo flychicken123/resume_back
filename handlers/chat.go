@@ -284,6 +284,18 @@ func ChatAssistant(c *gin.Context) {
 	userEmail := strings.TrimSpace(req.UserEmail)
 	ctx := c.Request.Context()
 
+	// --- Proactive stale app reminder (first message only) ---
+	var staleReminder string
+	if len(req.History) == 0 && userEmail != "" && chatUserModel != nil && chatJobAppModel != nil {
+		if user, err := chatUserModel.GetByEmail(userEmail); err == nil && user != nil {
+			if user.FollowupRemindersEnabled {
+				if staleApps, err := chatJobAppModel.FindStaleApplications(user.ID, 7); err == nil && len(staleApps) > 0 {
+					staleReminder = buildStaleAppReminder(staleApps)
+				}
+			}
+		}
+	}
+
 	// --- AI Intent Router (primary) ---
 	intent, intentErr := classifyIntent(ctx, userMessage, req.ResumeData, req.History)
 	if intentErr == nil && intent.Intent != IntentGeneralChat && intent.Confidence >= intentConfidenceThreshold {
@@ -381,12 +393,16 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 	resumeContext := buildResumeContext(req.ResumeData)
 
 	var prompt string
+	staleBlock := ""
+	if staleReminder != "" {
+		staleBlock = "\n" + staleReminder + "\n"
+	}
 	if resumeContext != "" {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the confirmed HiHired information and user's resume data above. If the user asks about their resume data, refer to it accurately.",
-			systemInstructions, knowledgeContext, resumeContext, historyBuilder.String(), userMessage)
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the confirmed HiHired information and user's resume data above. If the user asks about their resume data, refer to it accurately.",
+			systemInstructions, knowledgeContext, resumeContext, staleBlock, historyBuilder.String(), userMessage)
 	} else {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using only the confirmed HiHired information above. If unsure, say you will connect them with support.",
-			systemInstructions, knowledgeContext, historyBuilder.String(), userMessage)
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using only the confirmed HiHired information above. If unsure, say you will connect them with support.",
+			systemInstructions, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
 	}
 
 	reply, err := services.CallGeminiWithAPIKey(prompt)
@@ -976,6 +992,40 @@ func nullableSQLString(value string) sql.NullString {
 		return sql.NullString{}
 	}
 	return sql.NullString{String: strings.TrimSpace(value), Valid: true}
+}
+
+// buildStaleAppReminder formats a context block for Gemini about stale applications.
+func buildStaleAppReminder(staleApps []*models.JobApplication) string {
+	if len(staleApps) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "PROACTIVE REMINDER — The user has %d application(s) that haven't been updated in a while.\n", len(staleApps))
+	sb.WriteString("Mention this warmly at the START of your response, before answering their question.\n")
+	sb.WriteString("Here are the longest-waiting ones:\n")
+
+	showCount := len(staleApps)
+	if showCount > 5 {
+		showCount = 5
+	}
+
+	now := time.Now()
+	for i := 0; i < showCount; i++ {
+		app := staleApps[i]
+		daysAgo := int(now.Sub(app.StatusUpdatedAt).Hours() / 24)
+		fmt.Fprintf(&sb, "- %s at %s — Status: %s — Last updated: %d days ago\n",
+			app.JobTitle, app.CompanyName, app.Status, daysAgo)
+	}
+
+	if len(staleApps) > 5 {
+		fmt.Fprintf(&sb, "...and %d more application(s) waiting for follow-up.\n", len(staleApps)-5)
+	}
+
+	sb.WriteString("Suggest they follow up with these companies or update the status on their tracking board.\n")
+	sb.WriteString("Keep the reminder brief (2-3 sentences) and encouraging. Mention the total count, not every individual app.\n")
+
+	return sb.String()
 }
 
 func getMapKeys(m map[string]interface{}) []string {
