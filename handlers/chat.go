@@ -369,12 +369,13 @@ func ChatAssistant(c *gin.Context) {
 
 	log.Printf("[INTENT] No feature matched, using general chat for message=%q", userMessage)
 
-	const systemInstructions = `You are HiHired's AI resume assistant. Keep answers short, clear, and friendly (120 words max).
-Focus on HiHired features: AI resume builder, templates, PDF export, memberships, workflow steps, and support.
+	const systemInstructions = `You are HiHired's AI career coach. Keep answers short, clear, and friendly (120 words max).
+You can help with anything related to job searching and career development: resumes, cover letters, interviews, salary negotiation, networking, LinkedIn profiles, career pivots, job boards, follow-up emails, references, and workplace advice.
+You can also answer questions about HiHired specifically: AI resume builder, templates, PDF export, memberships, and workflow steps.
 When pricing is mentioned, explicitly list the Free, Premium, and Ultimate plans with their benefits.
 When asked how to use the builder, provide step-by-step instructions.
 When the user asks about their resume data (like "what is my name", "what did I enter", "what are my skills"), refer to the user's current resume data provided below and answer accurately.
-If the question is outside scope, briefly say you can only help with HiHired resumes and suggest contacting us via the Help bubble or at hihired_support@tactechs.net.
+If the question is completely unrelated to job searching or careers (e.g., cooking, sports, politics, entertainment), briefly say you are focused on job search and career topics, and suggest contacting us via the Help bubble or at hihired_support@tactechs.net for other help.
 
 IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointment, or sadness about their job search (e.g., "I didn't pass the interview", "I got rejected", "I can't find a job", "nobody is hiring", "I feel hopeless"), respond with genuine warmth and empathy FIRST, before anything else. Acknowledge their feelings, remind them that rejection is a normal part of the process and doesn't define their worth, and encourage them to keep going. Then gently offer how HiHired can help (e.g., optimizing their resume, tailoring it for specific roles). Never dismiss their feelings or jump straight to product features.`
 
@@ -398,10 +399,10 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 		staleBlock = "\n" + staleReminder + "\n"
 	}
 	if resumeContext != "" {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the confirmed HiHired information and user's resume data above. If the user asks about their resume data, refer to it accurately.",
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. If the user asks about their resume data, refer to it accurately. For HiHired product questions, use the product facts provided.",
 			systemInstructions, knowledgeContext, resumeContext, staleBlock, historyBuilder.String(), userMessage)
 	} else {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using only the confirmed HiHired information above. If unsure, say you will connect them with support.",
+		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. For HiHired product questions, use the product facts provided. If unsure, say you will connect them with support.",
 			systemInstructions, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
 	}
 
