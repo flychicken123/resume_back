@@ -35,6 +35,7 @@ type JobEmbeddingBackfillStatus struct {
 type JobEmbeddingBackfillService struct {
 	mu           sync.Mutex
 	status       JobEmbeddingBackfillStatus
+	cancel       context.CancelFunc
 	embeddingSvc *EmbeddingService
 	postings     *models.JobPostingModel
 	logger       *utils.Logger
@@ -74,10 +75,22 @@ func (s *JobEmbeddingBackfillService) Trigger(ctx context.Context, batchSize int
 	s.status.FinishedAt = nil
 	s.status.Running = true
 	s.status.StartedAt = &now
+	runCtx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
 	s.mu.Unlock()
 
-	go s.run(ctx, batchSize)
+	go s.run(runCtx, batchSize)
 	return nil
+}
+
+// Stop cancels a running backfill. Safe to call when no backfill is running.
+func (s *JobEmbeddingBackfillService) Stop() {
+	s.mu.Lock()
+	cancel := s.cancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 }
 
 // Status returns a snapshot of the current backfill run state.
