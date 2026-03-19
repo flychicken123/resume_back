@@ -60,3 +60,9 @@ func (c *JobEmbeddingController) StartBackfill(ctx *gin.Context) {
 func (c *JobEmbeddingController) GetStatus(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, c.svc.Status())
 }
+
+// StopBackfill handles DELETE /api/admin/jobs/embeddings/backfill.
+func (c *JobEmbeddingController) StopBackfill(ctx *gin.Context) {
+	c.svc.Stop()
+	ctx.JSON(http.StatusOK, gin.H{"status": "stopping"})
+}

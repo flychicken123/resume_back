@@ -620,6 +620,7 @@ func main() {
 			admin.DELETE("/experiments/:key", experimentController.DeleteExperiment)
 			admin.POST("/jobs/embeddings/backfill", jobEmbeddingCtrl.StartBackfill)
 			admin.GET("/jobs/embeddings/backfill/status", jobEmbeddingCtrl.GetStatus)
+			admin.DELETE("/jobs/embeddings/backfill", jobEmbeddingCtrl.StopBackfill)
 		}
 	}
 
