@@ -1098,14 +1098,28 @@ func (m *JobPostingModel) UpdateEmbedding(ctx context.Context, id int64, embeddi
 }
 
 // ListActiveWithNullEmbedding returns IDs of active job postings that have no embedding yet.
-func (m *JobPostingModel) ListActiveWithNullEmbedding(limit int) ([]int64, error) {
+// When sinceDays > 0, only jobs posted within the last sinceDays days are returned.
+func (m *JobPostingModel) ListActiveWithNullEmbedding(limit int, sinceDays int) ([]int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := m.db.Query(
-		`SELECT id FROM job_postings WHERE is_active = TRUE AND embedding IS NULL ORDER BY id LIMIT $1`,
-		limit,
-	)
+	var rows *sql.Rows
+	var err error
+	if sinceDays > 0 {
+		// $2::text cast required — PostgreSQL cannot concatenate int directly into interval
+		rows, err = m.db.Query(
+			`SELECT id FROM job_postings
+			 WHERE is_active = TRUE AND embedding IS NULL
+			   AND posted_at >= NOW() - ($2::text || ' days')::interval
+			 ORDER BY id LIMIT $1`,
+			limit, sinceDays,
+		)
+	} else {
+		rows, err = m.db.Query(
+			`SELECT id FROM job_postings WHERE is_active = TRUE AND embedding IS NULL ORDER BY id LIMIT $1`,
+			limit,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1123,11 +1137,22 @@ func (m *JobPostingModel) ListActiveWithNullEmbedding(limit int) ([]int64, error
 }
 
 // CountActiveWithNullEmbedding returns the number of active postings without an embedding.
-func (m *JobPostingModel) CountActiveWithNullEmbedding() (int, error) {
+// When sinceDays > 0, only jobs posted within the last sinceDays days are counted.
+func (m *JobPostingModel) CountActiveWithNullEmbedding(sinceDays int) (int, error) {
 	var count int
-	err := m.db.QueryRow(
-		`SELECT COUNT(*) FROM job_postings WHERE is_active = TRUE AND embedding IS NULL`,
-	).Scan(&count)
+	var err error
+	if sinceDays > 0 {
+		err = m.db.QueryRow(
+			`SELECT COUNT(*) FROM job_postings
+			 WHERE is_active = TRUE AND embedding IS NULL
+			   AND posted_at >= NOW() - ($1::text || ' days')::interval`,
+			sinceDays,
+		).Scan(&count)
+	} else {
+		err = m.db.QueryRow(
+			`SELECT COUNT(*) FROM job_postings WHERE is_active = TRUE AND embedding IS NULL`,
+		).Scan(&count)
+	}
 	return count, err
 }
 

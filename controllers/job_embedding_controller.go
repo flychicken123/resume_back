@@ -24,10 +24,12 @@ func NewJobEmbeddingController(svc *services.JobEmbeddingBackfillService, server
 }
 
 // StartBackfill handles POST /api/admin/jobs/embeddings/backfill.
-// Accepts an optional JSON body: {"batch_size": 500}.
+// Accepts an optional JSON body: {"batch_size": 500, "since_days": 30}.
+// since_days=0 (default) embeds all active jobs with no embedding.
 func (c *JobEmbeddingController) StartBackfill(ctx *gin.Context) {
 	var req struct {
 		BatchSize int `json:"batch_size"`
+		SinceDays int `json:"since_days"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
@@ -39,7 +41,7 @@ func (c *JobEmbeddingController) StartBackfill(ctx *gin.Context) {
 		batchSize = 500
 	}
 
-	err := c.svc.Trigger(c.serverCtx, batchSize)
+	err := c.svc.Trigger(c.serverCtx, batchSize, req.SinceDays)
 	if errors.Is(err, services.ErrAlreadyRunning) {
 		ctx.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return

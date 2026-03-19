@@ -28,6 +28,7 @@ type JobEmbeddingBackfillStatus struct {
 	Processed  int        `json:"processed"`
 	Errors     int        `json:"errors"`
 	Total      int        `json:"total"`
+	SinceDays  int        `json:"since_days"`
 }
 
 // JobEmbeddingBackfillService generates embeddings for all active job postings
@@ -55,7 +56,8 @@ func NewJobEmbeddingBackfillService(postings *models.JobPostingModel, embeddingS
 
 // Trigger starts a background backfill run. Returns ErrEmbeddingSvcNotConfigured if
 // the embedding service is nil, or ErrAlreadyRunning if a run is already in progress.
-func (s *JobEmbeddingBackfillService) Trigger(ctx context.Context, batchSize int) error {
+// When sinceDays > 0, only jobs posted within the last sinceDays days are embedded.
+func (s *JobEmbeddingBackfillService) Trigger(ctx context.Context, batchSize int, sinceDays int) error {
 	if s.embeddingSvc == nil {
 		return ErrEmbeddingSvcNotConfigured
 	}
@@ -75,11 +77,12 @@ func (s *JobEmbeddingBackfillService) Trigger(ctx context.Context, batchSize int
 	s.status.FinishedAt = nil
 	s.status.Running = true
 	s.status.StartedAt = &now
+	s.status.SinceDays = sinceDays
 	runCtx, cancel := context.WithCancel(ctx)
 	s.cancel = cancel
 	s.mu.Unlock()
 
-	go s.run(runCtx, batchSize)
+	go s.run(runCtx, batchSize, sinceDays)
 	return nil
 }
 
@@ -101,7 +104,7 @@ func (s *JobEmbeddingBackfillService) Status() JobEmbeddingBackfillStatus {
 	return snap
 }
 
-func (s *JobEmbeddingBackfillService) run(ctx context.Context, batchSize int) {
+func (s *JobEmbeddingBackfillService) run(ctx context.Context, batchSize int, sinceDays int) {
 	defer func() {
 		finishedAt := time.Now()
 		s.mu.Lock()
@@ -111,7 +114,7 @@ func (s *JobEmbeddingBackfillService) run(ctx context.Context, batchSize int) {
 	}()
 
 	// Populate total count before starting
-	total, err := s.postings.CountActiveWithNullEmbedding()
+	total, err := s.postings.CountActiveWithNullEmbedding(sinceDays)
 	if err != nil {
 		total = -1
 	}
@@ -120,7 +123,7 @@ func (s *JobEmbeddingBackfillService) run(ctx context.Context, batchSize int) {
 	s.mu.Unlock()
 
 	for {
-		ids, err := s.postings.ListActiveWithNullEmbedding(batchSize)
+		ids, err := s.postings.ListActiveWithNullEmbedding(batchSize, sinceDays)
 		if err != nil {
 			s.logger.Error("backfill: list failed", err)
 			return

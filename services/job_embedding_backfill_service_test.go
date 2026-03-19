@@ -8,7 +8,7 @@ import (
 
 func TestTriggerReturnsErrEmbeddingSvcNotConfigured(t *testing.T) {
 	svc := NewJobEmbeddingBackfillService(nil, nil, nil)
-	err := svc.Trigger(context.Background(), 100)
+	err := svc.Trigger(context.Background(), 100, 0)
 	if !errors.Is(err, ErrEmbeddingSvcNotConfigured) {
 		t.Fatalf("expected ErrEmbeddingSvcNotConfigured, got %v", err)
 	}
@@ -20,7 +20,7 @@ func TestTriggerReturnsErrAlreadyRunning(t *testing.T) {
 	svc.status.Running = true
 	svc.mu.Unlock()
 
-	err := svc.Trigger(context.Background(), 100)
+	err := svc.Trigger(context.Background(), 100, 0)
 	if !errors.Is(err, ErrAlreadyRunning) {
 		t.Fatalf("expected ErrAlreadyRunning, got %v", err)
 	}
