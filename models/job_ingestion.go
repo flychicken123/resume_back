@@ -988,7 +988,7 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx, "SET LOCAL hnsw.ef_search = 100"); err != nil {
 		return nil, err
