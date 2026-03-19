@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lib/pq"
+	"github.com/pgvector/pgvector-go"
 )
 
 type rowScanner interface {
@@ -634,7 +635,14 @@ func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, error) {
             raw_payload = EXCLUDED.raw_payload,
             is_active = TRUE,
             last_seen_at = CURRENT_TIMESTAMP,
-            closed_at = NULL
+            closed_at = NULL,
+            embedding = CASE
+                WHEN EXCLUDED.description IS DISTINCT FROM job_postings.description
+                  OR EXCLUDED.title IS DISTINCT FROM job_postings.title
+                  OR EXCLUDED.department IS DISTINCT FROM job_postings.department
+                THEN NULL
+                ELSE job_postings.embedding
+            END
         RETURNING id, first_seen_at, last_seen_at, is_active, (xmax = 0) AS inserted
     `
 
@@ -967,6 +975,177 @@ func (m *JobPostingModel) DeleteInactiveBefore(ctx context.Context, cutoff time.
 		return 0, err
 	}
 	return res.RowsAffected()
+}
+
+// ListActiveByVectorSimilarity returns active job postings whose embedding cosine
+// similarity to the given vector meets the threshold, ordered by similarity.
+func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embedding []float32, limit int, threshold float32) ([]*JobPosting, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+
+	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, "SET LOCAL hnsw.ef_search = 100"); err != nil {
+		return nil, err
+	}
+
+	const query = `
+		SELECT id, company_id, external_job_id, title,
+		       COALESCE(location, ''), COALESCE(remote_type, ''),
+		       COALESCE(department, ''), COALESCE(employment_type, ''),
+		       job_url, COALESCE(application_url, ''),
+		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
+		       posted_at, first_seen_at, last_seen_at, closed_at, is_active
+		FROM job_postings
+		WHERE is_active = TRUE
+		  AND embedding IS NOT NULL
+		  AND 1 - (embedding <=> $1::halfvec) >= $2
+		ORDER BY embedding <=> $1::halfvec
+		LIMIT $3
+	`
+
+	rows, err := tx.QueryContext(ctx, query, pgvector.NewVector(embedding), threshold, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var postings []*JobPosting
+	for rows.Next() {
+		var posting JobPosting
+		var postedAt sql.NullTime
+		var closedAt sql.NullTime
+		var location sql.NullString
+		var remoteType sql.NullString
+		var department sql.NullString
+		var employmentType sql.NullString
+		var applicationURL sql.NullString
+		var description sql.NullString
+		var salaryCurrency sql.NullString
+
+		if err := rows.Scan(
+			&posting.ID,
+			&posting.CompanyID,
+			&posting.ExternalJobID,
+			&posting.Title,
+			&location,
+			&remoteType,
+			&department,
+			&employmentType,
+			&posting.JobURL,
+			&applicationURL,
+			&description,
+			&posting.SalaryMin,
+			&posting.SalaryMax,
+			&salaryCurrency,
+			&postedAt,
+			&posting.FirstSeenAt,
+			&posting.LastSeenAt,
+			&closedAt,
+			&posting.IsActive,
+		); err != nil {
+			return nil, err
+		}
+
+		posting.Location = location.String
+		posting.RemoteType = remoteType.String
+		posting.Department = department.String
+		posting.EmploymentType = employmentType.String
+		posting.ApplicationURL = applicationURL.String
+		posting.Description = description.String
+		posting.SalaryCurrency = salaryCurrency.String
+
+		if postedAt.Valid {
+			ts := postedAt.Time
+			posting.PostedAt = &ts
+		}
+		if closedAt.Valid {
+			ts := closedAt.Time
+			posting.ClosedAt = &ts
+		}
+
+		postings = append(postings, &posting)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return postings, nil
+}
+
+// UpdateEmbedding sets the embedding vector for a job posting by ID.
+func (m *JobPostingModel) UpdateEmbedding(ctx context.Context, id int64, embedding []float32) error {
+	res, err := m.db.ExecContext(ctx,
+		`UPDATE job_postings SET embedding = $1::halfvec WHERE id = $2`,
+		pgvector.NewVector(embedding), id,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("job posting %d not found", id)
+	}
+	return nil
+}
+
+// ListActiveWithNullEmbedding returns IDs of active job postings that have no embedding yet.
+func (m *JobPostingModel) ListActiveWithNullEmbedding(limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := m.db.Query(
+		`SELECT id FROM job_postings WHERE is_active = TRUE AND embedding IS NULL ORDER BY id LIMIT $1`,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountActiveWithNullEmbedding returns the number of active postings without an embedding.
+func (m *JobPostingModel) CountActiveWithNullEmbedding() (int, error) {
+	var count int
+	err := m.db.QueryRow(
+		`SELECT COUNT(*) FROM job_postings WHERE is_active = TRUE AND embedding IS NULL`,
+	).Scan(&count)
+	return count, err
+}
+
+// GetByIDForEmbedding fetches the fields needed to generate a job embedding.
+func (m *JobPostingModel) GetByIDForEmbedding(ctx context.Context, id int64) (*JobPosting, error) {
+	var posting JobPosting
+	err := m.db.QueryRowContext(ctx,
+		`SELECT id, COALESCE(title,''), COALESCE(department,''), COALESCE(description,'')
+		 FROM job_postings WHERE id = $1`,
+		id,
+	).Scan(&posting.ID, &posting.Title, &posting.Department, &posting.Description)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("job posting %d not found", id)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &posting, nil
 }
 
 // JobSyncRunModel records historical sync attempts

@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -34,24 +35,53 @@ type ResumeJobMatcher interface {
 	MatchAndStore(ctx context.Context, input ResumeJobMatchInput) ([]*models.ResumeJobMatchRecord, error)
 }
 
-type jobMatcherService struct {
-	postings *models.JobPostingModel
-	matches  *models.ResumeJobMatchModel
-	logger   *utils.Logger
-	copilot  *CopilotAgent
+type resumeEmbeddingCacheEntry struct {
+	vec    []float32
+	expiry time.Time
 }
 
+type jobMatcherService struct {
+	postings       *models.JobPostingModel
+	matches        *models.ResumeJobMatchModel
+	logger         *utils.Logger
+	copilot        *CopilotAgent
+	embeddingSvc   *EmbeddingService
+	embeddingCache sync.Map
+}
+
+const vectorSimilarityThreshold float32 = 0.5
+
 // NewJobMatcherService wires a job matcher service.
-func NewJobMatcherService(postings *models.JobPostingModel, matches *models.ResumeJobMatchModel, logger *utils.Logger, copilot *CopilotAgent) ResumeJobMatcher {
+func NewJobMatcherService(postings *models.JobPostingModel, matches *models.ResumeJobMatchModel, logger *utils.Logger, copilot *CopilotAgent, embeddingSvc *EmbeddingService, ctx context.Context) ResumeJobMatcher {
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
-	return &jobMatcherService{
-		postings: postings,
-		matches:  matches,
-		logger:   logger,
-		copilot:  copilot,
+	svc := &jobMatcherService{
+		postings:     postings,
+		matches:      matches,
+		logger:       logger,
+		copilot:      copilot,
+		embeddingSvc: embeddingSvc,
 	}
+	go func() {
+		ticker := time.NewTicker(30 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				svc.embeddingCache.Range(func(key, value interface{}) bool {
+					entry := value.(resumeEmbeddingCacheEntry)
+					if time.Now().After(entry.expiry) {
+						svc.embeddingCache.Delete(key)
+					}
+					return true
+				})
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return svc
 }
 
 type scoredJob struct {
@@ -93,7 +123,7 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	}
 
 	// Two-pass approach:
-	// Pass 1: SQL-level filter by skills/position (broader pool)
+	// Pass 1: Vector similarity search (or keyword fallback)
 	// Pass 2: Full heuristic scoring on filtered set
 
 	limit := input.CandidateJobLimit
@@ -104,14 +134,65 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 	position := strings.ToLower(strings.TrimSpace(input.Position))
 	skills := normaliseSkills(input.Skills)
 
-	// Pass 1: Get jobs filtered by relevance (skills/position match in SQL)
-	jobs, err := s.postings.ListActiveByRelevance(skills, input.Position, limit)
-	if err != nil {
-		// Fallback to original method if new method fails
-		s.logger.Warn("ListActiveByRelevance failed, falling back to ListActive", map[string]interface{}{"error": err.Error()})
-		jobs, err = s.postings.ListActive(nil, limit)
-		if err != nil {
-			return nil, err
+	// Attempt to generate a resume embedding for vector search
+	var vec []float32
+	if s.embeddingSvc != nil {
+		// Check cache first
+		if input.ResumeHash != "" {
+			if v, ok := s.embeddingCache.Load(input.ResumeHash); ok {
+				entry := v.(resumeEmbeddingCacheEntry)
+				if time.Now().Before(entry.expiry) {
+					vec = entry.vec
+					s.logger.Info("job match: embedding cache hit, skipping API call")
+				}
+			}
+		}
+		// Cache miss — call the API
+		if len(vec) == 0 {
+			embCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			v, err := s.embeddingSvc.EmbedResumeContent(embCtx, input)
+			if err != nil || len(v) == 0 {
+				s.logger.Warn("job match: resume embedding failed, falling back to keyword search", map[string]interface{}{"error": func() string {
+					if err != nil {
+						return err.Error()
+					}
+					return "empty vector"
+				}()})
+			} else {
+				vec = v
+				if input.ResumeHash != "" {
+					s.embeddingCache.Store(input.ResumeHash, resumeEmbeddingCacheEntry{
+						vec:    vec,
+						expiry: time.Now().Add(time.Hour),
+					})
+				}
+			}
+		}
+	}
+
+	// Pass 1: Three-level candidate retrieval
+	var jobs []*models.JobPosting
+	if len(vec) > 0 {
+		var vecErr error
+		jobs, vecErr = s.postings.ListActiveByVectorSimilarity(ctx, vec, limit, vectorSimilarityThreshold)
+		if vecErr != nil || len(jobs) == 0 {
+			s.logger.Info("job match: vector search empty/failed, falling back to keyword search")
+			jobs = nil
+		} else {
+			s.logger.Info("job match: using vector search", map[string]interface{}{"candidates": len(jobs)})
+		}
+	}
+	if jobs == nil {
+		var kwErr error
+		jobs, kwErr = s.postings.ListActiveByRelevance(skills, input.Position, limit)
+		if kwErr != nil {
+			s.logger.Warn("ListActiveByRelevance failed, falling back to ListActive", map[string]interface{}{"error": kwErr.Error()})
+			var fallbackErr error
+			jobs, fallbackErr = s.postings.ListActive(nil, limit)
+			if fallbackErr != nil {
+				return nil, fallbackErr
+			}
 		}
 	}
 

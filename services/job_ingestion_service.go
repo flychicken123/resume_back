@@ -7,7 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
+
+	"google.golang.org/api/googleapi"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"resumeai/models"
 	"resumeai/utils"
@@ -100,13 +105,20 @@ type JobIngestionService struct {
 	providers    map[string]ATSProvider
 	logger       *utils.Logger
 	clock        func() time.Time
+	embeddingSvc *EmbeddingService
+	ctx          context.Context
+	embedMu      sync.Mutex
+	embedRunning bool
 }
 
 const dailySyncInterval = 24 * time.Hour
 
-func NewJobIngestionService(db *sql.DB, logger *utils.Logger) *JobIngestionService {
+func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *EmbeddingService, ctx context.Context) *JobIngestionService {
 	if logger == nil {
 		logger = utils.NewLogger()
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	service := &JobIngestionService{
@@ -116,6 +128,8 @@ func NewJobIngestionService(db *sql.DB, logger *utils.Logger) *JobIngestionServi
 		providers:    map[string]ATSProvider{},
 		logger:       logger,
 		clock:        time.Now,
+		embeddingSvc: embeddingSvc,
+		ctx:          ctx,
 	}
 
 	httpClient := &http.Client{Timeout: 20 * time.Second}
@@ -205,6 +219,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	result.JobsFound = len(jobs)
 
 	activeIDs := make([]string, 0, len(jobs))
+	newIDs := make([]int64, 0)
 	now := s.clock()
 
 	for _, job := range jobs {
@@ -219,6 +234,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 		}
 		if inserted {
 			result.JobsCreated++
+			newIDs = append(newIDs, job.ID)
 		} else {
 			result.JobsUpdated++
 		}
@@ -233,7 +249,88 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	result.JobsClosed = int(closedCount)
 
 	finish("success", nil)
+	if len(newIDs) > 0 && s.embeddingSvc != nil {
+		go s.embedJobPostingsBatch(s.ctx, newIDs)
+	}
 	return result, nil
+}
+
+// embedJobPostingsBatch generates and stores embeddings for a set of newly inserted job IDs.
+// Only one batch runs at a time; concurrent calls are silently skipped (jobs will be
+// picked up by the next backfill run).
+func (s *JobIngestionService) embedJobPostingsBatch(ctx context.Context, ids []int64) {
+	s.embedMu.Lock()
+	if s.embedRunning {
+		s.embedMu.Unlock()
+		return
+	}
+	s.embedRunning = true
+	s.embedMu.Unlock()
+
+	defer func() {
+		s.embedMu.Lock()
+		s.embedRunning = false
+		s.embedMu.Unlock()
+	}()
+
+	for _, id := range ids {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		posting, err := s.postingModel.GetByIDForEmbedding(ctx, id)
+		if err != nil {
+			s.logger.Warn("embedJobPostingsBatch: failed to fetch posting", map[string]interface{}{"id": id, "error": err.Error()})
+			continue
+		}
+
+		var vec []float32
+		var embedErr error
+		for attempt := 0; attempt <= 3; attempt++ {
+			if attempt > 0 {
+				backoff := time.Duration(1<<uint(attempt-1)) * time.Second
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					return
+				}
+			}
+			vec, embedErr = s.embeddingSvc.EmbedJobPosting(ctx, posting)
+			if embedErr == nil {
+				break
+			}
+			var apiErr *googleapi.Error
+			if errors.As(embedErr, &apiErr) && apiErr.Code == 429 {
+				continue
+			}
+			if status.Code(embedErr) == codes.ResourceExhausted {
+				continue
+			}
+			break
+		}
+
+		if embedErr != nil {
+			s.logger.Warn("embedJobPostingsBatch: embedding failed", map[string]interface{}{"id": id, "error": embedErr.Error()})
+			continue
+		}
+		if len(vec) == 0 {
+			s.logger.Warn("embedJobPostingsBatch: empty vector", map[string]interface{}{"id": id})
+			continue
+		}
+
+		if err := s.postingModel.UpdateEmbedding(ctx, id, vec); err != nil {
+			s.logger.Warn("embedJobPostingsBatch: failed to store embedding", map[string]interface{}{"id": id, "error": err.Error()})
+			continue
+		}
+
+		select {
+		case <-time.After(50 * time.Millisecond):
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *JobIngestionService) SyncAllCompanies(ctx context.Context) error {

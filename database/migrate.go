@@ -103,6 +103,18 @@ func schemaAppearsComplete(db *sql.DB, version uint) bool {
 		15: {"resumes"}, // profile columns
 	}
 
+	// Version 20 adds the embedding column to job_postings — check for it explicitly.
+	if version == 20 {
+		var exists bool
+		err := db.QueryRow(`
+			SELECT EXISTS (
+				SELECT FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'job_postings' AND column_name = 'embedding'
+			)
+		`).Scan(&exists)
+		return err == nil && exists
+	}
+
 	tables, ok := tableChecks[version]
 	if !ok {
 		// Unknown version, assume complete

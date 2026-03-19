@@ -30,6 +30,13 @@ func main() {
 
 	logger := utils.NewLogger()
 
+	ctx, cancel := context.WithCancel(context.Background())
+	embeddingSvc, embErr := services.NewEmbeddingService(os.Getenv("GEMINI_API_KEY"))
+	if embErr != nil {
+		logger.Warn("embedding service unavailable", map[string]interface{}{"error": embErr.Error()})
+		embeddingSvc = nil
+	}
+
 	dbConfig := appConfig.Database
 
 	fmt.Println("[BUILD] version=2026-02-14-v2 temperature=0 parse")
@@ -54,6 +61,12 @@ func main() {
 		log.Fatal("Error connecting to database:", err)
 	}
 	defer db.Close()
+	defer func() {
+		cancel()
+		if embeddingSvc != nil {
+			embeddingSvc.Close()
+		}
+	}()
 
 	log.Println("Database connection successful!")
 
@@ -97,7 +110,7 @@ func main() {
 	stripeService := services.NewStripeService(db)
 	adService := services.NewAdService(db)
 	emailService := services.NewEmailService(logger)
-	jobsService := services.NewJobIngestionService(db, logger)
+	jobsService := services.NewJobIngestionService(db, logger, embeddingSvc, ctx)
 	experimentService := services.NewExperimentService(experimentModel)
 
 	// Initialize the LangChain-backed copilot agent once and share it between
@@ -111,7 +124,7 @@ func main() {
 		handlers.SetCopilotAgent(agent)
 	}
 
-	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger, copilotAgent)
+	jobMatcherService := services.NewJobMatcherService(jobPostingModel, jobMatchModel, logger, copilotAgent, embeddingSvc, ctx)
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	handlers.SetChatModels(userModel, jobAppModel)
@@ -197,11 +210,11 @@ func main() {
 	experimentController := controllers.NewExperimentController(experimentService)
 	adsController := controllers.NewAdsController(db, adService, stripeService)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	jobsService.StartScheduler(ctx, 24*time.Hour)
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
+	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
+	jobEmbeddingCtrl := controllers.NewJobEmbeddingController(jobEmbeddingBackfill, ctx)
 	jobMatchNotifier.Start(ctx, 100*time.Hour)
 
 	r := gin.New()
@@ -605,6 +618,8 @@ func main() {
 			admin.POST("/experiments", experimentController.CreateOrUpdateExperiment)
 			admin.GET("/experiments/:key/metrics", experimentController.GetExperimentMetrics)
 			admin.DELETE("/experiments/:key", experimentController.DeleteExperiment)
+			admin.POST("/jobs/embeddings/backfill", jobEmbeddingCtrl.StartBackfill)
+			admin.GET("/jobs/embeddings/backfill/status", jobEmbeddingCtrl.GetStatus)
 		}
 	}
 
