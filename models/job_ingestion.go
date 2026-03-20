@@ -705,7 +705,8 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
                COALESCE(department, ''), COALESCE(employment_type, ''),
                job_url, COALESCE(application_url, ''),
                COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
-               posted_at, first_seen_at, last_seen_at, closed_at, is_active
+               posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+               COALESCE(career_field, ''), extracted_skills
         FROM job_postings
         WHERE %s
         ORDER BY COALESCE(posted_at, first_seen_at) DESC
@@ -751,6 +752,8 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
 			&posting.LastSeenAt,
 			&closedAt,
 			&posting.IsActive,
+			&posting.CareerField,
+			(*pq.StringArray)(&posting.ExtractedSkills),
 		); err != nil {
 			return nil, err
 		}
@@ -877,6 +880,8 @@ func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string
 			&posting.LastSeenAt,
 			&closedAt,
 			&posting.IsActive,
+			&posting.CareerField,
+			(*pq.StringArray)(&posting.ExtractedSkills),
 		); err != nil {
 			return nil, err
 		}
@@ -1004,6 +1009,7 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 		       job_url, COALESCE(application_url, ''),
 		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
 		       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+		       COALESCE(career_field, ''), extracted_skills,
 		       1 - (embedding <=> $1::halfvec) AS similarity
 		FROM job_postings
 		WHERE is_active = TRUE
@@ -1052,6 +1058,8 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 			&posting.LastSeenAt,
 			&closedAt,
 			&posting.IsActive,
+			&posting.CareerField,
+			(*pq.StringArray)(&posting.ExtractedSkills),
 			&posting.EmbeddingSimilarity,
 		); err != nil {
 			return nil, err
