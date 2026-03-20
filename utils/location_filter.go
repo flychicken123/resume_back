@@ -351,12 +351,38 @@ func containsLocationKeyword(normalized string, keywords []string) bool {
 	return false
 }
 
+var usStateAbbreviations = map[string]bool{
+	"al": true, "ak": true, "az": true, "ar": true, "ca": true,
+	"co": true, "ct": true, "de": true, "dc": true, "fl": true,
+	"ga": true, "hi": true, "id": true, "il": true, "in": true,
+	"ia": true, "ks": true, "ky": true, "la": true, "me": true,
+	"md": true, "ma": true, "mi": true, "mn": true, "ms": true,
+	"mo": true, "mt": true, "ne": true, "nv": true, "nh": true,
+	"nj": true, "nm": true, "ny": true, "nc": true, "nd": true,
+	"oh": true, "ok": true, "or": true, "pa": true, "ri": true,
+	"sc": true, "sd": true, "tn": true, "tx": true, "ut": true,
+	"vt": true, "va": true, "wa": true, "wv": true, "wi": true,
+	"wy": true,
+}
+
 func LooksUSLocation(value string) bool {
 	normalized := normalizeLocationString(sanitizeLocationString(value))
 	if normalized == "" {
 		return false
 	}
-	return containsLocationKeyword(normalized, usLocationKeywords)
+	if containsLocationKeyword(normalized, usLocationKeywords) {
+		return true
+	}
+	// Token-based state abbreviation matching
+	tokens := strings.FieldsFunc(normalized, func(r rune) bool {
+		return r == ',' || r == '/' || r == '-' || r == ' '
+	})
+	for _, token := range tokens {
+		if usStateAbbreviations[token] {
+			return true
+		}
+	}
+	return false
 }
 
 func LooksCanadianLocation(value string) bool {

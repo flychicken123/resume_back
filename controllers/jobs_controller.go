@@ -400,6 +400,9 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		CandidateJobLimit int      `json:"candidateJobLimit"`
 		MaxResults        int      `json:"maxResults"`
 		QuickMode         bool     `json:"quickMode"` // If true, skip AI filter for instant results
+		ExcludeKeywords   []string `json:"exclude_keywords"`
+		USOnly            bool     `json:"us_only"`
+		RemoteOnly        bool     `json:"remote_only"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -465,6 +468,15 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		if utils.JobLooksLikeInternRole(match.JobTitle, match.JobDescription) {
 			continue
 		}
+		if req.RemoteOnly && !strings.Contains(strings.ToLower(match.JobRemoteType), "remote") {
+			continue
+		}
+		if req.USOnly && !utils.LooksUSLocation(match.JobLocation) && !utils.LooksUSLocation(match.JobRemoteType) {
+			continue
+		}
+		if matchesExcludeKeywords(match, req.ExcludeKeywords) {
+			continue
+		}
 		filteredMatches = append(filteredMatches, match)
 	}
 	matches = filteredMatches
@@ -509,6 +521,10 @@ func (jc *JobsController) ListMatchedJobs(c *gin.Context) {
 	}
 
 	resumeHash := strings.TrimSpace(c.Query("resume_hash"))
+	excludeKeywords := parseExcludeKeywords(c.Query("exclude_keywords"))
+	usOnly := c.Query("us_only") == "true"
+	remoteOnly := c.Query("remote_only") == "true"
+
 	var (
 		matches       []*models.ResumeJobMatchRecord
 		effectiveHash string
@@ -532,9 +548,19 @@ func (jc *JobsController) ListMatchedJobs(c *gin.Context) {
 		if utils.JobLooksLikeInternRole(match.JobTitle, match.JobDescription) {
 			continue
 		}
-		if utils.IsSupportedJobLocation(match.JobLocation, match.JobRemoteType) {
-			filteredMatches = append(filteredMatches, match)
+		if !utils.IsSupportedJobLocation(match.JobLocation, match.JobRemoteType) {
+			continue
 		}
+		if remoteOnly && !strings.Contains(strings.ToLower(match.JobRemoteType), "remote") {
+			continue
+		}
+		if usOnly && !utils.LooksUSLocation(match.JobLocation) && !utils.LooksUSLocation(match.JobRemoteType) {
+			continue
+		}
+		if matchesExcludeKeywords(match, excludeKeywords) {
+			continue
+		}
+		filteredMatches = append(filteredMatches, match)
 	}
 
 	matches = filteredMatches
@@ -917,4 +943,37 @@ func (jc *JobsController) UndismissMatch(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func parseExcludeKeywords(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	keywords := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if k := strings.TrimSpace(strings.ToLower(p)); k != "" {
+			keywords = append(keywords, k)
+		}
+	}
+	return keywords
+}
+
+func matchesExcludeKeywords(match *models.ResumeJobMatchRecord, keywords []string) bool {
+	if len(keywords) == 0 {
+		return false
+	}
+	haystack := strings.ToLower(strings.Join([]string{
+		match.JobTitle, match.JobDescription, match.JobDepartment,
+		match.JobLocation, match.JobRemoteType, match.JobEmployment,
+	}, " "))
+	if match.CompanyName != nil {
+		haystack += " " + strings.ToLower(*match.CompanyName)
+	}
+	for _, kw := range keywords {
+		if strings.Contains(haystack, kw) {
+			return true
+		}
+	}
+	return false
 }
