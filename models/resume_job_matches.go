@@ -121,15 +121,31 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 	}
 
 	query := `
-       SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
-              COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
-              COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-              COALESCE(p.description, ''), p.company_id, c.name
+        WITH dismiss_centroid AS (
+            SELECT AVG(jp.embedding) AS centroid
+            FROM dismissed_job_matches djm
+            JOIN job_postings jp ON jp.id = djm.job_posting_id
+            WHERE djm.user_id = $1 AND jp.embedding IS NOT NULL
+            HAVING COUNT(*) >= 3
+        )
+        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
+               CASE WHEN dc.centroid IS NOT NULL AND p.embedding IS NOT NULL
+                    THEN GREATEST(0, m.match_score - GREATEST(0,
+                        (1 - (p.embedding <=> dc.centroid) - 0.70) * 15))
+                    ELSE m.match_score
+               END AS match_score,
+               m.matched_at,
+               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
+               COALESCE(p.description, ''), p.company_id, c.name
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
+        LEFT JOIN dismiss_centroid dc ON TRUE
         WHERE m.user_id = $1 AND m.resume_hash = $2
-        ORDER BY m.match_score DESC, m.matched_at DESC
+          AND m.job_posting_id NOT IN (
+              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
+        ORDER BY match_score DESC, m.matched_at DESC
         LIMIT $3
     `
 
@@ -228,15 +244,31 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 	}
 
 	query := `
-        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id, m.match_score, m.matched_at,
+        WITH dismiss_centroid AS (
+            SELECT AVG(jp.embedding) AS centroid
+            FROM dismissed_job_matches djm
+            JOIN job_postings jp ON jp.id = djm.job_posting_id
+            WHERE djm.user_id = $1 AND jp.embedding IS NOT NULL
+            HAVING COUNT(*) >= 3
+        )
+        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
+               CASE WHEN dc.centroid IS NOT NULL AND p.embedding IS NOT NULL
+                    THEN GREATEST(0, m.match_score - GREATEST(0,
+                        (1 - (p.embedding <=> dc.centroid) - 0.70) * 15))
+                    ELSE m.match_score
+               END AS match_score,
+               m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
                COALESCE(p.description, ''), p.company_id, c.name
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
+        LEFT JOIN dismiss_centroid dc ON TRUE
         WHERE m.user_id = $1
-        ORDER BY m.match_score DESC, m.matched_at DESC
+          AND m.job_posting_id NOT IN (
+              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
+        ORDER BY match_score DESC, m.matched_at DESC
         LIMIT $2
     `
 
@@ -304,7 +336,12 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 // CountByUserAndResume returns how many matches are stored for a resume.
 func (m *ResumeJobMatchModel) CountByUserAndResume(userID int, resumeHash string) (int, error) {
 	var count int
-	err := m.db.QueryRow(`SELECT COUNT(*) FROM resume_job_matches WHERE user_id = $1 AND resume_hash = $2`, userID, resumeHash).Scan(&count)
+	err := m.db.QueryRow(`
+		SELECT COUNT(*) FROM resume_job_matches m
+		WHERE m.user_id = $1 AND m.resume_hash = $2
+		  AND m.job_posting_id NOT IN (
+		      SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
+	`, userID, resumeHash).Scan(&count)
 	return count, err
 }
 

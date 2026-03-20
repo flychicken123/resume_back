@@ -128,7 +128,8 @@ func main() {
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	handlers.SetChatModels(userModel, jobAppModel)
-	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, jobMatcherService, jobsService)
+	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)
+	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, dismissedJobMatchModel, jobMatcherService, jobsService)
 	jobAppController := controllers.NewJobApplicationController(jobAppModel, jobPostingModel, jobMatchModel)
 	geoService := services.NewGeoService(time.Now().UTC())
 	if jobIntentAgent, err := services.NewJobIntentAgent(); err != nil {
@@ -503,6 +504,8 @@ func main() {
 
 		protected.POST("/jobs/matches", jobsController.ComputeMatches)
 		protected.GET("/jobs/matches", jobsController.ListMatchedJobs)
+		protected.POST("/jobs/matches/dismiss", jobsController.DismissMatch)
+		protected.POST("/jobs/matches/undismiss", jobsController.UndismissMatch)
 		protected.GET("/jobs/:id", jobsController.GetJobByID)
 
 		// Job application tracking routes

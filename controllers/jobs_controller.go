@@ -21,24 +21,26 @@ import (
 )
 
 type JobsController struct {
-	companies *models.JobCompanyModel
-	postings  *models.JobPostingModel
-	syncRuns  *models.JobSyncRunModel
-	matches   *models.ResumeJobMatchModel
-	matcher   services.ResumeJobMatcher
-	ingest    *services.JobIngestionService
-	importer  *services.CompanyImportService
+	companies  *models.JobCompanyModel
+	postings   *models.JobPostingModel
+	syncRuns   *models.JobSyncRunModel
+	matches    *models.ResumeJobMatchModel
+	dismissals *models.DismissedJobMatchModel
+	matcher    services.ResumeJobMatcher
+	ingest     *services.JobIngestionService
+	importer   *services.CompanyImportService
 }
 
-func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPostingModel, syncRuns *models.JobSyncRunModel, matches *models.ResumeJobMatchModel, matcher services.ResumeJobMatcher, ingest *services.JobIngestionService) *JobsController {
+func NewJobsController(companies *models.JobCompanyModel, postings *models.JobPostingModel, syncRuns *models.JobSyncRunModel, matches *models.ResumeJobMatchModel, dismissals *models.DismissedJobMatchModel, matcher services.ResumeJobMatcher, ingest *services.JobIngestionService) *JobsController {
 	return &JobsController{
-		companies: companies,
-		postings:  postings,
-		syncRuns:  syncRuns,
-		matches:   matches,
-		matcher:   matcher,
-		ingest:    ingest,
-		importer:  services.NewCompanyImportService(companies),
+		companies:  companies,
+		postings:   postings,
+		syncRuns:   syncRuns,
+		matches:    matches,
+		dismissals: dismissals,
+		matcher:    matcher,
+		ingest:     ingest,
+		importer:   services.NewCompanyImportService(companies),
 	}
 }
 
@@ -844,4 +846,75 @@ func trimPointer(value *string) *string {
 		return nil
 	}
 	return &trimmed
+}
+
+// DismissMatch records a user's dismissal of a job match.
+func (jc *JobsController) DismissMatch(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	userID, ok := normalizeUserID(userIDVal)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	var req struct {
+		JobPostingID int64  `json:"job_posting_id"`
+		Reason       string `json:"reason"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.JobPostingID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job_posting_id"})
+		return
+	}
+	if !models.IsValidDismissReason(req.Reason) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid dismiss reason"})
+		return
+	}
+
+	if err := jc.dismissals.Dismiss(userID, req.JobPostingID, req.Reason); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to dismiss job match"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true, "job_posting_id": req.JobPostingID})
+}
+
+// UndismissMatch removes a user's dismissal of a job match.
+func (jc *JobsController) UndismissMatch(c *gin.Context) {
+	userIDVal, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+	userID, ok := normalizeUserID(userIDVal)
+	if !ok {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid user context"})
+		return
+	}
+
+	var req struct {
+		JobPostingID int64 `json:"job_posting_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+	if req.JobPostingID <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job_posting_id"})
+		return
+	}
+
+	if err := jc.dismissals.Undismiss(userID, req.JobPostingID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to undismiss job match"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
 }
