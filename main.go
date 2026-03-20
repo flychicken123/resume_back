@@ -613,6 +613,16 @@ func main() {
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 			admin.PATCH("/jobs/companies/:id/status", jobsController.UpdateCompanyStatus)
+
+			// Admin job postings management
+			admin.GET("/jobs/postings", jobsController.AdminListPostings)
+			admin.GET("/jobs/postings/:id", jobsController.AdminGetPosting)
+			admin.PUT("/jobs/postings/:id", jobsController.AdminUpdatePosting)
+			admin.DELETE("/jobs/postings/:id", jobsController.AdminDeletePosting)
+			admin.POST("/jobs/postings/bulk-update", jobsController.AdminBulkUpdatePostings)
+			admin.GET("/jobs/stats", jobsController.AdminGetJobStats)
+			admin.GET("/jobs/sync-runs", jobsController.AdminListSyncRuns)
+
 			admin.GET("/analytics/exit-summary", adminController.GetExitSummary)
 			admin.GET("/experiments", experimentController.ListExperiments)
 			admin.POST("/experiments", experimentController.CreateOrUpdateExperiment)

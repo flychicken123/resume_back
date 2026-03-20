@@ -1223,6 +1223,596 @@ func (m *JobSyncRunModel) Finish(runID int64, status string, message *string, me
 	return err
 }
 
+// ---------------------------------------------------------------------------
+// Admin job posting management types and methods
+// ---------------------------------------------------------------------------
+
+// JobPostingFilterParams controls pagination, search and filters for admin listing.
+type JobPostingFilterParams struct {
+	Page           int
+	PageSize       int
+	Search         string
+	CompanyID      *int
+	IsActive       *bool
+	RemoteType     string
+	EmploymentType string
+	SeniorityLevel *int
+	DateFrom       *time.Time
+	DateTo         *time.Time
+	SortBy         string
+	SortDir        string
+}
+
+// JobPostingWithCompany extends JobPosting with joined company name and seniority.
+type JobPostingWithCompany struct {
+	JobPosting
+	CompanyName    string `json:"company_name"`
+	SeniorityLevel int    `json:"seniority_level"`
+}
+
+// SyncRunFilterParams controls pagination and filters for sync run listing.
+type SyncRunFilterParams struct {
+	Page      int
+	PageSize  int
+	CompanyID *int
+	Status    string
+	DateFrom  *time.Time
+	DateTo    *time.Time
+}
+
+// JobSyncRunWithCompany extends JobSyncRun with joined company name.
+type JobSyncRunWithCompany struct {
+	JobSyncRun
+	CompanyName string `json:"company_name"`
+}
+
+// JobStatistics holds aggregate counts for the admin dashboard.
+type JobStatistics struct {
+	TotalPostings    int                    `json:"total_postings"`
+	ActivePostings   int                    `json:"active_postings"`
+	InactivePostings int                    `json:"inactive_postings"`
+	ByCompany        []CompanyJobCount      `json:"by_company"`
+	BySeniority      []SeniorityJobCount    `json:"by_seniority"`
+	ByRemoteType     []RemoteTypeJobCount   `json:"by_remote_type"`
+	ByEmploymentType []EmploymentTypeJobCount `json:"by_employment_type"`
+	RecentTrend      []DailyJobCount        `json:"recent_trend"`
+}
+
+type CompanyJobCount struct {
+	CompanyID   int    `json:"company_id"`
+	CompanyName string `json:"company_name"`
+	Total       int    `json:"total"`
+	Active      int    `json:"active"`
+}
+
+type SeniorityJobCount struct {
+	SeniorityLevel int `json:"seniority_level"`
+	Count          int `json:"count"`
+}
+
+type RemoteTypeJobCount struct {
+	RemoteType string `json:"remote_type"`
+	Count      int    `json:"count"`
+}
+
+type EmploymentTypeJobCount struct {
+	EmploymentType string `json:"employment_type"`
+	Count          int    `json:"count"`
+}
+
+type DailyJobCount struct {
+	Date  string `json:"date"`
+	Count int    `json:"count"`
+}
+
+var allowedSortColumns = map[string]string{
+	"id":            "p.id",
+	"title":         "p.title",
+	"company_name":  "c.name",
+	"location":      "p.location",
+	"posted_at":     "p.posted_at",
+	"first_seen_at": "p.first_seen_at",
+	"last_seen_at":  "p.last_seen_at",
+	"seniority_level": "p.seniority_level",
+}
+
+var allowedUpdateFields = map[string]string{
+	"title":           "title",
+	"location":        "location",
+	"salary_min":      "salary_min",
+	"salary_max":      "salary_max",
+	"salary_currency": "salary_currency",
+	"seniority_level": "seniority_level",
+	"remote_type":     "remote_type",
+	"employment_type": "employment_type",
+	"is_active":       "is_active",
+}
+
+// ListWithFilters returns paginated job postings with dynamic filters for admin use.
+func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobPostingWithCompany, int, error) {
+	if params.PageSize <= 0 {
+		params.PageSize = 25
+	}
+	if params.PageSize > 100 {
+		params.PageSize = 100
+	}
+	if params.Page <= 0 {
+		params.Page = 1
+	}
+
+	where := []string{"1=1"}
+	args := []interface{}{}
+	placeholder := 1
+
+	if params.Search != "" {
+		pattern := "%" + strings.ToLower(strings.TrimSpace(params.Search)) + "%"
+		where = append(where, fmt.Sprintf("(LOWER(p.title) LIKE $%d OR LOWER(COALESCE(p.location, '')) LIKE $%d)", placeholder, placeholder))
+		args = append(args, pattern)
+		placeholder++
+	}
+	if params.CompanyID != nil {
+		where = append(where, fmt.Sprintf("p.company_id = $%d", placeholder))
+		args = append(args, *params.CompanyID)
+		placeholder++
+	}
+	if params.IsActive != nil {
+		where = append(where, fmt.Sprintf("p.is_active = $%d", placeholder))
+		args = append(args, *params.IsActive)
+		placeholder++
+	}
+	if params.RemoteType != "" {
+		where = append(where, fmt.Sprintf("p.remote_type = $%d", placeholder))
+		args = append(args, params.RemoteType)
+		placeholder++
+	}
+	if params.EmploymentType != "" {
+		where = append(where, fmt.Sprintf("p.employment_type = $%d", placeholder))
+		args = append(args, params.EmploymentType)
+		placeholder++
+	}
+	if params.SeniorityLevel != nil {
+		where = append(where, fmt.Sprintf("p.seniority_level = $%d", placeholder))
+		args = append(args, *params.SeniorityLevel)
+		placeholder++
+	}
+	if params.DateFrom != nil {
+		where = append(where, fmt.Sprintf("COALESCE(p.posted_at, p.first_seen_at) >= $%d", placeholder))
+		args = append(args, *params.DateFrom)
+		placeholder++
+	}
+	if params.DateTo != nil {
+		where = append(where, fmt.Sprintf("COALESCE(p.posted_at, p.first_seen_at) <= $%d", placeholder))
+		args = append(args, *params.DateTo)
+		placeholder++
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	// Count query
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_postings p LEFT JOIN job_companies c ON c.id = p.company_id WHERE %s", whereClause)
+	var total int
+	if err := m.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	// Sort
+	orderCol := "p.id"
+	if col, ok := allowedSortColumns[params.SortBy]; ok {
+		orderCol = col
+	}
+	orderDir := "DESC"
+	if strings.ToUpper(params.SortDir) == "ASC" {
+		orderDir = "ASC"
+	}
+
+	offset := (params.Page - 1) * params.PageSize
+	args = append(args, params.PageSize, offset)
+
+	dataQuery := fmt.Sprintf(`
+		SELECT p.id, p.company_id, p.external_job_id, p.title,
+		       COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+		       COALESCE(p.department, ''), COALESCE(p.employment_type, ''),
+		       p.job_url, COALESCE(p.application_url, ''),
+		       LEFT(COALESCE(p.description, ''), 200),
+		       p.salary_min, p.salary_max, COALESCE(p.salary_currency, ''),
+		       p.posted_at, p.first_seen_at, p.last_seen_at, p.closed_at, p.is_active,
+		       COALESCE(c.name, '') AS company_name,
+		       p.seniority_level
+		FROM job_postings p
+		LEFT JOIN job_companies c ON c.id = p.company_id
+		WHERE %s
+		ORDER BY %s %s
+		LIMIT $%d OFFSET $%d
+	`, whereClause, orderCol, orderDir, placeholder, placeholder+1)
+
+	rows, err := m.db.Query(dataQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var postings []JobPostingWithCompany
+	for rows.Next() {
+		var p JobPostingWithCompany
+		var postedAt sql.NullTime
+		var closedAt sql.NullTime
+		if err := rows.Scan(
+			&p.ID, &p.CompanyID, &p.ExternalJobID, &p.Title,
+			&p.Location, &p.RemoteType,
+			&p.Department, &p.EmploymentType,
+			&p.JobURL, &p.ApplicationURL,
+			&p.Description,
+			&p.SalaryMin, &p.SalaryMax, &p.SalaryCurrency,
+			&postedAt, &p.FirstSeenAt, &p.LastSeenAt, &closedAt, &p.IsActive,
+			&p.CompanyName,
+			&p.SeniorityLevel,
+		); err != nil {
+			return nil, 0, err
+		}
+		if postedAt.Valid {
+			p.PostedAt = &postedAt.Time
+		}
+		if closedAt.Valid {
+			p.ClosedAt = &closedAt.Time
+		}
+		postings = append(postings, p)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return postings, total, nil
+}
+
+// GetByIDFull returns a single job posting with company name, raw_payload and seniority_level.
+func (m *JobPostingModel) GetByIDFull(id int64) (*JobPostingWithCompany, error) {
+	if id <= 0 {
+		return nil, fmt.Errorf("invalid job id")
+	}
+
+	const query = `
+		SELECT p.id, p.company_id, p.external_job_id, p.title,
+		       COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+		       COALESCE(p.department, ''), COALESCE(p.employment_type, ''),
+		       p.job_url, COALESCE(p.application_url, ''),
+		       COALESCE(p.description, ''),
+		       p.salary_min, p.salary_max, COALESCE(p.salary_currency, ''),
+		       p.posted_at, p.first_seen_at, p.last_seen_at, p.closed_at, p.is_active,
+		       p.raw_payload,
+		       COALESCE(c.name, '') AS company_name,
+		       p.seniority_level
+		FROM job_postings p
+		LEFT JOIN job_companies c ON c.id = p.company_id
+		WHERE p.id = $1
+	`
+
+	var p JobPostingWithCompany
+	var postedAt sql.NullTime
+	var closedAt sql.NullTime
+	if err := m.db.QueryRow(query, id).Scan(
+		&p.ID, &p.CompanyID, &p.ExternalJobID, &p.Title,
+		&p.Location, &p.RemoteType,
+		&p.Department, &p.EmploymentType,
+		&p.JobURL, &p.ApplicationURL,
+		&p.Description,
+		&p.SalaryMin, &p.SalaryMax, &p.SalaryCurrency,
+		&postedAt, &p.FirstSeenAt, &p.LastSeenAt, &closedAt, &p.IsActive,
+		&p.RawPayload,
+		&p.CompanyName,
+		&p.SeniorityLevel,
+	); err != nil {
+		return nil, err
+	}
+	if postedAt.Valid {
+		p.PostedAt = &postedAt.Time
+	}
+	if closedAt.Valid {
+		p.ClosedAt = &closedAt.Time
+	}
+	return &p, nil
+}
+
+// UpdatePosting updates whitelisted fields on a job posting.
+func (m *JobPostingModel) UpdatePosting(id int64, fields map[string]interface{}) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid job id")
+	}
+
+	setClauses := []string{}
+	args := []interface{}{}
+	placeholder := 1
+
+	for key, value := range fields {
+		col, ok := allowedUpdateFields[key]
+		if !ok {
+			continue
+		}
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, placeholder))
+		args = append(args, value)
+		placeholder++
+	}
+
+	if len(setClauses) == 0 {
+		return fmt.Errorf("no valid fields to update")
+	}
+
+	setClauses = append(setClauses, "last_seen_at = CURRENT_TIMESTAMP")
+	args = append(args, id)
+
+	query := fmt.Sprintf("UPDATE job_postings SET %s WHERE id = $%d",
+		strings.Join(setClauses, ", "), placeholder)
+
+	res, err := m.db.Exec(query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// DeletePosting removes a job posting by ID.
+func (m *JobPostingModel) DeletePosting(id int64) error {
+	if id <= 0 {
+		return fmt.Errorf("invalid job id")
+	}
+	res, err := m.db.Exec("DELETE FROM job_postings WHERE id = $1", id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
+}
+
+// BulkUpdateActive sets is_active for a list of posting IDs.
+func (m *JobPostingModel) BulkUpdateActive(ids []int64, active bool) (int64, error) {
+	if len(ids) == 0 {
+		return 0, fmt.Errorf("ids required")
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids)+1)
+	args[0] = active
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+2)
+		args[i+1] = id
+	}
+	query := fmt.Sprintf(
+		"UPDATE job_postings SET is_active = $1, last_seen_at = CURRENT_TIMESTAMP WHERE id IN (%s)",
+		strings.Join(placeholders, ", "),
+	)
+	res, err := m.db.Exec(query, args...)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// GetStatistics returns aggregate job posting counts for the admin dashboard.
+func (m *JobPostingModel) GetStatistics() (*JobStatistics, error) {
+	stats := &JobStatistics{}
+
+	// Total / active / inactive
+	err := m.db.QueryRow(`
+		SELECT
+			COUNT(*),
+			COUNT(*) FILTER (WHERE is_active = TRUE),
+			COUNT(*) FILTER (WHERE is_active = FALSE)
+		FROM job_postings
+	`).Scan(&stats.TotalPostings, &stats.ActivePostings, &stats.InactivePostings)
+	if err != nil {
+		return nil, err
+	}
+
+	// By company (top 50)
+	rows, err := m.db.Query(`
+		SELECT c.id, COALESCE(c.name, 'Unknown'), COUNT(*), COUNT(*) FILTER (WHERE p.is_active = TRUE)
+		FROM job_postings p
+		LEFT JOIN job_companies c ON c.id = p.company_id
+		GROUP BY c.id, c.name
+		ORDER BY COUNT(*) DESC
+		LIMIT 50
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var r CompanyJobCount
+		if err := rows.Scan(&r.CompanyID, &r.CompanyName, &r.Total, &r.Active); err != nil {
+			return nil, err
+		}
+		stats.ByCompany = append(stats.ByCompany, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// By seniority
+	senRows, err := m.db.Query(`
+		SELECT seniority_level, COUNT(*) FROM job_postings GROUP BY seniority_level ORDER BY seniority_level
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer senRows.Close()
+	for senRows.Next() {
+		var r SeniorityJobCount
+		if err := senRows.Scan(&r.SeniorityLevel, &r.Count); err != nil {
+			return nil, err
+		}
+		stats.BySeniority = append(stats.BySeniority, r)
+	}
+	if err := senRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// By remote type
+	remoteRows, err := m.db.Query(`
+		SELECT COALESCE(remote_type, 'unspecified'), COUNT(*) FROM job_postings GROUP BY remote_type ORDER BY COUNT(*) DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer remoteRows.Close()
+	for remoteRows.Next() {
+		var r RemoteTypeJobCount
+		if err := remoteRows.Scan(&r.RemoteType, &r.Count); err != nil {
+			return nil, err
+		}
+		stats.ByRemoteType = append(stats.ByRemoteType, r)
+	}
+	if err := remoteRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// By employment type
+	empRows, err := m.db.Query(`
+		SELECT COALESCE(employment_type, 'unspecified'), COUNT(*) FROM job_postings GROUP BY employment_type ORDER BY COUNT(*) DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer empRows.Close()
+	for empRows.Next() {
+		var r EmploymentTypeJobCount
+		if err := empRows.Scan(&r.EmploymentType, &r.Count); err != nil {
+			return nil, err
+		}
+		stats.ByEmploymentType = append(stats.ByEmploymentType, r)
+	}
+	if err := empRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// 30-day trend based on first_seen_at
+	trendRows, err := m.db.Query(`
+		SELECT first_seen_at::date AS d, COUNT(*)
+		FROM job_postings
+		WHERE first_seen_at >= CURRENT_DATE - INTERVAL '30 days'
+		GROUP BY d
+		ORDER BY d DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer trendRows.Close()
+	for trendRows.Next() {
+		var r DailyJobCount
+		var d time.Time
+		if err := trendRows.Scan(&d, &r.Count); err != nil {
+			return nil, err
+		}
+		r.Date = d.Format("2006-01-02")
+		stats.RecentTrend = append(stats.RecentTrend, r)
+	}
+	if err := trendRows.Err(); err != nil {
+		return nil, err
+	}
+
+	return stats, nil
+}
+
+// ListWithFilters returns paginated sync runs with company name for admin use.
+func (m *JobSyncRunModel) ListWithFilters(params SyncRunFilterParams) ([]JobSyncRunWithCompany, int, error) {
+	if params.PageSize <= 0 {
+		params.PageSize = 25
+	}
+	if params.PageSize > 100 {
+		params.PageSize = 100
+	}
+	if params.Page <= 0 {
+		params.Page = 1
+	}
+
+	where := []string{"1=1"}
+	args := []interface{}{}
+	placeholder := 1
+
+	if params.CompanyID != nil {
+		where = append(where, fmt.Sprintf("r.company_id = $%d", placeholder))
+		args = append(args, *params.CompanyID)
+		placeholder++
+	}
+	if params.Status != "" {
+		where = append(where, fmt.Sprintf("r.status = $%d", placeholder))
+		args = append(args, params.Status)
+		placeholder++
+	}
+	if params.DateFrom != nil {
+		where = append(where, fmt.Sprintf("r.started_at >= $%d", placeholder))
+		args = append(args, *params.DateFrom)
+		placeholder++
+	}
+	if params.DateTo != nil {
+		where = append(where, fmt.Sprintf("r.started_at <= $%d", placeholder))
+		args = append(args, *params.DateTo)
+		placeholder++
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	var total int
+	countQuery := fmt.Sprintf("SELECT COUNT(*) FROM job_sync_runs r WHERE %s", whereClause)
+	if err := m.db.QueryRow(countQuery, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	offset := (params.Page - 1) * params.PageSize
+	args = append(args, params.PageSize, offset)
+
+	dataQuery := fmt.Sprintf(`
+		SELECT r.id, r.company_id, r.started_at, r.finished_at, r.status, r.message,
+		       r.jobs_found, r.jobs_created, r.jobs_updated, r.jobs_closed,
+		       COALESCE(c.name, '') AS company_name
+		FROM job_sync_runs r
+		LEFT JOIN job_companies c ON c.id = r.company_id
+		WHERE %s
+		ORDER BY r.started_at DESC
+		LIMIT $%d OFFSET $%d
+	`, whereClause, placeholder, placeholder+1)
+
+	rows, err := m.db.Query(dataQuery, args...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var runs []JobSyncRunWithCompany
+	for rows.Next() {
+		var r JobSyncRunWithCompany
+		var finishedAt sql.NullTime
+		var message sql.NullString
+		if err := rows.Scan(
+			&r.ID, &r.CompanyID, &r.StartedAt, &finishedAt, &r.Status, &message,
+			&r.JobsFound, &r.JobsCreated, &r.JobsUpdated, &r.JobsClosed,
+			&r.CompanyName,
+		); err != nil {
+			return nil, 0, err
+		}
+		if finishedAt.Valid {
+			r.FinishedAt = &finishedAt.Time
+		}
+		if message.Valid {
+			r.Message = &message.String
+		}
+		runs = append(runs, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	return runs, total, nil
+}
+
 // Helper functions ---------------------------------------------------------
 
 func nullString(value string) interface{} {

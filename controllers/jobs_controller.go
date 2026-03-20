@@ -6,10 +6,12 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -584,6 +586,238 @@ func (jc *JobsController) ListJobs(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{"jobs": filtered, "count": len(filtered)})
+}
+
+// ---------------------------------------------------------------------------
+// Admin job posting management endpoints
+// ---------------------------------------------------------------------------
+
+func (jc *JobsController) AdminListPostings(c *gin.Context) {
+	params := models.JobPostingFilterParams{
+		Page:     1,
+		PageSize: 25,
+	}
+
+	if raw := c.Query("page"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.Page = v
+		}
+	}
+	if raw := c.Query("page_size"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.PageSize = v
+		}
+	}
+	params.Search = strings.TrimSpace(c.Query("search"))
+	if raw := c.Query("company_id"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.CompanyID = &v
+		}
+	}
+	if raw := c.Query("is_active"); raw != "" {
+		val := strings.ToLower(raw) == "true"
+		params.IsActive = &val
+	}
+	params.RemoteType = strings.TrimSpace(c.Query("remote_type"))
+	params.EmploymentType = strings.TrimSpace(c.Query("employment_type"))
+	if raw := c.Query("seniority_level"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil {
+			params.SeniorityLevel = &v
+		}
+	}
+	if raw := c.Query("date_from"); raw != "" {
+		if t, err := time.Parse("2006-01-02", raw); err == nil {
+			params.DateFrom = &t
+		}
+	}
+	if raw := c.Query("date_to"); raw != "" {
+		if t, err := time.Parse("2006-01-02", raw); err == nil {
+			end := t.Add(24*time.Hour - time.Second)
+			params.DateTo = &end
+		}
+	}
+	params.SortBy = strings.TrimSpace(c.Query("sort_by"))
+	params.SortDir = strings.TrimSpace(c.Query("sort_dir"))
+
+	postings, total, err := jc.postings.ListWithFilters(params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load postings"})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(params.PageSize)))
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"postings":    postings,
+		"page":        params.Page,
+		"page_size":   params.PageSize,
+		"total":       total,
+		"total_pages": totalPages,
+	})
+}
+
+func (jc *JobsController) AdminGetPosting(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+		return
+	}
+
+	posting, err := jc.postings.GetByIDFull(id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load job"})
+		return
+	}
+
+	c.JSON(http.StatusOK, posting)
+}
+
+func (jc *JobsController) AdminUpdatePosting(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+		return
+	}
+
+	var body map[string]interface{}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+		return
+	}
+
+	if err := jc.postings.UpdatePosting(id, body); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		if err.Error() == "no valid fields to update" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "no valid fields to update"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update posting"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "posting updated"})
+}
+
+func (jc *JobsController) AdminDeletePosting(c *gin.Context) {
+	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job id"})
+		return
+	}
+
+	if err := jc.postings.DeletePosting(id); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to delete posting"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "posting deleted"})
+}
+
+func (jc *JobsController) AdminBulkUpdatePostings(c *gin.Context) {
+	var req struct {
+		IDs      []int64 `json:"ids"`
+		IsActive *bool   `json:"is_active"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request payload"})
+		return
+	}
+	if len(req.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids required"})
+		return
+	}
+	if req.IsActive == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "is_active required"})
+		return
+	}
+
+	updated, err := jc.postings.BulkUpdateActive(req.IDs, *req.IsActive)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update postings"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": fmt.Sprintf("%d postings updated", updated),
+		"updated": updated,
+	})
+}
+
+func (jc *JobsController) AdminGetJobStats(c *gin.Context) {
+	stats, err := jc.postings.GetStatistics()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load statistics"})
+		return
+	}
+	c.JSON(http.StatusOK, stats)
+}
+
+func (jc *JobsController) AdminListSyncRuns(c *gin.Context) {
+	params := models.SyncRunFilterParams{
+		Page:     1,
+		PageSize: 25,
+	}
+
+	if raw := c.Query("page"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.Page = v
+		}
+	}
+	if raw := c.Query("page_size"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.PageSize = v
+		}
+	}
+	if raw := c.Query("company_id"); raw != "" {
+		if v, err := strconv.Atoi(raw); err == nil && v > 0 {
+			params.CompanyID = &v
+		}
+	}
+	params.Status = strings.TrimSpace(c.Query("status"))
+	if raw := c.Query("date_from"); raw != "" {
+		if t, err := time.Parse("2006-01-02", raw); err == nil {
+			params.DateFrom = &t
+		}
+	}
+	if raw := c.Query("date_to"); raw != "" {
+		if t, err := time.Parse("2006-01-02", raw); err == nil {
+			end := t.Add(24*time.Hour - time.Second)
+			params.DateTo = &end
+		}
+	}
+
+	runs, total, err := jc.syncRuns.ListWithFilters(params)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load sync runs"})
+		return
+	}
+
+	totalPages := int(math.Ceil(float64(total) / float64(params.PageSize)))
+	if totalPages == 0 {
+		totalPages = 1
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"sync_runs":   runs,
+		"page":        params.Page,
+		"page_size":   params.PageSize,
+		"total":       total,
+		"total_pages": totalPages,
+	})
 }
 
 func normalizeUserID(value interface{}) (int, bool) {
