@@ -1474,7 +1474,8 @@ func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobP
 		       p.salary_min, p.salary_max, COALESCE(p.salary_currency, ''),
 		       p.posted_at, p.first_seen_at, p.last_seen_at, p.closed_at, p.is_active,
 		       COALESCE(c.name, '') AS company_name,
-		       p.seniority_level
+		       p.seniority_level,
+		       COALESCE(p.career_field, ''), p.extracted_skills
 		FROM job_postings p
 		LEFT JOIN job_companies c ON c.id = p.company_id
 		WHERE %s
@@ -1503,6 +1504,8 @@ func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobP
 			&postedAt, &p.FirstSeenAt, &p.LastSeenAt, &closedAt, &p.IsActive,
 			&p.CompanyName,
 			&p.SeniorityLevel,
+			&p.CareerField,
+			(*pq.StringArray)(&p.ExtractedSkills),
 		); err != nil {
 			return nil, 0, err
 		}
