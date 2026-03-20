@@ -1120,15 +1120,26 @@ func (m *JobPostingModel) UpdateCareerFieldAndSkills(ctx context.Context, id int
 }
 
 // ListActiveWithNullClassification returns IDs of active jobs missing career_field or extracted_skills.
-func (m *JobPostingModel) ListActiveWithNullClassification(limit int) ([]int64, error) {
+func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays int) ([]int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := m.db.Query(`
-		SELECT id FROM job_postings
-		WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
-		ORDER BY id LIMIT $1
-	`, limit)
+	var rows *sql.Rows
+	var err error
+	if sinceDays > 0 {
+		rows, err = m.db.Query(`
+			SELECT id FROM job_postings
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			  AND posted_at >= NOW() - ($2::text || ' days')::interval
+			ORDER BY id LIMIT $1
+		`, limit, sinceDays)
+	} else {
+		rows, err = m.db.Query(`
+			SELECT id FROM job_postings
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			ORDER BY id LIMIT $1
+		`, limit)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1145,12 +1156,21 @@ func (m *JobPostingModel) ListActiveWithNullClassification(limit int) ([]int64, 
 }
 
 // CountActiveWithNullClassification returns count of active jobs missing career_field or extracted_skills.
-func (m *JobPostingModel) CountActiveWithNullClassification() (int, error) {
+func (m *JobPostingModel) CountActiveWithNullClassification(sinceDays int) (int, error) {
 	var count int
-	err := m.db.QueryRow(`
-		SELECT COUNT(*) FROM job_postings
-		WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
-	`).Scan(&count)
+	var err error
+	if sinceDays > 0 {
+		err = m.db.QueryRow(`
+			SELECT COUNT(*) FROM job_postings
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			  AND posted_at >= NOW() - ($1::text || ' days')::interval
+		`, sinceDays).Scan(&count)
+	} else {
+		err = m.db.QueryRow(`
+			SELECT COUNT(*) FROM job_postings
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+		`).Scan(&count)
+	}
 	return count, err
 }
 

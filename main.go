@@ -642,11 +642,12 @@ func main() {
 			admin.POST("/jobs/classify-backfill", func(c *gin.Context) {
 				var req struct {
 					BatchSize int `json:"batch_size"`
+					SinceDays int `json:"since_days"`
 				}
 				if err := c.ShouldBindJSON(&req); err != nil || req.BatchSize <= 0 {
 					req.BatchSize = 100
 				}
-				ids, err := jobPostingModel.ListActiveWithNullClassification(req.BatchSize)
+				ids, err := jobPostingModel.ListActiveWithNullClassification(req.BatchSize, req.SinceDays)
 				if err != nil {
 					c.JSON(500, gin.H{"error": err.Error()})
 					return
@@ -671,7 +672,7 @@ func main() {
 						processed++
 					}
 				}
-				remaining, _ := jobPostingModel.CountActiveWithNullClassification()
+				remaining, _ := jobPostingModel.CountActiveWithNullClassification(req.SinceDays)
 				c.JSON(200, gin.H{"success": true, "processed": processed, "remaining": remaining})
 			})
 		}
