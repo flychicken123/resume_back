@@ -24,8 +24,9 @@ type ResumeJobMatchRecord struct {
 	JobEmployment  string    `json:"job_employment_type"`
 	JobURL         string    `json:"job_url"`
 	JobDescription string    `json:"job_description"`
-	CompanyID      *int      `json:"company_id,omitempty"`
-	CompanyName    *string   `json:"company_name,omitempty"`
+	CompanyID      *int       `json:"company_id,omitempty"`
+	CompanyName    *string    `json:"company_name,omitempty"`
+	JobPostedAt    *time.Time `json:"job_posted_at,omitempty"`
 
 	// Skill gap analysis (computed at runtime, not stored in DB)
 	RequiredSkills []string `json:"required_skills,omitempty"`
@@ -137,7 +138,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
                m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -160,6 +161,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 		var record ResumeJobMatchRecord
 		var companyID sql.NullInt64
 		var companyName sql.NullString
+		var postedAt sql.NullTime
 
 		if err := rows.Scan(
 			&record.ID,
@@ -177,10 +179,15 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 			&record.JobDescription,
 			&companyID,
 			&companyName,
+			&postedAt,
 		); err != nil {
 			return nil, err
 		}
 
+		if postedAt.Valid {
+			ts := postedAt.Time
+			record.JobPostedAt = &ts
+		}
 		if companyID.Valid {
 			cid := int(companyID.Int64)
 			record.CompanyID = &cid
@@ -260,7 +267,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
                m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -283,6 +290,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 		var record ResumeJobMatchRecord
 		var companyID sql.NullInt64
 		var companyName sql.NullString
+		var postedAt sql.NullTime
 
 		if err := rows.Scan(
 			&record.ID,
@@ -300,10 +308,15 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 			&record.JobDescription,
 			&companyID,
 			&companyName,
+			&postedAt,
 		); err != nil {
 			return nil, err
 		}
 
+		if postedAt.Valid {
+			ts := postedAt.Time
+			record.JobPostedAt = &ts
+		}
 		if companyID.Valid {
 			cid := int(companyID.Int64)
 			record.CompanyID = &cid

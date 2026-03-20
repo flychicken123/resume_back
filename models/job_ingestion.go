@@ -55,8 +55,9 @@ type JobPosting struct {
 	FirstSeenAt    time.Time       `json:"first_seen_at"`
 	LastSeenAt     time.Time       `json:"last_seen_at"`
 	ClosedAt       *time.Time      `json:"closed_at"`
-	IsActive       bool            `json:"is_active"`
-	RawPayload     json.RawMessage `json:"raw_payload"`
+	IsActive            bool            `json:"is_active"`
+	RawPayload          json.RawMessage `json:"raw_payload"`
+	EmbeddingSimilarity float64         `json:"-"` // runtime-only, set by vector search
 }
 
 // JobSyncRun captures a historical ingestion run per company
@@ -1000,7 +1001,8 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 		       COALESCE(department, ''), COALESCE(employment_type, ''),
 		       job_url, COALESCE(application_url, ''),
 		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
-		       posted_at, first_seen_at, last_seen_at, closed_at, is_active
+		       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+		       1 - (embedding <=> $1::halfvec) AS similarity
 		FROM job_postings
 		WHERE is_active = TRUE
 		  AND embedding IS NOT NULL
@@ -1048,6 +1050,7 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 			&posting.LastSeenAt,
 			&closedAt,
 			&posting.IsActive,
+			&posting.EmbeddingSimilarity,
 		); err != nil {
 			return nil, err
 		}

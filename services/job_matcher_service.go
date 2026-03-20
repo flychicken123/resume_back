@@ -105,12 +105,12 @@ var (
 )
 
 const (
-	llmReRankTopK            = 15 // Reduced from 30 for faster response
+	llmReRankTopK            = 30
 	llmReRankAlpha           = 0.7
 	llmReRankBeta            = 0.3
 	llmReRankTimeout         = 15 * time.Second
 	llmSkillInferenceTimeout = 15 * time.Second
-	defaultMaxResults        = 50
+	defaultMaxResults        = 100
 )
 
 // MatchAndStore evaluates current postings, stores matches, and returns the enriched view.
@@ -260,6 +260,8 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 		}
 
 		score := computeMatchScore(job, position, skills, keywords, resumeText, preferredLocation, candidateYOE.Years)
+		// Blend vector embedding similarity into score (+6 to +12 points)
+		score += job.EmbeddingSimilarity * 12
 		if score <= 0 {
 			continue
 		}
