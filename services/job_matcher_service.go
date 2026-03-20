@@ -35,18 +35,34 @@ type ResumeJobMatcher interface {
 	MatchAndStore(ctx context.Context, input ResumeJobMatchInput) ([]*models.ResumeJobMatchRecord, error)
 }
 
+var globalJobMatcherSvc *jobMatcherService
+
+// SetJobMatcherEmbeddingDBCache wires a DB cache into the job matcher service.
+func SetJobMatcherEmbeddingDBCache(dbCache EmbeddingDBCache) {
+	if globalJobMatcherSvc != nil {
+		globalJobMatcherSvc.embeddingDBCache = dbCache
+	}
+}
+
 type resumeEmbeddingCacheEntry struct {
 	vec    []float32
 	expiry time.Time
 }
 
+// EmbeddingDBCache persists resume embeddings to DB.
+type EmbeddingDBCache interface {
+	GetEmbedding(resumeHash string) ([]float32, error)
+	UpsertEmbedding(resumeHash string, embedding []float32) error
+}
+
 type jobMatcherService struct {
-	postings       *models.JobPostingModel
-	matches        *models.ResumeJobMatchModel
-	logger         *utils.Logger
-	copilot        *CopilotAgent
-	embeddingSvc   *EmbeddingService
-	embeddingCache sync.Map
+	postings         *models.JobPostingModel
+	matches          *models.ResumeJobMatchModel
+	logger           *utils.Logger
+	copilot          *CopilotAgent
+	embeddingSvc     *EmbeddingService
+	embeddingCache   sync.Map
+	embeddingDBCache EmbeddingDBCache
 }
 
 const vectorSimilarityThreshold float32 = 0.5
@@ -81,6 +97,7 @@ func NewJobMatcherService(postings *models.JobPostingModel, matches *models.Resu
 			}
 		}
 	}()
+	globalJobMatcherSvc = svc
 	return svc
 }
 
@@ -147,6 +164,17 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 				}
 			}
 		}
+		// Check DB cache
+		if len(vec) == 0 && input.ResumeHash != "" && s.embeddingDBCache != nil {
+			if dbVec, err := s.embeddingDBCache.GetEmbedding(input.ResumeHash); err == nil && len(dbVec) > 0 {
+				vec = dbVec
+				s.embeddingCache.Store(input.ResumeHash, resumeEmbeddingCacheEntry{
+					vec:    vec,
+					expiry: time.Now().Add(time.Hour),
+				})
+				s.logger.Info("job match: embedding DB cache hit, skipping API call")
+			}
+		}
 		// Cache miss — call the API
 		if len(vec) == 0 {
 			embCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
@@ -166,6 +194,10 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 						vec:    vec,
 						expiry: time.Now().Add(time.Hour),
 					})
+					// Persist to DB
+					if s.embeddingDBCache != nil {
+						_ = s.embeddingDBCache.UpsertEmbedding(input.ResumeHash, vec)
+					}
 				}
 			}
 		}
@@ -494,6 +526,25 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 	score := 0.0
 	skillMatches := 0
 
+	// Fast path: if job has AI-extracted skills, use set intersection
+	if len(job.ExtractedSkills) > 0 && len(skills) > 0 {
+		jobSkillSet := make(map[string]bool, len(job.ExtractedSkills))
+		for _, s := range job.ExtractedSkills {
+			jobSkillSet[strings.ToLower(s)] = true
+		}
+		for _, skill := range skills {
+			if skill == "" {
+				continue
+			}
+			if jobSkillSet[strings.ToLower(skill)] {
+				score += 4
+				skillMatches++
+			}
+		}
+		// Skip the keyword-based matching below
+		goto afterSkillMatching
+	}
+
 	for _, skill := range skills {
 		if skill == "" {
 			continue
@@ -535,6 +586,8 @@ func computeMatchScore(job *models.JobPosting, position string, skills []string,
 			skillMatches++
 		}
 	}
+
+afterSkillMatching:
 
 	positionTokens := tokenizeWords(position)
 	titleTokens := tokenizeWords(title)
@@ -660,20 +713,13 @@ func computeRecencyBoost(job *models.JobPosting) float64 {
 		return 0
 	}
 
-	daysSincePosted := time.Since(postDate).Hours() / 24
-
-	switch {
-	case daysSincePosted <= 3:
-		return 4.0 // Very fresh: +4 points
-	case daysSincePosted <= 7:
-		return 3.0 // Fresh: +3 points
-	case daysSincePosted <= 14:
-		return 2.0 // Recent: +2 points
-	case daysSincePosted <= 30:
-		return 1.0 // Within month: +1 point
-	default:
-		return 0.0 // Older jobs: no boost
+	days := time.Since(postDate).Hours() / 24
+	if days < 0 {
+		days = 0
 	}
+	// Exponential decay: 4 * e^(-days/7)
+	// Day 0: +4.0, Day 3: +2.6, Day 7: +1.5, Day 14: +0.5, Day 30: +0.05
+	return 4.0 * math.Exp(-days/7.0)
 }
 
 // computeSkillGapsFromSkills calculates skill gaps using pre-computed user skills.
@@ -901,14 +947,24 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 		return jobs
 	}
 
-	// Step 2: Check cache for each job's relevance
+	// Step 2: Check pre-computed career field first, then cache, then LLM
 	var cachedRelevant []*models.JobPosting
 	var uncachedJobs []*models.JobPosting
 
 	cacheHits := 0
 	cacheMisses := 0
+	preComputedHits := 0
 
 	for _, job := range jobs {
+		// Fast path: if career_field is pre-computed on the job, compare directly
+		if job.CareerField != "" {
+			preComputedHits++
+			jobField := CareerField(job.CareerField)
+			if jobField == careerField || jobField == CareerFieldOther || careerField == CareerFieldOther {
+				cachedRelevant = append(cachedRelevant, job)
+			}
+			continue
+		}
 		if relevant, found := cache.GetJobRelevance(careerField, job.ID); found {
 			cacheHits++
 			if relevant {

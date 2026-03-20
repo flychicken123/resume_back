@@ -252,7 +252,49 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	if len(newIDs) > 0 && s.embeddingSvc != nil {
 		go s.embedJobPostingsBatch(s.ctx, newIDs)
 	}
+	if len(newIDs) > 0 {
+		go s.classifyJobPostingsBatch(s.ctx, newIDs)
+	}
 	return result, nil
+}
+
+// classifyJobPostingsBatch classifies career field and extracts skills for newly inserted jobs.
+func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {
+	for _, id := range ids {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		job, err := s.postingModel.GetByIDForEmbedding(ctx, id)
+		if err != nil || job == nil {
+			continue
+		}
+		if job.CareerField != "" && len(job.ExtractedSkills) > 0 {
+			continue
+		}
+
+		prompt := BuildJobClassificationPrompt(job.Title, job.Description)
+		classifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		raw, err := CallGeminiFlash(prompt)
+		cancel()
+		if err != nil {
+			s.logger.Warn("job classification failed", map[string]interface{}{
+				"jobID": id,
+				"error": err.Error(),
+			})
+			continue
+		}
+
+		field, skills := ParseJobClassificationResponse(raw)
+		if err := s.postingModel.UpdateCareerFieldAndSkills(classifyCtx, id, string(field), skills); err != nil {
+			s.logger.Warn("failed to store job classification", map[string]interface{}{
+				"jobID": id,
+				"error": err.Error(),
+			})
+		}
+	}
 }
 
 // embedJobPostingsBatch generates and stores embeddings for a set of newly inserted job IDs.

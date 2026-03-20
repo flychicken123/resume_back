@@ -1879,3 +1879,71 @@ func ParseCareerFieldClassificationResponse(raw string) CareerField {
 		return CareerFieldUnknown
 	}
 }
+
+// BuildJobClassificationPrompt builds a prompt that extracts both career field and required skills from a job posting.
+func BuildJobClassificationPrompt(title, description string) string {
+	desc := strings.TrimSpace(description)
+	if len(desc) > 2000 {
+		desc = desc[:2000] + "..."
+	}
+	return fmt.Sprintf(`Analyze this job posting and return:
+1. The career field (one of: SOFTWARE_ENGINEERING, DATA_SCIENCE, PRODUCT_MANAGEMENT, DESIGN, SALES, MARKETING, FINANCE, OPERATIONS, HR_RECRUITING, CUSTOMER_SUCCESS, OTHER)
+2. A list of required and preferred technical/professional skills mentioned or implied
+
+JOB TITLE: %s
+
+JOB DESCRIPTION:
+%s
+
+Return JSON only:
+{"career_field": "SOFTWARE_ENGINEERING", "skills": ["react", "typescript", "aws", "kubernetes"]}
+
+Rules for skills:
+- Use lowercase canonical names (e.g. "react" not "React.js")
+- Include skills explicitly mentioned AND skills clearly implied (e.g. "distributed systems" implies "kubernetes", "docker", "microservices")
+- Focus on required/preferred skills, not nice-to-haves
+- Return 5-20 skills max
+- Do NOT include soft skills (communication, teamwork)`, title, desc)
+}
+
+// JobClassificationResult holds the parsed result of job classification.
+type JobClassificationResult struct {
+	CareerField string   `json:"career_field"`
+	Skills      []string `json:"skills"`
+}
+
+// ParseJobClassificationResponse parses the AI response for job classification.
+func ParseJobClassificationResponse(raw string) (CareerField, []string) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return CareerFieldUnknown, nil
+	}
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	var result JobClassificationResult
+	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
+		return CareerFieldUnknown, nil
+	}
+
+	field := CareerField(strings.ToUpper(strings.TrimSpace(result.CareerField)))
+	switch field {
+	case CareerFieldSoftwareEngineering, CareerFieldDataScience, CareerFieldProductManagement,
+		CareerFieldDesign, CareerFieldSales, CareerFieldMarketing, CareerFieldFinance,
+		CareerFieldOperations, CareerFieldHRRecruiting, CareerFieldCustomerSuccess, CareerFieldOther:
+		// valid
+	default:
+		field = CareerFieldUnknown
+	}
+
+	// Normalize skills to lowercase
+	skills := make([]string, 0, len(result.Skills))
+	for _, s := range result.Skills {
+		if trimS := strings.TrimSpace(strings.ToLower(s)); trimS != "" {
+			skills = append(skills, trimS)
+		}
+	}
+	return field, skills
+}

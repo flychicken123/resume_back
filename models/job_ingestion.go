@@ -57,6 +57,8 @@ type JobPosting struct {
 	ClosedAt       *time.Time      `json:"closed_at"`
 	IsActive            bool            `json:"is_active"`
 	RawPayload          json.RawMessage `json:"raw_payload"`
+	CareerField         string          `json:"career_field,omitempty"`
+	ExtractedSkills     []string        `json:"extracted_skills,omitempty"`
 	EmbeddingSimilarity float64         `json:"-"` // runtime-only, set by vector search
 }
 
@@ -1098,6 +1100,50 @@ func (m *JobPostingModel) UpdateEmbedding(ctx context.Context, id int64, embeddi
 		return fmt.Errorf("job posting %d not found", id)
 	}
 	return nil
+}
+
+// UpdateCareerFieldAndSkills sets the career field and extracted skills for a job posting.
+func (m *JobPostingModel) UpdateCareerFieldAndSkills(ctx context.Context, id int64, careerField string, skills []string) error {
+	_, err := m.db.ExecContext(ctx,
+		`UPDATE job_postings SET career_field = $1, extracted_skills = $2 WHERE id = $3`,
+		careerField, pq.StringArray(skills), id,
+	)
+	return err
+}
+
+// ListActiveWithNullClassification returns IDs of active jobs missing career_field or extracted_skills.
+func (m *JobPostingModel) ListActiveWithNullClassification(limit int) ([]int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	rows, err := m.db.Query(`
+		SELECT id FROM job_postings
+		WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+		ORDER BY id LIMIT $1
+	`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountActiveWithNullClassification returns count of active jobs missing career_field or extracted_skills.
+func (m *JobPostingModel) CountActiveWithNullClassification() (int, error) {
+	var count int
+	err := m.db.QueryRow(`
+		SELECT COUNT(*) FROM job_postings
+		WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+	`).Scan(&count)
+	return count, err
 }
 
 // ListActiveWithNullEmbedding returns IDs of active job postings that have no embedding yet.

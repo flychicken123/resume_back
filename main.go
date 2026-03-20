@@ -129,6 +129,10 @@ func main() {
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	handlers.SetChatModels(userModel, jobAppModel)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)
+	resumeSkillCacheModel := models.NewResumeSkillCacheModel(db)
+	resumeEmbeddingCacheModel := models.NewResumeEmbeddingCacheModel(db)
+	services.SetSkillInferenceDBCache(resumeSkillCacheModel)
+	services.SetJobMatcherEmbeddingDBCache(resumeEmbeddingCacheModel)
 	jobsController := controllers.NewJobsController(jobCompanyModel, jobPostingModel, jobSyncModel, jobMatchModel, dismissedJobMatchModel, jobMatcherService, jobsService)
 	jobAppController := controllers.NewJobApplicationController(jobAppModel, jobPostingModel, jobMatchModel)
 	geoService := services.NewGeoService(time.Now().UTC())
@@ -634,6 +638,42 @@ func main() {
 			admin.POST("/jobs/embeddings/backfill", jobEmbeddingCtrl.StartBackfill)
 			admin.GET("/jobs/embeddings/backfill/status", jobEmbeddingCtrl.GetStatus)
 			admin.DELETE("/jobs/embeddings/backfill", jobEmbeddingCtrl.StopBackfill)
+
+			admin.POST("/jobs/classify-backfill", func(c *gin.Context) {
+				var req struct {
+					BatchSize int `json:"batch_size"`
+				}
+				if err := c.ShouldBindJSON(&req); err != nil || req.BatchSize <= 0 {
+					req.BatchSize = 100
+				}
+				ids, err := jobPostingModel.ListActiveWithNullClassification(req.BatchSize)
+				if err != nil {
+					c.JSON(500, gin.H{"error": err.Error()})
+					return
+				}
+				if len(ids) == 0 {
+					c.JSON(200, gin.H{"success": true, "processed": 0, "remaining": 0, "message": "all jobs classified"})
+					return
+				}
+				processed := 0
+				for _, id := range ids {
+					job, err := jobPostingModel.GetByIDForEmbedding(c.Request.Context(), id)
+					if err != nil || job == nil {
+						continue
+					}
+					prompt := services.BuildJobClassificationPrompt(job.Title, job.Description)
+					raw, err := services.CallGeminiFlash(prompt)
+					if err != nil {
+						continue
+					}
+					field, skills := services.ParseJobClassificationResponse(raw)
+					if err := jobPostingModel.UpdateCareerFieldAndSkills(c.Request.Context(), id, string(field), skills); err == nil {
+						processed++
+					}
+				}
+				remaining, _ := jobPostingModel.CountActiveWithNullClassification()
+				c.JSON(200, gin.H{"success": true, "processed": processed, "remaining": remaining})
+			})
 		}
 	}
 

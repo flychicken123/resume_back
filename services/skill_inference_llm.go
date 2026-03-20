@@ -14,8 +14,15 @@ import (
 
 // SkillInferenceLLM provides LLM-powered skill inference from resume content.
 type SkillInferenceLLM struct {
-	cache  *skillInferenceCache
-	logger *utils.Logger
+	cache   *skillInferenceCache
+	dbCache SkillDBCache
+	logger  *utils.Logger
+}
+
+// SkillDBCache is an interface for persisting inferred skills to DB.
+type SkillDBCache interface {
+	GetSkills(resumeHash string) ([]string, error)
+	UpsertSkills(resumeHash string, skills []string) error
 }
 
 // skillInferenceCache caches LLM inference results to avoid repeated API calls.
@@ -68,9 +75,17 @@ func (s *SkillInferenceLLM) InferSkillsFromResume(ctx context.Context, content R
 	// Generate cache key from content hash
 	cacheKey := s.generateCacheKey(content)
 
-	// Check cache first
+	// Check in-memory cache first
 	if cached := s.cache.get(cacheKey); cached != nil {
 		return cached, nil
+	}
+
+	// Check DB cache
+	if s.dbCache != nil {
+		if dbSkills, err := s.dbCache.GetSkills(cacheKey); err == nil && len(dbSkills) > 0 {
+			s.cache.set(cacheKey, dbSkills) // warm in-memory cache
+			return dbSkills, nil
+		}
 	}
 
 	// Build prompt for LLM
@@ -99,8 +114,11 @@ func (s *SkillInferenceLLM) InferSkillsFromResume(ctx context.Context, content R
 	// Merge with explicit skills and canonicalize
 	allSkills := s.mergeAndCanonicalizeSkills(content.Skills, skills)
 
-	// Cache the result
+	// Cache the result (in-memory + DB)
 	s.cache.set(cacheKey, allSkills)
+	if s.dbCache != nil {
+		_ = s.dbCache.UpsertSkills(cacheKey, allSkills)
+	}
 
 	return allSkills, nil
 }
@@ -343,4 +361,9 @@ func GetSkillInferenceLLM() *SkillInferenceLLM {
 		globalSkillInferenceLLM = NewSkillInferenceLLM(utils.NewLogger())
 	})
 	return globalSkillInferenceLLM
+}
+
+// SetSkillInferenceDBCache wires a DB cache into the global skill inference instance.
+func SetSkillInferenceDBCache(dbCache SkillDBCache) {
+	GetSkillInferenceLLM().dbCache = dbCache
 }
