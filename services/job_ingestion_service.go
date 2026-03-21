@@ -287,8 +287,8 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 			continue
 		}
 
-		field, skills := ParseJobClassificationResponse(raw)
-		if err := s.postingModel.UpdateCareerFieldAndSkills(classifyCtx, id, string(field), skills); err != nil {
+		field, skills, seniority := ParseJobClassificationResponse(raw)
+		if err := s.postingModel.UpdateJobClassification(classifyCtx, id, string(field), skills, seniority); err != nil {
 			s.logger.Warn("failed to store job classification", map[string]interface{}{
 				"jobID": id,
 				"error": err.Error(),

@@ -59,6 +59,7 @@ type JobPosting struct {
 	RawPayload          json.RawMessage `json:"raw_payload"`
 	CareerField         string          `json:"career_field,omitempty"`
 	ExtractedSkills     []string        `json:"extracted_skills,omitempty"`
+	Seniority           string          `json:"seniority,omitempty"`
 	EmbeddingSimilarity float64         `json:"-"` // runtime-only, set by vector search
 }
 
@@ -706,7 +707,7 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
                job_url, COALESCE(application_url, ''),
                COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
                posted_at, first_seen_at, last_seen_at, closed_at, is_active,
-               COALESCE(career_field, ''), extracted_skills
+               COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, '')
         FROM job_postings
         WHERE %s
         ORDER BY COALESCE(posted_at, first_seen_at) DESC
@@ -754,6 +755,7 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
 			&posting.IsActive,
 			&posting.CareerField,
 			(*pq.StringArray)(&posting.ExtractedSkills),
+			&posting.Seniority,
 		); err != nil {
 			return nil, err
 		}
@@ -882,6 +884,7 @@ func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string
 			&posting.IsActive,
 			&posting.CareerField,
 			(*pq.StringArray)(&posting.ExtractedSkills),
+			&posting.Seniority,
 		); err != nil {
 			return nil, err
 		}
@@ -1060,6 +1063,7 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 			&posting.IsActive,
 			&posting.CareerField,
 			(*pq.StringArray)(&posting.ExtractedSkills),
+			&posting.Seniority,
 			&posting.EmbeddingSimilarity,
 		); err != nil {
 			return nil, err
@@ -1110,11 +1114,11 @@ func (m *JobPostingModel) UpdateEmbedding(ctx context.Context, id int64, embeddi
 	return nil
 }
 
-// UpdateCareerFieldAndSkills sets the career field and extracted skills for a job posting.
-func (m *JobPostingModel) UpdateCareerFieldAndSkills(ctx context.Context, id int64, careerField string, skills []string) error {
+// UpdateJobClassification sets career field, extracted skills, and seniority for a job posting.
+func (m *JobPostingModel) UpdateJobClassification(ctx context.Context, id int64, careerField string, skills []string, seniority string) error {
 	_, err := m.db.ExecContext(ctx,
-		`UPDATE job_postings SET career_field = $1, extracted_skills = $2 WHERE id = $3`,
-		careerField, pq.StringArray(skills), id,
+		`UPDATE job_postings SET career_field = $1, extracted_skills = $2, seniority = $3 WHERE id = $4`,
+		careerField, pq.StringArray(skills), seniority, id,
 	)
 	return err
 }
@@ -1129,14 +1133,14 @@ func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays 
 	if sinceDays > 0 {
 		rows, err = m.db.Query(`
 			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
 			  AND posted_at >= NOW() - ($2::text || ' days')::interval
 			ORDER BY id LIMIT $1
 		`, limit, sinceDays)
 	} else {
 		rows, err = m.db.Query(`
 			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
 			ORDER BY id LIMIT $1
 		`, limit)
 	}
@@ -1162,13 +1166,13 @@ func (m *JobPostingModel) CountActiveWithNullClassification(sinceDays int) (int,
 	if sinceDays > 0 {
 		err = m.db.QueryRow(`
 			SELECT COUNT(*) FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
 			  AND posted_at >= NOW() - ($1::text || ' days')::interval
 		`, sinceDays).Scan(&count)
 	} else {
 		err = m.db.QueryRow(`
 			SELECT COUNT(*) FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL)
+			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
 		`).Scan(&count)
 	}
 	return count, err
@@ -1314,6 +1318,7 @@ type JobPostingFilterParams struct {
 	RemoteType     string
 	EmploymentType string
 	SeniorityLevel *int
+	Seniority      *string
 	DateFrom       *time.Time
 	DateTo         *time.Time
 	SortBy         string
@@ -1452,6 +1457,11 @@ func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobP
 		args = append(args, *params.SeniorityLevel)
 		placeholder++
 	}
+	if params.Seniority != nil {
+		where = append(where, fmt.Sprintf("p.seniority = $%d", placeholder))
+		args = append(args, *params.Seniority)
+		placeholder++
+	}
 	if params.DateFrom != nil {
 		where = append(where, fmt.Sprintf("COALESCE(p.posted_at, p.first_seen_at) >= $%d", placeholder))
 		args = append(args, *params.DateFrom)
@@ -1495,7 +1505,7 @@ func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobP
 		       p.posted_at, p.first_seen_at, p.last_seen_at, p.closed_at, p.is_active,
 		       COALESCE(c.name, '') AS company_name,
 		       p.seniority_level,
-		       COALESCE(p.career_field, ''), p.extracted_skills
+		       COALESCE(p.career_field, ''), p.extracted_skills, COALESCE(p.seniority, '')
 		FROM job_postings p
 		LEFT JOIN job_companies c ON c.id = p.company_id
 		WHERE %s
@@ -1526,6 +1536,7 @@ func (m *JobPostingModel) ListWithFilters(params JobPostingFilterParams) ([]JobP
 			&p.SeniorityLevel,
 			&p.CareerField,
 			(*pq.StringArray)(&p.ExtractedSkills),
+			&p.Seniority,
 		); err != nil {
 			return nil, 0, err
 		}

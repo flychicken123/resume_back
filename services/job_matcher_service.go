@@ -106,19 +106,21 @@ type scoredJob struct {
 	score   float64
 }
 
-const (
-	seniorityIntern = iota
-	seniorityEntry
-	seniorityMid
-	senioritySenior
-	seniorityLead
-)
-
 var (
 	seniorityLeadKeywords   = []string{"lead", "principal", "manager", "director", "head", "vp", "svp", "evp", "chief", "cto", "cpo", "cio", "cfo", "coo", "vice president"}
-	senioritySeniorKeywords = []string{"senior", "sr", "staff"}
+	seniorityStaffKeywords  = []string{"staff"}
+	senioritySeniorKeywords = []string{"senior", "sr"}
 	seniorityEntryKeywords  = []string{"junior", "jr", "associate", "entry", "graduate"}
 	seniorityInternKeywords = []string{"intern", "internship", "co-op", "coop", "trainee", "apprentice"}
+
+	seniorityAdjacent = map[string]map[string]bool{
+		"intern": {"intern": true, "entry": true},
+		"entry":  {"intern": true, "entry": true, "mid": true},
+		"mid":    {"entry": true, "mid": true, "senior": true},
+		"senior": {"mid": true, "senior": true, "staff": true},
+		"staff":  {"senior": true, "staff": true, "lead": true},
+		"lead":   {"staff": true, "lead": true},
+	}
 )
 
 const (
@@ -263,22 +265,24 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 			continue
 		}
 
-		jobLevel := determineJobSeniority(job.Title, job.Description)
+		// Determine job seniority: use pre-computed if available, else keyword fallback
+		jobLevel := job.Seniority
+		if jobLevel == "" {
+			jobLevel = determineJobSeniority(job.Title, job.Description)
+		}
 		// Always skip intern roles
-		if jobLevel == seniorityIntern {
+		if jobLevel == "intern" {
 			continue
 		}
 
-		// Seniority level filtering: allow [A-1, A, A+1] range
-		// Candidate can see jobs one level below, same level, or one level above
-		if candidateLevel >= 0 {
-			levelDiff := jobLevel - candidateLevel
-			// Skip if job is more than 1 level above or more than 1 level below
-			if levelDiff > 1 || levelDiff < -1 {
-				continue
+		// Seniority level filtering: allow adjacent levels only
+		// Skip filter if either side is unknown
+		if candidateLevel != "" && jobLevel != "" {
+			if allowed, ok := seniorityAdjacent[candidateLevel]; ok {
+				if !allowed[jobLevel] {
+					continue
+				}
 			}
-			// Special case: Entry level candidates can't see below (there's nothing below except intern)
-			// Lead level candidates: levelDiff < -1 already handles skipping mid/entry
 		}
 
 		// YOE-based filtering: extract job's YOE requirement and check tier
@@ -757,50 +761,57 @@ func computeSkillGapsFromSkills(matches []*models.ResumeJobMatchRecord, userSkil
 	}
 }
 
-func jobLooksLikeInternRole(title, description string) bool {
-	return determineJobSeniority(title, description) == seniorityIntern
+var seniorityRank = map[string]int{
+	"intern": 0, "entry": 1, "mid": 2,
+	"senior": 3, "staff": 4, "lead": 5,
 }
 
-func determineJobSeniority(title, description string) int {
+func jobLooksLikeInternRole(title, description string) bool {
+	return determineJobSeniority(title, description) == "intern"
+}
+
+func determineJobSeniority(title, description string) string {
 	level := detectSeniorityFromString(title)
-	descriptionLevel := detectSeniorityFromString(description)
-	if descriptionLevel > level {
-		level = descriptionLevel
+	descLevel := detectSeniorityFromString(description)
+	if seniorityRank[descLevel] > seniorityRank[level] {
+		level = descLevel
 	}
-	if level < 0 {
-		level = seniorityMid
+	if level == "" {
+		level = "mid"
 	}
 	return level
 }
 
-func determineCandidateSeniority(position, resumeText string) int {
+func determineCandidateSeniority(position, resumeText string) string {
 	level := detectSeniorityFromString(position)
 	resumeLevel := detectSeniorityFromString(resumeText)
-	if resumeLevel > level {
+	if seniorityRank[resumeLevel] > seniorityRank[level] {
 		level = resumeLevel
 	}
-	if level < 0 {
-		level = seniorityMid
+	if level == "" {
+		level = "mid"
 	}
 	return level
 }
 
-func detectSeniorityFromString(value string) int {
+func detectSeniorityFromString(value string) string {
 	normalized := normalizeSeniorityString(value)
 	if normalized == "" {
-		return -1
+		return ""
 	}
 	switch {
 	case containsAnySeniority(normalized, seniorityInternKeywords):
-		return seniorityIntern
+		return "intern"
+	case containsAnySeniority(normalized, seniorityStaffKeywords):
+		return "staff"
 	case containsAnySeniority(normalized, senioritySeniorKeywords):
-		return senioritySenior
+		return "senior"
 	case containsAnySeniority(normalized, seniorityLeadKeywords):
-		return seniorityLead
+		return "lead"
 	case containsAnySeniority(normalized, seniorityEntryKeywords):
-		return seniorityEntry
+		return "entry"
 	default:
-		return -1
+		return ""
 	}
 }
 

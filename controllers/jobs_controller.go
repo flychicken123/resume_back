@@ -653,6 +653,9 @@ func (jc *JobsController) AdminListPostings(c *gin.Context) {
 			params.SeniorityLevel = &v
 		}
 	}
+	if raw := strings.TrimSpace(c.Query("seniority")); raw != "" {
+		params.Seniority = &raw
+	}
 	if raw := c.Query("date_from"); raw != "" {
 		if t, err := time.Parse("2006-01-02", raw); err == nil {
 			params.DateFrom = &t

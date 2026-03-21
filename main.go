@@ -220,6 +220,8 @@ func main() {
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
 	jobEmbeddingCtrl := controllers.NewJobEmbeddingController(jobEmbeddingBackfill, ctx)
+	jobClassifyBackfill := services.NewJobClassifyBackfillService(jobPostingModel, logger)
+	jobClassifyCtrl := controllers.NewJobClassifyController(jobClassifyBackfill, ctx)
 	jobMatchNotifier.Start(ctx, 100*time.Hour)
 
 	r := gin.New()
@@ -639,42 +641,9 @@ func main() {
 			admin.GET("/jobs/embeddings/backfill/status", jobEmbeddingCtrl.GetStatus)
 			admin.DELETE("/jobs/embeddings/backfill", jobEmbeddingCtrl.StopBackfill)
 
-			admin.POST("/jobs/classify-backfill", func(c *gin.Context) {
-				var req struct {
-					BatchSize int `json:"batch_size"`
-					SinceDays int `json:"since_days"`
-				}
-				if err := c.ShouldBindJSON(&req); err != nil || req.BatchSize <= 0 {
-					req.BatchSize = 100
-				}
-				ids, err := jobPostingModel.ListActiveWithNullClassification(req.BatchSize, req.SinceDays)
-				if err != nil {
-					c.JSON(500, gin.H{"error": err.Error()})
-					return
-				}
-				if len(ids) == 0 {
-					c.JSON(200, gin.H{"success": true, "processed": 0, "remaining": 0, "message": "all jobs classified"})
-					return
-				}
-				processed := 0
-				for _, id := range ids {
-					job, err := jobPostingModel.GetByIDForEmbedding(c.Request.Context(), id)
-					if err != nil || job == nil {
-						continue
-					}
-					prompt := services.BuildJobClassificationPrompt(job.Title, job.Description)
-					raw, err := services.CallGeminiFlash(prompt)
-					if err != nil {
-						continue
-					}
-					field, skills := services.ParseJobClassificationResponse(raw)
-					if err := jobPostingModel.UpdateCareerFieldAndSkills(c.Request.Context(), id, string(field), skills); err == nil {
-						processed++
-					}
-				}
-				remaining, _ := jobPostingModel.CountActiveWithNullClassification(req.SinceDays)
-				c.JSON(200, gin.H{"success": true, "processed": processed, "remaining": remaining})
-			})
+			admin.POST("/jobs/classify/backfill", jobClassifyCtrl.StartBackfill)
+			admin.GET("/jobs/classify/backfill/status", jobClassifyCtrl.GetStatus)
+			admin.DELETE("/jobs/classify/backfill", jobClassifyCtrl.StopBackfill)
 		}
 	}
 

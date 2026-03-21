@@ -1889,6 +1889,7 @@ func BuildJobClassificationPrompt(title, description string) string {
 	return fmt.Sprintf(`Analyze this job posting and return:
 1. The career field (one of: SOFTWARE_ENGINEERING, DATA_SCIENCE, PRODUCT_MANAGEMENT, DESIGN, SALES, MARKETING, FINANCE, OPERATIONS, HR_RECRUITING, CUSTOMER_SUCCESS, OTHER)
 2. A list of required and preferred technical/professional skills mentioned or implied
+3. The seniority level (one of: intern, entry, mid, senior, staff, lead)
 
 JOB TITLE: %s
 
@@ -1896,27 +1897,42 @@ JOB DESCRIPTION:
 %s
 
 Return JSON only:
-{"career_field": "SOFTWARE_ENGINEERING", "skills": ["react", "typescript", "aws", "kubernetes"]}
+{"career_field": "SOFTWARE_ENGINEERING", "skills": ["react", "typescript", "aws", "kubernetes"], "seniority": "senior"}
 
 Rules for skills:
 - Use lowercase canonical names (e.g. "react" not "React.js")
 - Include skills explicitly mentioned AND skills clearly implied (e.g. "distributed systems" implies "kubernetes", "docker", "microservices")
 - Focus on required/preferred skills, not nice-to-haves
 - Return 5-20 skills max
-- Do NOT include soft skills (communication, teamwork)`, title, desc)
+- Do NOT include soft skills (communication, teamwork)
+
+Rules for seniority:
+- intern: internships, co-ops, apprenticeships
+- entry: junior, new grad, 0-2 years experience
+- mid: mid-level, 2-5 years, no seniority prefix in title
+- senior: senior-level, 5+ years
+- staff: staff engineer/designer — above senior individual contributor
+- lead: lead, principal, manager, director, VP, C-level`, title, desc)
 }
 
 // JobClassificationResult holds the parsed result of job classification.
 type JobClassificationResult struct {
 	CareerField string   `json:"career_field"`
 	Skills      []string `json:"skills"`
+	Seniority   string   `json:"seniority"`
+}
+
+var validSeniorityValues = map[string]bool{
+	"intern": true, "entry": true, "mid": true,
+	"senior": true, "staff": true, "lead": true,
 }
 
 // ParseJobClassificationResponse parses the AI response for job classification.
-func ParseJobClassificationResponse(raw string) (CareerField, []string) {
+// Returns career field, skills, and seniority string.
+func ParseJobClassificationResponse(raw string) (CareerField, []string, string) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return CareerFieldUnknown, nil
+		return CareerFieldUnknown, nil, "mid"
 	}
 	trimmed = strings.TrimPrefix(trimmed, "```json")
 	trimmed = strings.TrimPrefix(trimmed, "```")
@@ -1925,7 +1941,7 @@ func ParseJobClassificationResponse(raw string) (CareerField, []string) {
 
 	var result JobClassificationResult
 	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
-		return CareerFieldUnknown, nil
+		return CareerFieldUnknown, nil, "mid"
 	}
 
 	field := CareerField(strings.ToUpper(strings.TrimSpace(result.CareerField)))
@@ -1938,6 +1954,11 @@ func ParseJobClassificationResponse(raw string) (CareerField, []string) {
 		field = CareerFieldUnknown
 	}
 
+	seniority := strings.ToLower(strings.TrimSpace(result.Seniority))
+	if !validSeniorityValues[seniority] {
+		seniority = "mid"
+	}
+
 	// Normalize skills to lowercase
 	skills := make([]string, 0, len(result.Skills))
 	for _, s := range result.Skills {
@@ -1945,5 +1966,5 @@ func ParseJobClassificationResponse(raw string) (CareerField, []string) {
 			skills = append(skills, trimS)
 		}
 	}
-	return field, skills
+	return field, skills, seniority
 }
