@@ -26,9 +26,7 @@ func (c *JobClassifyController) StartBackfill(gc *gin.Context) {
 		BatchSize int `json:"batch_size"`
 		SinceDays int `json:"since_days"`
 	}
-	if err := gc.ShouldBindJSON(&req); err != nil {
-		// Use defaults
-	}
+	_ = gc.ShouldBindJSON(&req)
 	if req.BatchSize <= 0 {
 		req.BatchSize = 20
 	}
