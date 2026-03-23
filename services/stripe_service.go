@@ -175,6 +175,12 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 	}
 
 	for _, plan := range plans {
+		// Skip if already has a Stripe price ID — avoid creating duplicate products on every startup
+		if plan.StripePriceID != "" {
+			fmt.Printf("Stripe product already exists for plan %s (%s), skipping\n", plan.Name, plan.StripePriceID)
+			continue
+		}
+
 		productParams := &stripe.ProductParams{
 			Name:        stripe.String(plan.DisplayName),
 			Description: stripe.String(fmt.Sprintf("%s - Resume Builder", plan.DisplayName)),
@@ -214,6 +220,7 @@ func (s *StripeService) CreateOrUpdateStripeProducts() error {
 		s.cacheMu.Lock()
 		s.planCache[plan.Name] = plan
 		s.cacheMu.Unlock()
+		fmt.Printf("Created Stripe product for plan %s: %s\n", plan.Name, priceObj.ID)
 	}
 
 	return nil
