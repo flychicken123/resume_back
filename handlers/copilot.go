@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"resumeai/models"
 	"resumeai/services"
 	"resumeai/utils"
 	"strconv"
@@ -16,6 +17,12 @@ import (
 )
 
 var copilotAgent *services.CopilotAgent
+var jobMatchModel *models.ResumeJobMatchModel
+
+// SetJobMatchModel injects the job match model for fit reason persistence.
+func SetJobMatchModel(m *models.ResumeJobMatchModel) {
+	jobMatchModel = m
+}
 
 // SetCopilotAgent injects the LangChain-based copilot agent for reuse inside handlers.
 func SetCopilotAgent(agent *services.CopilotAgent) {
@@ -122,12 +129,29 @@ func ExplainJobFit(c *gin.Context) {
 		return
 	}
 
+	// Check if fit_reasons are already cached in the match data
+	if cachedReasons, ok := req.Match["fit_reasons"].([]interface{}); ok && len(cachedReasons) > 0 {
+		reasons := make([]string, 0, len(cachedReasons))
+		for _, r := range cachedReasons {
+			if s, ok := r.(string); ok {
+				reasons = append(reasons, s)
+			}
+		}
+		if len(reasons) > 0 {
+			utils.SuccessResponse(c, http.StatusOK, "Job fit explanation (cached)", JobFitExplanationResponse{
+				Reasons: reasons,
+				Message: "Job fit explanation from cache.",
+				Source:  "cached",
+			})
+			return
+		}
+	}
+
 	prompt := services.BuildJobFitExplanationPrompt(req.ResumeData, req.Match)
 	timeoutCtx, cancel := context.WithTimeout(c.Request.Context(), 7*time.Second)
 	defer cancel()
 	raw, err := runCopilotPrompt(timeoutCtx, prompt)
 	if err != nil {
-		// Fall back to a simple generic reason if AI is unavailable.
 		fallback := []string{"Your resume highlights match the core needs of this role."}
 		utils.SuccessResponse(c, http.StatusOK, "Job fit explanation fallback", JobFitExplanationResponse{
 			Reasons: fallback,
@@ -146,6 +170,11 @@ func ExplainJobFit(c *gin.Context) {
 			Source:  "fallback",
 		})
 		return
+	}
+
+	// Persist fit reasons to DB if match ID is available
+	if matchID, ok := req.Match["id"].(float64); ok && matchID > 0 && jobMatchModel != nil {
+		_ = jobMatchModel.UpdateFitReasons(int64(matchID), reasons)
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Job fit explanation generated", JobFitExplanationResponse{

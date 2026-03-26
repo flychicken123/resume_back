@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lib/pq"
 	"resumeai/utils"
 )
 
@@ -27,6 +28,7 @@ type ResumeJobMatchRecord struct {
 	CompanyID      *int       `json:"company_id,omitempty"`
 	CompanyName    *string    `json:"company_name,omitempty"`
 	JobPostedAt    *time.Time `json:"job_posted_at,omitempty"`
+	FitReasons     []string   `json:"fit_reasons,omitempty"`
 
 	// Skill gap analysis (computed at runtime, not stored in DB)
 	RequiredSkills []string `json:"required_skills,omitempty"`
@@ -138,7 +140,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
                m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -180,6 +182,7 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 			&companyID,
 			&companyName,
 			&postedAt,
+			(*pq.StringArray)(&record.FitReasons),
 		); err != nil {
 			return nil, err
 		}
@@ -267,7 +270,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
                m.matched_at,
                COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
                COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
         FROM resume_job_matches m
         JOIN job_postings p ON p.id = m.job_posting_id
         LEFT JOIN job_companies c ON c.id = p.company_id
@@ -309,6 +312,7 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 			&companyID,
 			&companyName,
 			&postedAt,
+			(*pq.StringArray)(&record.FitReasons),
 		); err != nil {
 			return nil, err
 		}
@@ -368,6 +372,14 @@ func (m *ResumeJobMatchModel) DebugDump(userID int, resumeHash string) error {
 		fmt.Printf("match %d user=%d resume=%s job=%d score=%.2f\n", match.ID, match.UserID, match.ResumeHash, match.JobPostingID, match.MatchScore)
 	}
 	return nil
+}
+
+// UpdateFitReasons stores AI-generated fit reasons for a match.
+func (m *ResumeJobMatchModel) UpdateFitReasons(matchID int64, reasons []string) error {
+	_, err := m.db.Exec(`
+		UPDATE resume_job_matches SET fit_reasons = $1 WHERE id = $2
+	`, pq.StringArray(reasons), matchID)
+	return err
 }
 
 // limitPerCompany keeps at most maxPerCompany jobs from the same company.

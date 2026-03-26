@@ -493,6 +493,49 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 		"topMatches":      topMatches,
 		"aiFilterPending": aiFilterPending,
 	})
+
+	// Pre-generate fit reasons for top 10 matches in background
+	if len(matches) > 0 {
+		pregenMatches := matches
+		if len(pregenMatches) > 10 {
+			pregenMatches = pregenMatches[:10]
+		}
+		resumeData := map[string]interface{}{
+			"name":    req.Name,
+			"email":   req.Email,
+			"summary": req.Summary,
+			"skills":  strings.Join(req.Skills, ", "),
+		}
+		go func() {
+			for _, match := range pregenMatches {
+				if len(match.FitReasons) > 0 {
+					continue
+				}
+				matchMap := map[string]interface{}{
+					"job_title":        match.JobTitle,
+					"company_name":     match.CompanyName,
+					"job_location":     match.JobLocation,
+					"job_department":   match.JobDepartment,
+					"job_remote_type":  match.JobRemoteType,
+					"job_description":  match.JobDescription,
+					"match_score":      match.MatchScore,
+					"matched_skills":   match.MatchedSkills,
+					"missing_skills":   match.MissingSkills,
+					"required_skills":  match.RequiredSkills,
+					"extracted_skills": match.RequiredSkills, // use same source
+				}
+				prompt := services.BuildJobFitExplanationPrompt(resumeData, matchMap)
+				raw, err := services.CallGeminiFlash(prompt)
+				if err != nil {
+					continue
+				}
+				reasons := services.ParseFitReasons(raw)
+				if len(reasons) > 0 {
+					_ = jc.matches.UpdateFitReasons(match.ID, reasons)
+				}
+			}
+		}()
+	}
 }
 
 func (jc *JobsController) ListMatchedJobs(c *gin.Context) {

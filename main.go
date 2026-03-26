@@ -128,6 +128,7 @@ func main() {
 	handlers.SetResumeJobMatcherService(jobMatcherService)
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	handlers.SetChatModels(userModel, jobAppModel)
+	handlers.SetJobMatchModel(jobMatchModel)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)
 	resumeSkillCacheModel := models.NewResumeSkillCacheModel(db)
 	resumeEmbeddingCacheModel := models.NewResumeEmbeddingCacheModel(db)

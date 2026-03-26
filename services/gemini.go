@@ -1047,26 +1047,53 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 	employmentType, _ := match["job_employment_type"].(string)
 	jobDescription, _ := match["job_description"].(string)
 
-	// Extract skill gap data
+	// Extract skill gap data — prefer LLM-extracted skills when available
 	var matchedSkills, missingSkills, requiredSkills []string
-	if ms, ok := match["matched_skills"].([]interface{}); ok {
-		for _, s := range ms {
-			if str, ok := s.(string); ok {
-				matchedSkills = append(matchedSkills, str)
-			}
-		}
-	}
-	if ms, ok := match["missing_skills"].([]interface{}); ok {
-		for _, s := range ms {
-			if str, ok := s.(string); ok {
-				missingSkills = append(missingSkills, str)
-			}
-		}
-	}
-	if rs, ok := match["required_skills"].([]interface{}); ok {
-		for _, s := range rs {
+
+	// Use extracted_skills (LLM-generated) if available, otherwise fall back to required_skills (regex)
+	if es, ok := match["extracted_skills"].([]interface{}); ok && len(es) > 0 {
+		for _, s := range es {
 			if str, ok := s.(string); ok {
 				requiredSkills = append(requiredSkills, str)
+			}
+		}
+		// Recompute matched/missing from extracted_skills vs user skills
+		userSkillSet := make(map[string]bool)
+		if userSkills, ok := resumeData["skills"].(string); ok {
+			for _, s := range strings.Split(strings.ToLower(userSkills), ",") {
+				if trimmed := strings.TrimSpace(s); trimmed != "" {
+					userSkillSet[trimmed] = true
+				}
+			}
+		}
+		for _, req := range requiredSkills {
+			if userSkillSet[strings.ToLower(req)] {
+				matchedSkills = append(matchedSkills, req)
+			} else {
+				missingSkills = append(missingSkills, req)
+			}
+		}
+	} else {
+		// Fall back to pre-computed skill gaps
+		if ms, ok := match["matched_skills"].([]interface{}); ok {
+			for _, s := range ms {
+				if str, ok := s.(string); ok {
+					matchedSkills = append(matchedSkills, str)
+				}
+			}
+		}
+		if ms, ok := match["missing_skills"].([]interface{}); ok {
+			for _, s := range ms {
+				if str, ok := s.(string); ok {
+					missingSkills = append(missingSkills, str)
+				}
+			}
+		}
+		if rs, ok := match["required_skills"].([]interface{}); ok {
+			for _, s := range rs {
+				if str, ok := s.(string); ok {
+					requiredSkills = append(requiredSkills, str)
+				}
 			}
 		}
 	}
@@ -1105,6 +1132,16 @@ func BuildJobFitExplanationPrompt(resumeData map[string]interface{}, match map[s
 	if trimmed := strings.TrimSpace(jobDescription); trimmed != "" {
 		jobBuilder.WriteString("\nJob Description:\n")
 		jobBuilder.WriteString(trimmed)
+		jobBuilder.WriteString("\n")
+	}
+
+	// Add match score and seniority context
+	if score, ok := match["match_score"].(float64); ok && score > 0 {
+		jobBuilder.WriteString(fmt.Sprintf("\nMatch Score: %.1f/100\n", score))
+	}
+	if seniority, ok := match["seniority"].(string); ok && seniority != "" {
+		jobBuilder.WriteString("Job Seniority: ")
+		jobBuilder.WriteString(seniority)
 		jobBuilder.WriteString("\n")
 	}
 
@@ -1158,6 +1195,10 @@ Guidelines:
 - Avoid generic phrases like "great fit" or "well-qualified"
 - Each reason: 10-20 words, confident tone, candidate-facing
 - Do not mention match scores or AI
+- If match score > 80: use confident language ("strong alignment", "directly relevant")
+- If match score 60-80: acknowledge fit with areas to grow
+- If match score < 60: focus on transferable skills and growth potential
+- If job seniority differs from candidate's level: address it (e.g., "stretch into leadership" or "well within your expertise")
 
 Return ONLY valid JSON:
 {
@@ -1167,6 +1208,53 @@ Return ONLY valid JSON:
     "Reason 3 (growth/tip)..."
   ]
 }`, resumeBlock, jobBlock, skillAnalysis)
+}
+
+// ParseFitReasons extracts fit reason strings from an LLM response.
+func ParseFitReasons(raw string) []string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return nil
+	}
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	trimmed = strings.TrimSpace(trimmed)
+
+	var wrapper struct {
+		Reasons []string `json:"reasons"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &wrapper); err == nil && len(wrapper.Reasons) > 0 {
+		out := make([]string, 0, len(wrapper.Reasons))
+		for _, r := range wrapper.Reasons {
+			if r = strings.TrimSpace(r); r != "" {
+				out = append(out, r)
+			}
+		}
+		if len(out) > 0 {
+			return out
+		}
+	}
+
+	// Fallback: plain text lines
+	var reasons []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Strip numbered prefixes like "1. " or "- "
+		if len(line) > 2 && (line[0] >= '0' && line[0] <= '9') && (line[1] == '.' || line[1] == ')') {
+			line = strings.TrimSpace(line[2:])
+		}
+		line = strings.TrimPrefix(line, "- ")
+		line = strings.TrimPrefix(line, "• ")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			reasons = append(reasons, line)
+		}
+	}
+	return reasons
 }
 
 // Cover letter prompt
