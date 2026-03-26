@@ -258,7 +258,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	return result, nil
 }
 
-// classifyJobPostingsBatch classifies career field and extracts skills for newly inserted jobs.
+// classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority for newly inserted jobs.
 func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {
 	for _, id := range ids {
 		select {
@@ -271,28 +271,57 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 		if err != nil || job == nil {
 			continue
 		}
-		if job.CareerField != "" && len(job.ExtractedSkills) > 0 {
+		if job.CareerField != "" && len(job.ExtractedSkills) > 0 && job.Seniority != "" {
 			continue
 		}
 
 		prompt := BuildJobClassificationPrompt(job.Title, job.Description)
-		classifyCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		raw, err := CallGeminiFlash(prompt)
-		cancel()
-		if err != nil {
+
+		// Retry with backoff on rate limit
+		var raw string
+		var callErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			raw, callErr = CallGeminiFlash(prompt)
+			if callErr == nil {
+				break
+			}
+			errMsg := strings.ToLower(callErr.Error())
+			if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "rate") || strings.Contains(errMsg, "resource_exhausted") {
+				backoff := time.Duration(1<<uint(attempt)) * 2 * time.Second
+				s.logger.Warn("job classification rate limited, backing off", map[string]interface{}{
+					"jobID":   id,
+					"backoff": backoff.String(),
+				})
+				select {
+				case <-time.After(backoff):
+				case <-ctx.Done():
+					return
+				}
+				continue
+			}
+			break
+		}
+		if callErr != nil {
 			s.logger.Warn("job classification failed", map[string]interface{}{
 				"jobID": id,
-				"error": err.Error(),
+				"error": callErr.Error(),
 			})
 			continue
 		}
 
 		field, skills, seniority := ParseJobClassificationResponse(raw)
-		if err := s.postingModel.UpdateJobClassification(classifyCtx, id, string(field), skills, seniority); err != nil {
+		if err := s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
 			s.logger.Warn("failed to store job classification", map[string]interface{}{
 				"jobID": id,
 				"error": err.Error(),
 			})
+		}
+
+		// Rate limit: 200ms delay between jobs to avoid hammering Gemini
+		select {
+		case <-time.After(200 * time.Millisecond):
+		case <-ctx.Done():
+			return
 		}
 	}
 }
