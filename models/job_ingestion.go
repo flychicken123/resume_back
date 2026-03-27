@@ -540,6 +540,11 @@ func NewJobPostingModel(db *sql.DB) *JobPostingModel {
 	return &JobPostingModel{db: db}
 }
 
+// DB returns the underlying database connection for direct queries.
+func (m *JobPostingModel) DB() *sql.DB {
+	return m.db
+}
+
 // GetByID fetches a single job posting with its company name.
 func (m *JobPostingModel) GetByID(id int64) (*JobPosting, *string, error) {
 	if id <= 0 {

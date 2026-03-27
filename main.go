@@ -223,6 +223,10 @@ func main() {
 	jobEmbeddingCtrl := controllers.NewJobEmbeddingController(jobEmbeddingBackfill, ctx)
 	jobClassifyBackfill := services.NewJobClassifyBackfillService(jobPostingModel, logger)
 	jobClassifyCtrl := controllers.NewJobClassifyController(jobClassifyBackfill, ctx)
+	benchmarkModel := models.NewAiBenchmarkModel(db)
+	benchmarkSvc := services.NewBenchmarkService(jobPostingModel, jobMatchModel, benchmarkModel, logger)
+	benchmarkCtrl := controllers.NewBenchmarkController(benchmarkSvc, ctx)
+	benchmarkSvc.StartScheduler(ctx)
 	jobMatchNotifier.Start(ctx, 100*time.Hour)
 
 	r := gin.New()
@@ -645,6 +649,12 @@ func main() {
 			admin.POST("/jobs/classify/backfill", jobClassifyCtrl.StartBackfill)
 			admin.GET("/jobs/classify/backfill/status", jobClassifyCtrl.GetStatus)
 			admin.DELETE("/jobs/classify/backfill", jobClassifyCtrl.StopBackfill)
+
+			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
+			admin.GET("/benchmark/status", benchmarkCtrl.GetStatus)
+			admin.GET("/benchmark/results", benchmarkCtrl.GetResults)
+			admin.GET("/benchmark/history", benchmarkCtrl.GetHistory)
+			admin.GET("/benchmark/summary", benchmarkCtrl.GetSummary)
 		}
 	}
 
