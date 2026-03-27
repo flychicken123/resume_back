@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"math"
 	"sort"
 	"strings"
@@ -49,6 +50,11 @@ type resumeEmbeddingCacheEntry struct {
 	expiry time.Time
 }
 
+type reRankCacheEntry struct {
+	score  float64
+	expiry time.Time
+}
+
 // EmbeddingDBCache persists resume embeddings to DB.
 type EmbeddingDBCache interface {
 	GetEmbedding(resumeHash string) ([]float32, error)
@@ -63,6 +69,7 @@ type jobMatcherService struct {
 	embeddingSvc     *EmbeddingService
 	embeddingCache   sync.Map
 	embeddingDBCache EmbeddingDBCache
+	reRankCache      sync.Map
 }
 
 const vectorSimilarityThreshold float32 = 0.5
@@ -89,6 +96,13 @@ func NewJobMatcherService(postings *models.JobPostingModel, matches *models.Resu
 					entry := value.(resumeEmbeddingCacheEntry)
 					if time.Now().After(entry.expiry) {
 						svc.embeddingCache.Delete(key)
+					}
+					return true
+				})
+				svc.reRankCache.Range(func(key, value interface{}) bool {
+					entry := value.(reRankCacheEntry)
+					if time.Now().After(entry.expiry) {
+						svc.reRankCache.Delete(key)
 					}
 					return true
 				})
@@ -1149,14 +1163,10 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	return filteredJobs
 }
 
-// applyLLMReRank uses the LangChain-backed copilot agent (if available) to
-// re-rank the top K matches based on a richer understanding of the resume and
-// job descriptions. It keeps the existing heuristic score as a baseline and
-// blends it with an LLM-provided score.
+// applyLLMReRank uses Gemini Flash to re-rank the top K matches based on a
+// richer understanding of the resume and job descriptions. It caches scores
+// per (resume_hash, job_id) to avoid repeat LLM calls.
 func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobMatchInput, scored []scoredJob, maxResults int) {
-	if s.copilot == nil {
-		return
-	}
 	if len(scored) == 0 {
 		return
 	}
@@ -1172,11 +1182,61 @@ func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobM
 		return
 	}
 
-	candidates := make([]JobReRankCandidate, k)
+	resumeHash := input.ResumeHash
+
+	// Check cache for each job — split into cached and uncached
+	var uncachedIndices []int
+	cachedScores := make(map[int]float64) // originalIndex → cached LLM score
+
 	for i := 0; i < k; i++ {
-		job := scored[i].posting
-		candidates[i] = JobReRankCandidate{
-			Index:       i + 1,
+		cacheKey := fmt.Sprintf("rerank:%s:%d", resumeHash, scored[i].posting.ID)
+		if entry, ok := s.reRankCache.Load(cacheKey); ok {
+			e := entry.(reRankCacheEntry)
+			if time.Now().Before(e.expiry) {
+				cachedScores[i] = e.score
+				continue
+			}
+		}
+		uncachedIndices = append(uncachedIndices, i)
+	}
+
+	s.logger.Info("job re-rank cache check", map[string]interface{}{
+		"cached":   len(cachedScores),
+		"uncached": len(uncachedIndices),
+		"total":    k,
+	})
+
+	// Apply cached scores
+	for i, llmScore := range cachedScores {
+		if llmScore == 0 {
+			scored[i].score = 0
+			continue
+		}
+		combined := llmReRankAlpha*scored[i].score + llmReRankBeta*llmScore
+		if combined < 0 {
+			combined = 0
+		}
+		scored[i].score = math.Round(combined*100) / 100
+	}
+
+	// If all cached, just re-sort and return
+	if len(uncachedIndices) == 0 {
+		sort.Slice(scored[:k], func(i, j int) bool {
+			if scored[i].score == scored[j].score {
+				return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
+			}
+			return scored[i].score > scored[j].score
+		})
+		return
+	}
+
+	// Build candidates for uncached jobs only, with re-indexed prompt indices
+	candidates := make([]JobReRankCandidate, len(uncachedIndices))
+	indexMap := make(map[int]int) // promptIndex (1-based) → original scored index
+	for promptIdx, origIdx := range uncachedIndices {
+		job := scored[origIdx].posting
+		candidates[promptIdx] = JobReRankCandidate{
+			Index:       promptIdx + 1,
 			JobID:       job.ID,
 			Title:       job.Title,
 			Company:     "",
@@ -1184,46 +1244,82 @@ func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobM
 			Department:  job.Department,
 			RemoteType:  job.RemoteType,
 			Description: job.Description,
-			BaseScore:   scored[i].score,
+			BaseScore:   scored[origIdx].score,
 		}
+		indexMap[promptIdx+1] = origIdx
 	}
 
 	prompt := BuildJobReRankingPrompt(input, candidates)
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, llmReRankTimeout)
 	defer cancel()
 
-	raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
+	// Call Flash with timeout wrapper
+	type llmResult struct {
+		raw string
+		err error
+	}
+	ch := make(chan llmResult, 1)
+	go func() {
+		r, e := CallGeminiFlashWithTemperature(prompt, 0.3)
+		ch <- llmResult{r, e}
+	}()
+
+	var raw string
+	var err error
+	select {
+	case res := <-ch:
+		raw, err = res.raw, res.err
+	case <-ctxWithTimeout.Done():
+		s.logger.Warn("job re-rank LLM timed out", nil)
+		// Re-sort with whatever scores we have (cached + heuristic)
+		sort.Slice(scored[:k], func(i, j int) bool {
+			if scored[i].score == scored[j].score {
+				return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
+			}
+			return scored[i].score > scored[j].score
+		})
+		return
+	}
+
 	if err != nil {
 		s.logger.Warn("job re-rank LLM failed", map[string]interface{}{"error": err.Error()})
+		sort.Slice(scored[:k], func(i, j int) bool {
+			if scored[i].score == scored[j].score {
+				return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
+			}
+			return scored[i].score > scored[j].score
+		})
 		return
 	}
 
 	llmScores := ParseJobReRankingScores(raw, len(candidates))
-	if len(llmScores) == 0 {
-		return
-	}
 
-	for i := 0; i < k; i++ {
-		base := scored[i].score
-		llmScore, ok := llmScores[i+1]
+	// Apply LLM scores to uncached jobs and cache them
+	for promptIdx, origIdx := range indexMap {
+		llmScore, ok := llmScores[promptIdx]
 		if !ok {
 			continue
 		}
-		// If LLM assigns 0, it means the job is in a completely different industry/category
-		// from the candidate's background. Set the score to 0 to filter it out.
+
+		// Cache the score
+		cacheKey := fmt.Sprintf("rerank:%s:%d", resumeHash, scored[origIdx].posting.ID)
+		s.reRankCache.Store(cacheKey, reRankCacheEntry{
+			score:  llmScore,
+			expiry: time.Now().Add(2 * time.Hour),
+		})
+
 		if llmScore == 0 {
-			scored[i].score = 0
+			scored[origIdx].score = 0
 			continue
 		}
-		combined := llmReRankAlpha*base + llmReRankBeta*llmScore
+		combined := llmReRankAlpha*scored[origIdx].score + llmReRankBeta*llmScore
 		if combined < 0 {
 			combined = 0
 		}
-		scored[i].score = math.Round(combined*100) / 100
+		scored[origIdx].score = math.Round(combined*100) / 100
 	}
 
-	// Re-sort only the top K segment by the new combined score, while preserving
-	// the original tie-breaker by recency.
+	// Re-sort the top K segment
 	sort.Slice(scored[:k], func(i, j int) bool {
 		if scored[i].score == scored[j].score {
 			return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
