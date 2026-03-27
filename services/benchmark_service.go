@@ -745,6 +745,64 @@ func (s *BenchmarkService) GetSummary() ([]models.BenchmarkSystemSummary, error)
 	return s.benchmark.GetSummary()
 }
 
+// GenerateInsights analyzes benchmark results and returns a human-readable summary of failures.
+func GenerateInsights(results []models.AiBenchmarkResult) string {
+	if len(results) == 0 {
+		return "No results to analyze."
+	}
+
+	fieldFailures := map[string]int{}
+	fieldTotals := map[string]int{}
+	lowScoreFields := map[string][]float64{}
+
+	for _, r := range results {
+		if r.IsCorrect != nil {
+			fieldTotals[r.FieldName]++
+			if !*r.IsCorrect {
+				fieldFailures[r.FieldName]++
+			}
+		}
+		if r.Score != nil {
+			lowScoreFields[r.FieldName] = append(lowScoreFields[r.FieldName], *r.Score)
+		}
+	}
+
+	var parts []string
+
+	// Factual failures
+	for field, failures := range fieldFailures {
+		total := fieldTotals[field]
+		if failures > 0 {
+			pct := float64(failures) / float64(total) * 100
+			parts = append(parts, fmt.Sprintf("%s: %d/%d wrong (%.0f%%)", field, failures, total, pct))
+		}
+	}
+
+	// Low quality scores
+	for field, scores := range lowScoreFields {
+		if _, isFactual := fieldTotals[field]; isFactual {
+			continue // already reported above
+		}
+		sum := 0.0
+		low := 0
+		for _, s := range scores {
+			sum += s
+			if s < 3.0 {
+				low++
+			}
+		}
+		avg := sum / float64(len(scores))
+		if low > 0 || avg < 3.5 {
+			parts = append(parts, fmt.Sprintf("%s: avg %.1f/5 (%d/%d scored below 3)", field, avg, low, len(scores)))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "All benchmarks passed within acceptable thresholds."
+	}
+	return strings.Join(parts, ". ") + "."
+}
+
 // Helper: parse intent from classifier response (simplified)
 func parseIntentFromResponse(raw string) string {
 	cleaned := strings.TrimSpace(raw)

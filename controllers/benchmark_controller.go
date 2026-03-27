@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"resumeai/models"
 	"resumeai/services"
 )
 
@@ -49,32 +50,81 @@ func (bc *BenchmarkController) GetStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, bc.svc.Status())
 }
 
-// GetResults returns results for a specific benchmark type or run.
+// GetResults returns results for a specific benchmark type or run, with summary and insights.
 func (bc *BenchmarkController) GetResults(c *gin.Context) {
 	runID := c.Query("run_id")
 	benchmarkType := c.Query("type")
 
+	var results []models.AiBenchmarkResult
+	var err error
+
 	if runID != "" {
-		results, err := bc.svc.GetResultsByRunID(runID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load results"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"results": results})
+		results, err = bc.svc.GetResultsByRunID(runID)
+	} else if benchmarkType != "" {
+		results, err = bc.svc.GetLatestResultsByType(benchmarkType)
+	} else {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "provide type or run_id query parameter"})
 		return
 	}
 
-	if benchmarkType != "" {
-		results, err := bc.svc.GetLatestResultsByType(benchmarkType)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load results"})
-			return
-		}
-		c.JSON(http.StatusOK, gin.H{"results": results})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load results"})
 		return
 	}
 
-	c.JSON(http.StatusBadRequest, gin.H{"error": "provide type or run_id query parameter"})
+	// Build failures list
+	var failures []models.AiBenchmarkResult
+	for _, r := range results {
+		if (r.IsCorrect != nil && !*r.IsCorrect) || (r.Score != nil && *r.Score < 3.0) {
+			failures = append(failures, r)
+		}
+	}
+
+	// Build per-field summary
+	summary := map[string]interface{}{}
+	fieldCorrect := map[string]int{}
+	fieldTotal := map[string]int{}
+	fieldScoreSum := map[string]float64{}
+	fieldScoreCount := map[string]int{}
+	for _, r := range results {
+		if r.IsCorrect != nil {
+			fieldTotal[r.FieldName]++
+			if *r.IsCorrect {
+				fieldCorrect[r.FieldName]++
+			}
+		}
+		if r.Score != nil {
+			fieldScoreSum[r.FieldName] += *r.Score
+			fieldScoreCount[r.FieldName]++
+		}
+	}
+	for field, total := range fieldTotal {
+		summary[field+"_accuracy"] = float64(fieldCorrect[field]) / float64(total)
+	}
+	for field, count := range fieldScoreCount {
+		if _, hasAccuracy := fieldTotal[field]; !hasAccuracy {
+			summary[field+"_avg"] = fieldScoreSum[field] / float64(count)
+		}
+	}
+
+	insights := services.GenerateInsights(results)
+
+	detectedRunID := ""
+	detectedType := ""
+	if len(results) > 0 {
+		detectedRunID = results[0].RunID
+		detectedType = results[0].BenchmarkType
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"run_id":         detectedRunID,
+		"benchmark_type": detectedType,
+		"sample_size":    len(results),
+		"summary":        summary,
+		"details":        results,
+		"failures":       failures,
+		"insights":       insights,
+	})
 }
 
 // GetHistory returns a list of past benchmark runs.
