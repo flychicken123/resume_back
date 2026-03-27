@@ -164,7 +164,10 @@ func ParseResume(c *gin.Context) {
       "projects": [
         {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null, "bullets": string[] | null}
       ],
-      "skills": string[]
+      "skills": string[],
+      "conversions": [
+        {"original": "section: content", "action": "what was done with it"}
+      ]
     }`
 
 	prompt := fmt.Sprintf(`Extract resume information from the following text and return ONLY valid JSON matching this schema. No markdown formatting, no code blocks, no explanations - just the JSON object.
@@ -215,6 +218,16 @@ CRITICAL: Distinguish between:
 - Work experience (jobs at companies) with their associated projectsForRole
 - Standalone projects (personal/academic work in the top-level projects array)
 Projects done AT a company go in that experience's projectsForRole. Personal/side projects go in the top-level projects array.
+
+7. NON-STANDARD SECTIONS: If the resume contains sections that don't fit the schema above, DO NOT discard them. Convert them into the closest matching field:
+   - Certifications → add to "skills" array with "(Certified)" suffix (e.g., "AWS Solutions Architect (Certified)")
+   - Languages → add to "skills" array with proficiency level (e.g., "Mandarin (Fluent)")
+   - Awards/Honors → add as a bullet point in the most relevant experience entry, or mention in summary
+   - Volunteer work → add as an experience entry with appropriate role and description
+   - Publications/Patents → add as a project entry with title and description
+   - Portfolio/GitHub/LinkedIn links → include in summary
+   For each conversion, add an entry to the "conversions" array documenting what was converted and where it was placed.
+   If no conversions were needed, return an empty array: "conversions": []
 
 Resume text:
 %s
