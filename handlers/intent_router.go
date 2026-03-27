@@ -110,7 +110,7 @@ Respond ONLY with valid JSON (no markdown, no code fences):
 
 	_ = classifyCtx // timeout is applied via context
 
-	raw, err := services.CallGeminiFlash(prompt)
+	raw, err := services.CallGeminiFlashWithTemperature(prompt, 0.0)
 	if err != nil {
 		return ChatIntent{Intent: IntentGeneralChat}, fmt.Errorf("gemini flash classification failed: %w", err)
 	}

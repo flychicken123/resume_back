@@ -281,7 +281,7 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 		var raw string
 		var callErr error
 		for attempt := 0; attempt < 3; attempt++ {
-			raw, callErr = CallGeminiFlash(prompt)
+			raw, callErr = CallGeminiFlashWithTemperature(prompt, 0.0)
 			if callErr == nil {
 				break
 			}

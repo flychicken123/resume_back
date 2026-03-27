@@ -92,7 +92,7 @@ func (s *SkillInferenceLLM) InferSkillsFromResume(ctx context.Context, content R
 	prompt := s.buildSkillInferencePrompt(content)
 
 	// Call Gemini
-	response, err := CallGeminiFlash(prompt)
+	response, err := CallGeminiFlashWithTemperature(prompt, 0.0)
 	if err != nil {
 		s.logger.Warn("LLM skill inference failed, falling back to rule-based", map[string]interface{}{
 			"error": err.Error(),

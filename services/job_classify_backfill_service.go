@@ -146,7 +146,7 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			var callErr error
 			// Retry with exponential backoff on rate limit
 			for attempt := 0; attempt < 3; attempt++ {
-				raw, callErr = CallGeminiFlash(prompt)
+				raw, callErr = CallGeminiFlashWithTemperature(prompt, 0.0)
 				if callErr == nil {
 					break
 				}

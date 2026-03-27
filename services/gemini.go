@@ -122,6 +122,16 @@ func CallGeminiFlash(prompt string) (string, error) {
 	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
 }
 
+// CallGeminiFlashWithTemperature calls Gemini Flash with a specific temperature.
+func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string, error) {
+	llm, err := getLangChainFlashModel()
+	if err != nil {
+		return "", err
+	}
+	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt,
+		llms.WithTemperature(temperature))
+}
+
 // CallGeminiWithTemperature calls Gemini with a specific temperature setting.
 // Lower temperature (0.0-0.3) = more focused, consistent, factual output
 // Higher temperature (0.7-1.0) = more creative, varied output

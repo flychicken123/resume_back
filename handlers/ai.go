@@ -45,7 +45,7 @@ func OptimizeEducation(c *gin.Context) {
 	prompt := services.BuildEducationOptimizationPrompt(req.Education, req.ExistingEducation)
 
 	// Call AI service to generate optimized education
-	optimizedEducation, err := services.CallGeminiWithAPIKey(prompt)
+	optimizedEducation, err := services.CallGeminiWithTemperature(prompt, 0.3)
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize education", err)
 		return

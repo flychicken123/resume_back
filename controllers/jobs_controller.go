@@ -525,7 +525,7 @@ func (jc *JobsController) ComputeMatches(c *gin.Context) {
 					"extracted_skills": match.RequiredSkills, // use same source
 				}
 				prompt := services.BuildJobFitExplanationPrompt(resumeData, matchMap)
-				raw, err := services.CallGeminiFlash(prompt)
+				raw, err := services.CallGeminiFlashWithTemperature(prompt, 0.3)
 				if err != nil {
 					continue
 				}
