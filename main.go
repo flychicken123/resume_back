@@ -216,6 +216,8 @@ func main() {
 	experimentController := controllers.NewExperimentController(experimentService)
 	adsController := controllers.NewAdsController(db, adService, stripeService)
 
+	autofillController := controllers.NewAutofillController(userModel, resumeModel)
+
 	jobsService.StartScheduler(ctx, 24*time.Hour)
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
@@ -662,6 +664,11 @@ func main() {
 	api.GET("/plans", subscriptionController.GetPlans)
 	api.POST("/webhook/stripe", subscriptionController.HandleStripeWebhook)
 	api.POST("/stripe/webhook", subscriptionController.HandleStripeWebhook)
+
+	// Autofill session routes
+	api.GET("/autofill/session/:id", autofillController.GetSession)
+	api.OPTIONS("/autofill/session/:id", autofillController.GetSessionOptions)
+	protected.POST("/autofill/session", autofillController.CreateSession)
 
 	// Apply subscription limit middleware to resume generation endpoints
 	resumeGenRoutes := r.Group("/api")
