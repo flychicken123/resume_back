@@ -129,6 +129,13 @@ func main() {
 	handlers.SetChatHistoryModel(chatHistoryModel)
 	handlers.SetChatModels(userModel, jobAppModel)
 	handlers.SetJobMatchModel(jobMatchModel)
+
+	// RAG knowledge base
+	knowledgeModel := models.NewKnowledgeBaseModel(db)
+	knowledgeSvc := services.NewKnowledgeService(knowledgeModel, embeddingSvc, logger)
+	knowledgeCtrl := controllers.NewKnowledgeController(knowledgeSvc)
+	handlers.SetKnowledgeService(knowledgeSvc)
+	go knowledgeSvc.SeedIfEmpty(ctx)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)
 	resumeSkillCacheModel := models.NewResumeSkillCacheModel(db)
 	resumeEmbeddingCacheModel := models.NewResumeEmbeddingCacheModel(db)
@@ -657,6 +664,13 @@ func main() {
 			admin.GET("/benchmark/results", benchmarkCtrl.GetResults)
 			admin.GET("/benchmark/history", benchmarkCtrl.GetHistory)
 			admin.GET("/benchmark/summary", benchmarkCtrl.GetSummary)
+
+			// Knowledge base management
+			admin.GET("/knowledge", knowledgeCtrl.List)
+			admin.POST("/knowledge", knowledgeCtrl.Create)
+			admin.PUT("/knowledge/:id", knowledgeCtrl.Update)
+			admin.DELETE("/knowledge/:id", knowledgeCtrl.Delete)
+			admin.POST("/knowledge/backfill", knowledgeCtrl.BackfillEmbeddings)
 		}
 	}
 

@@ -106,6 +106,12 @@ var assistantKnowledge = []knowledgeEntry{
 var chatHistoryModel *models.ChatHistoryModel
 var chatUserModel *models.UserModel
 var chatJobAppModel *models.JobApplicationModel
+var chatKnowledgeSvc *services.KnowledgeService
+
+// SetKnowledgeService injects the RAG knowledge service for the chat handler.
+func SetKnowledgeService(svc *services.KnowledgeService) {
+	chatKnowledgeSvc = svc
+}
 
 // SetChatHistoryModel injects the persistence layer for chat transcripts.
 func SetChatHistoryModel(m *models.ChatHistoryModel) {
@@ -474,7 +480,20 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 		fmt.Fprintf(&historyBuilder, "%s: %s\n", roleTitle, strings.TrimSpace(msg.Text))
 	}
 
-	knowledgeContext := buildKnowledgeContext(findRelevantKnowledge(userMessage, req.History))
+	// RAG knowledge search with fallback to keyword matching
+	var knowledgeContext string
+	if chatKnowledgeSvc != nil {
+		if docs, err := chatKnowledgeSvc.Search(ctx, userMessage, 4); err == nil && len(docs) > 0 {
+			var sb strings.Builder
+			for i, doc := range docs {
+				fmt.Fprintf(&sb, "%d. [%s] %s\n", i+1, doc.Title, doc.Content)
+			}
+			knowledgeContext = sb.String()
+		}
+	}
+	if knowledgeContext == "" {
+		knowledgeContext = buildKnowledgeContext(findRelevantKnowledge(userMessage, req.History))
+	}
 	resumeContext := buildResumeContext(req.ResumeData)
 
 	var prompt string

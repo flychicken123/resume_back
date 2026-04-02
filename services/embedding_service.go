@@ -88,3 +88,13 @@ func (s *EmbeddingService) EmbedResumeContent(ctx context.Context, input ResumeJ
 	}
 	return s.embedText(ctx, text, genai.TaskTypeRetrievalQuery)
 }
+
+// EmbedDocument generates a RETRIEVAL_DOCUMENT embedding for knowledge base entries.
+func (s *EmbeddingService) EmbedDocument(ctx context.Context, text string) ([]float32, error) {
+	return s.embedText(ctx, text, genai.TaskTypeRetrievalDocument)
+}
+
+// EmbedQuery generates a RETRIEVAL_QUERY embedding for user queries.
+func (s *EmbeddingService) EmbedQuery(ctx context.Context, text string) ([]float32, error) {
+	return s.embedText(ctx, text, genai.TaskTypeRetrievalQuery)
+}
