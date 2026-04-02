@@ -76,14 +76,23 @@ Given the user's message and conversation history, classify it into exactly one 
 - categorize_skills: User wants to organize/categorize/group their existing skills
 - optimize_project: User wants to optimize/tailor project descriptions for a job
 - polish: User wants to polish/enhance/refine/rewrite a resume section for better impact (not job-specific tailoring)
-- job_application_query: User is asking about their job applications, application status, which companies they applied to, how many applications they have, tracking progress, etc.
-- general_chat: General question, conversational reply, or anything not matching above
+- job_application_query: User is asking about THEIR OWN job applications they've submitted — application status, which companies they applied to, how many they've applied to, tracking progress. Keywords: "my applications", "applied", "application status", "tracking".
+- general_chat: General question, conversational reply, questions about HiHired as a platform, or anything not matching above. This includes questions about the platform's job database (e.g., "how many jobs do you have", "what jobs are available", "how many positions are listed").
 
 IMPORTANT RULES:
 - If the user is replying conversationally to a previous message (e.g., "I don't have one", "ok", "thanks", "never mind", "no"), classify as general_chat.
 - If the user sends a URL without explicitly asking to generate something, classify as general_chat.
 - Only classify as a feature intent if the user is clearly requesting that feature to be performed.
 - If the assistant already generated content (e.g., a cover letter) in the recent history and the user is just responding, classify as general_chat.
+- CRITICAL disambiguation rules:
+  * "how many jobs do you have" / "what jobs are available" / "show me jobs" = general_chat (asking about the PLATFORM's database)
+  * "how many jobs have I applied to" / "my applications" / "where did I apply" = job_application_query (asking about PERSONAL applications)
+  * "improve my resume" / "make my resume better" without specifying a section = resume_advice (wants feedback, not editing)
+  * "optimize my experience" / "tailor my experience" = optimize_experience (wants AI to rewrite)
+  * "fix my resume" / "fix grammar" = improve_grammar (wants corrections, not content rewriting)
+  * "what can you do" / "help" / "how do I use this" = general_chat (product questions)
+  * "what's my name" / "what did I enter" / "what are my skills" = general_chat (reads from resume data context, not a feature action)
+  * If user says "optimize" but has NO job description → classify as polish (generic improvement) not optimize_experience (needs JD)
 
 Also extract any parameters from the message:
 - companyName: company name if mentioned
