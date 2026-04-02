@@ -304,4 +304,10 @@ jobs:
             echo "⚠️ Content-Type validation may not be working (got $response)"
           fi
           
+          # Update nginx config if changed
+          echo "🔄 Updating nginx config..."
+          sudo cp ~/ai-resume-backend/nginx.backend.conf /etc/nginx/sites-available/backend 2>/dev/null || \
+          sudo cp ~/ai-resume-backend/nginx.backend.conf /etc/nginx/conf.d/backend.conf 2>/dev/null || true
+          sudo nginx -t && sudo systemctl reload nginx || echo "⚠️ nginx reload skipped"
+
           echo "✅ Deployment verification completed!"
