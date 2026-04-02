@@ -494,6 +494,7 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 	if knowledgeContext == "" {
 		knowledgeContext = buildKnowledgeContext(findRelevantKnowledge(userMessage, req.History))
 	}
+
 	resumeContext := buildResumeContext(req.ResumeData)
 
 	var prompt string
