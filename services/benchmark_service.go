@@ -855,13 +855,26 @@ func parseIntentFromResponse(raw string) string {
 }
 
 // Helper: BuildIntentClassificationPrompt builds a prompt for intent detection.
-// This is a simplified version — the real one is in handlers/intent_router.go.
+// BuildIntentClassificationPrompt mirrors the real classifier in handlers/intent_router.go.
+// Uses the exact same intent names and classification rules.
 func BuildIntentClassificationPrompt(message string, _ interface{}) string {
-	return fmt.Sprintf(`Classify the user's intent from this message. Return JSON with "intent" field.
+	return fmt.Sprintf(`You are an intent classifier for a resume-building AI assistant called HiHired.
+Given the user's message, classify it into exactly one of these intents:
 
-Possible intents: personal_info, experience_optimization, summary_optimization, project_optimization, education_optimization, job_search, application_tracking, general_chat
+- cover_letter: User wants to generate a cover letter
+- recommendation_letter: User wants a recommendation/reference letter
+- resume_advice: User wants feedback, analysis, or advice on their resume
+- generate_summary: User wants to generate or rewrite their professional summary
+- optimize_experience: User wants to optimize/tailor work experience
+- improve_grammar: User wants grammar/writing fixes (not content changes)
+- generate_skills: User wants to auto-generate or suggest skills
+- categorize_skills: User wants to organize/categorize/group their existing skills
+- optimize_project: User wants to optimize/tailor project descriptions
+- polish: User wants to polish/enhance/refine/rewrite a resume section for better impact
+- job_application_query: User is asking about their job applications, status, tracking
+- general_chat: General question, conversational, or anything not matching above
 
-Message: "%s"
+User message: "%s"
 
-Return JSON only: {"intent": "..."}`, message)
+Respond ONLY with valid JSON: {"intent": "...", "confidence": 0.9}`, message)
 }
