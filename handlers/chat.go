@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -266,11 +267,65 @@ func buildResumeContext(resumeData map[string]interface{}) string {
 	return result
 }
 
+// sseWriter writes Server-Sent Events to an HTTP response.
+type sseWriter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+}
+
+func newSSEWriter(w http.ResponseWriter) *sseWriter {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, _ := w.(http.Flusher)
+	return &sseWriter{w: w, flusher: flusher}
+}
+
+func (s *sseWriter) WriteToken(token string) {
+	data, _ := json.Marshal(map[string]string{"token": token})
+	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
+func (s *sseWriter) WriteDone(resp *chatResponse) {
+	data, _ := json.Marshal(map[string]interface{}{
+		"done":             true,
+		"reply":            resp.Reply,
+		"featureAction":    resp.FeatureAction,
+		"featureResult":    resp.FeatureResult,
+		"updatedResumeData": resp.UpdatedResumeData,
+		"isPolishAction":   resp.IsPolishAction,
+		"polishedContent":  resp.PolishedContent,
+		"section":          resp.Section,
+		"entryIndex":       resp.EntryIndex,
+	})
+	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
+func (s *sseWriter) WriteError(msg string) {
+	data, _ := json.Marshal(map[string]interface{}{"error": true, "message": msg})
+	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
 func ChatAssistant(c *gin.Context) {
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request payload"})
 		return
+	}
+
+	isStream := c.Query("stream") == "true"
+	var sse *sseWriter
+	if isStream {
+		sse = newSSEWriter(c.Writer)
 	}
 
 	userMessage := strings.TrimSpace(req.Message)
@@ -302,16 +357,22 @@ func ChatAssistant(c *gin.Context) {
 		log.Printf("[INTENT] Classified intent=%s confidence=%.2f for message=%q", intent.Intent, intent.Confidence, userMessage)
 
 		if intent.Intent == IntentPolish {
-			// Route to existing polish handler
+			// Route to existing polish handler (non-streamable)
 			if polishAgent != nil && len(req.ResumeData) > 0 {
 				if resp := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); resp != nil {
-					if err := persistChatExchange(ctx, chatPersistencePayload{
-						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-					}); err != nil {
-						log.Printf("failed to persist chat exchange: %v", err)
+					go func() {
+						if err := persistChatExchange(ctx, chatPersistencePayload{
+							sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+							userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+						}); err != nil {
+							log.Printf("failed to persist chat exchange: %v", err)
+						}
+					}()
+					if isStream {
+						sse.WriteDone(resp)
+					} else {
+						c.JSON(http.StatusOK, resp)
 					}
-					c.JSON(http.StatusOK, resp)
 					return
 				}
 			}
@@ -319,24 +380,40 @@ func ChatAssistant(c *gin.Context) {
 			// Check for missing required params
 			if missing := checkMissingParams(intent, req.ResumeData); len(missing) > 0 {
 				resp := buildMissingParamResponse(intent)
-				if err := persistChatExchange(ctx, chatPersistencePayload{
-					sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-					userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-				}); err != nil {
-					log.Printf("failed to persist chat exchange: %v", err)
+				go func() {
+					if err := persistChatExchange(ctx, chatPersistencePayload{
+						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+					}); err != nil {
+						log.Printf("failed to persist chat exchange: %v", err)
+					}
+				}()
+				if isStream {
+					sse.WriteDone(resp)
+				} else {
+					c.JSON(http.StatusOK, resp)
 				}
-				c.JSON(http.StatusOK, resp)
 				return
 			}
-			// Route to the feature
-			if resp, err := routeToFeature(ctx, intent, req); err == nil {
-				if err := persistChatExchange(ctx, chatPersistencePayload{
-					sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-					userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-				}); err != nil {
-					log.Printf("failed to persist chat exchange: %v", err)
+			// Route to the feature (with streaming callback if streaming)
+			var onToken func(string)
+			if isStream {
+				onToken = sse.WriteToken
+			}
+			if resp, err := routeToFeature(ctx, intent, req, onToken); err == nil {
+				go func() {
+					if err := persistChatExchange(ctx, chatPersistencePayload{
+						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
+						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
+					}); err != nil {
+						log.Printf("failed to persist chat exchange: %v", err)
+					}
+				}()
+				if isStream {
+					sse.WriteDone(resp)
+				} else {
+					c.JSON(http.StatusOK, resp)
 				}
-				c.JSON(http.StatusOK, resp)
 				return
 			} else {
 				log.Printf("[INTENT] Feature routing failed for intent=%s: %v", intent.Intent, err)
@@ -352,17 +429,23 @@ func ChatAssistant(c *gin.Context) {
 	if polishAgent != nil && len(req.ResumeData) > 0 {
 		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
 			log.Printf("[INTENT-FALLBACK] Keyword polish fallback handled message=%q", userMessage)
-			if err := persistChatExchange(ctx, chatPersistencePayload{
-				sessionID:  sessionID,
-				pagePath:   pagePath,
-				userEmail:  userEmail,
-				userInput:  userMessage,
-				assistant:  polishResponse.Reply,
-				historyLen: len(req.History),
-			}); err != nil {
-				log.Printf("failed to persist chat exchange: %v", err)
+			go func() {
+				if err := persistChatExchange(ctx, chatPersistencePayload{
+					sessionID:  sessionID,
+					pagePath:   pagePath,
+					userEmail:  userEmail,
+					userInput:  userMessage,
+					assistant:  polishResponse.Reply,
+					historyLen: len(req.History),
+				}); err != nil {
+					log.Printf("failed to persist chat exchange: %v", err)
+				}
+			}()
+			if isStream {
+				sse.WriteDone(polishResponse)
+			} else {
+				c.JSON(http.StatusOK, polishResponse)
 			}
-			c.JSON(http.StatusOK, polishResponse)
 			return
 		}
 	}
@@ -406,9 +489,20 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 			systemInstructions, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
 	}
 
-	reply, err := services.CallGeminiWithAPIKey(prompt)
+	var reply string
+	var err error
+
+	if isStream {
+		reply, err = services.CallGeminiStreaming(prompt, sse.WriteToken)
+	} else {
+		reply, err = services.CallGeminiWithAPIKey(prompt)
+	}
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		if isStream {
+			sse.WriteError("Sorry, something went wrong. Please try again.")
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
 		return
 	}
 
@@ -417,18 +511,25 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 		cleaned = "I'm still learning. Please contact us via the Help bubble or at hihired_support@tactechs.net and our team will help you right away."
 	}
 
-	if err := persistChatExchange(ctx, chatPersistencePayload{
-		sessionID:  sessionID,
-		pagePath:   pagePath,
-		userEmail:  userEmail,
-		userInput:  userMessage,
-		assistant:  cleaned,
-		historyLen: len(req.History),
-	}); err != nil {
-		log.Printf("failed to persist chat exchange: %v", err)
-	}
+	go func() {
+		if err := persistChatExchange(ctx, chatPersistencePayload{
+			sessionID:  sessionID,
+			pagePath:   pagePath,
+			userEmail:  userEmail,
+			userInput:  userMessage,
+			assistant:  cleaned,
+			historyLen: len(req.History),
+		}); err != nil {
+			log.Printf("failed to persist chat exchange: %v", err)
+		}
+	}()
 
-	c.JSON(http.StatusOK, chatResponse{Reply: cleaned})
+	resp := &chatResponse{Reply: cleaned}
+	if isStream {
+		sse.WriteDone(resp)
+	} else {
+		c.JSON(http.StatusOK, resp)
+	}
 }
 
 // tryHandlePolishRequest checks if the message is a polish request and handles it.

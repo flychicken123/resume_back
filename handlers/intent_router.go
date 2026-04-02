@@ -271,7 +271,8 @@ func buildConversationContext(message string, history []chatMessage) string {
 }
 
 // routeToFeature executes the feature corresponding to the classified intent.
-func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*chatResponse, error) {
+// onToken is an optional streaming callback — when non-nil, LLM tokens are streamed to the client.
+func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest, onToken func(string)) (*chatResponse, error) {
 	resumeData := req.ResumeData
 	jobDesc, _ := resumeData["jobDescription"].(string)
 	conversationCtx := buildConversationContext(req.Message, req.History)
@@ -279,7 +280,6 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 	switch intent.Intent {
 	case IntentCoverLetter:
 		companyName := intent.ExtractedParams["companyName"]
-		// If no JD in resumeData, check if the user's message contains a URL to extract JD from
 		if jobDesc == "" {
 			if extractedJD, extractedCompany := tryExtractJDFromMessage(req.Message); extractedJD != "" {
 				jobDesc = extractedJD
@@ -290,7 +290,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 			}
 		}
 		prompt := services.BuildCoverLetterPrompt(resumeData, jobDesc, companyName) + conversationCtx
-		result, err := runCopilotPrompt(ctx, prompt)
+		var result string
+		var err error
+		if onToken != nil {
+			result, err = services.CallGeminiStreaming(prompt, onToken)
+		} else {
+			result, err = runCopilotPrompt(ctx, prompt)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("cover letter generation failed: %w", err)
 		}
@@ -303,7 +309,6 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 	case IntentRecommendationLetter:
 		companyName := intent.ExtractedParams["companyName"]
 		position := intent.ExtractedParams["position"]
-		// If no JD in resumeData, check if the user's message contains a URL
 		if jobDesc == "" {
 			if extractedJD, extractedCompany := tryExtractJDFromMessage(req.Message); extractedJD != "" {
 				jobDesc = extractedJD
@@ -313,7 +318,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 			}
 		}
 		prompt := services.BuildRecommendationLetterPrompt(resumeData, jobDesc, companyName, position) + conversationCtx
-		result, err := runCopilotPrompt(ctx, prompt)
+		var result string
+		var err error
+		if onToken != nil {
+			result, err = services.CallGeminiStreaming(prompt, onToken)
+		} else {
+			result, err = runCopilotPrompt(ctx, prompt)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("recommendation letter generation failed: %w", err)
 		}
@@ -325,7 +336,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 
 	case IntentResumeAdvice:
 		prompt := services.BuildResumeAdvicePrompt(resumeData, jobDesc) + conversationCtx
-		advice, err := services.CallGeminiWithAPIKey(prompt)
+		var advice string
+		var err error
+		if onToken != nil {
+			advice, err = services.CallGeminiStreaming(prompt, onToken)
+		} else {
+			advice, err = services.CallGeminiWithAPIKey(prompt)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("resume advice failed: %w", err)
 		}
@@ -344,7 +361,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 		prompt := services.BuildSummaryOptimizationPromptWithSkills(
 			experience, education, skills, existingSummary, jobDesc, nil, nil,
 		) + conversationCtx
-		summary, err := services.CallGeminiWithTemperature(prompt, 0.3)
+		var summary string
+		var err error
+		if onToken != nil {
+			summary, err = services.CallGeminiStreamingWithTemperature(prompt, 0.3, onToken)
+		} else {
+			summary, err = services.CallGeminiWithTemperature(prompt, 0.3)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("summary generation failed: %w", err)
 		}
@@ -363,7 +386,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 	case IntentOptimizeExperience:
 		experience := extractExperienceText(resumeData)
 		prompt := services.BuildExperienceOptimizationPromptWithSkills(jobDesc, experience, nil, nil) + conversationCtx
-		result, err := services.CallGeminiWithTemperature(prompt, 0.3)
+		var result string
+		var err error
+		if onToken != nil {
+			result, err = services.CallGeminiStreamingWithTemperature(prompt, 0.3, onToken)
+		} else {
+			result, err = services.CallGeminiWithTemperature(prompt, 0.3)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("experience optimization failed: %w", err)
 		}
@@ -381,7 +410,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 		if section == "summary" {
 			summary, _ := resumeData["summary"].(string)
 			prompt := services.BuildSummaryGrammarPrompt(summary) + conversationCtx
-			improved, err := services.CallGeminiWithTemperature(prompt, 0.3)
+			var improved string
+			var err error
+			if onToken != nil {
+				improved, err = services.CallGeminiStreamingWithTemperature(prompt, 0.3, onToken)
+			} else {
+				improved, err = services.CallGeminiWithTemperature(prompt, 0.3)
+			}
 			if err != nil {
 				return nil, fmt.Errorf("summary grammar improvement failed: %w", err)
 			}
@@ -400,7 +435,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 		// Default to experience grammar
 		experience := extractExperienceText(resumeData)
 		prompt := services.BuildExperienceGrammarPrompt(experience) + conversationCtx
-		improved, err := services.CallGeminiWithTemperature(prompt, 0.3)
+		var improved string
+		var err error
+		if onToken != nil {
+			improved, err = services.CallGeminiStreamingWithTemperature(prompt, 0.3, onToken)
+		} else {
+			improved, err = services.CallGeminiWithTemperature(prompt, 0.3)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("experience grammar improvement failed: %w", err)
 		}
@@ -498,7 +539,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest) (*c
 	case IntentOptimizeProject:
 		projectData := extractProjectText(resumeData)
 		prompt := services.BuildProjectOptimizationPromptWithSkills(jobDesc, projectData, "", nil, nil) + conversationCtx
-		result, err := services.CallGeminiWithTemperature(prompt, 0.3)
+		var result string
+		var err error
+		if onToken != nil {
+			result, err = services.CallGeminiStreamingWithTemperature(prompt, 0.3, onToken)
+		} else {
+			result, err = services.CallGeminiWithTemperature(prompt, 0.3)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("project optimization failed: %w", err)
 		}

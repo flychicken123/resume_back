@@ -414,7 +414,7 @@ func TestRouteToFeature_CoverLetter(t *testing.T) {
 		ResumeData: sampleResumeData(),
 	}
 
-	resp, err := routeToFeature(t.Context(), intent, req)
+	resp, err := routeToFeature(t.Context(), intent, req, nil)
 	if err != nil {
 		t.Skipf("Skipping (API call failed): %v", err)
 	}
@@ -434,7 +434,7 @@ func TestRouteToFeature_ResumeAdvice(t *testing.T) {
 		ResumeData: sampleResumeData(),
 	}
 
-	resp, err := routeToFeature(t.Context(), intent, req)
+	resp, err := routeToFeature(t.Context(), intent, req, nil)
 	if err != nil {
 		t.Skipf("Skipping (API call failed): %v", err)
 	}
@@ -453,7 +453,7 @@ func TestRouteToFeature_GenerateSummary(t *testing.T) {
 		ResumeData: sampleResumeData(),
 	}
 
-	resp, err := routeToFeature(t.Context(), intent, req)
+	resp, err := routeToFeature(t.Context(), intent, req, nil)
 	if err != nil {
 		t.Skipf("Skipping (API call failed): %v", err)
 	}
@@ -472,7 +472,7 @@ func TestRouteToFeature_GenerateSkills(t *testing.T) {
 		ResumeData: sampleResumeData(),
 	}
 
-	resp, err := routeToFeature(t.Context(), intent, req)
+	resp, err := routeToFeature(t.Context(), intent, req, nil)
 	if err != nil {
 		t.Skipf("Skipping (API call failed): %v", err)
 	}
@@ -490,7 +490,7 @@ func TestRouteToFeature_UnsupportedIntent(t *testing.T) {
 		ResumeData: sampleResumeData(),
 	}
 
-	resp, err := routeToFeature(t.Context(), intent, req)
+	resp, err := routeToFeature(t.Context(), intent, req, nil)
 	assert.Error(t, err, "should return error for unsupported intent")
 	assert.Nil(t, resp)
 }

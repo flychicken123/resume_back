@@ -132,6 +132,43 @@ func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string,
 		llms.WithTemperature(temperature))
 }
 
+// CallGeminiStreaming streams tokens via callback and returns the full text.
+func CallGeminiStreaming(prompt string, onChunk func(chunk string)) (string, error) {
+	llm, err := getLangChainModel()
+	if err != nil {
+		return "", err
+	}
+	var buf strings.Builder
+	_, err = llms.GenerateFromSinglePrompt(context.Background(), llm, prompt,
+		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+			s := string(chunk)
+			buf.WriteString(s)
+			onChunk(s)
+			return nil
+		}),
+	)
+	return buf.String(), err
+}
+
+// CallGeminiStreamingWithTemperature streams tokens with temperature control.
+func CallGeminiStreamingWithTemperature(prompt string, temperature float64, onChunk func(chunk string)) (string, error) {
+	llm, err := getLangChainModel()
+	if err != nil {
+		return "", err
+	}
+	var buf strings.Builder
+	_, err = llms.GenerateFromSinglePrompt(context.Background(), llm, prompt,
+		llms.WithTemperature(temperature),
+		llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+			s := string(chunk)
+			buf.WriteString(s)
+			onChunk(s)
+			return nil
+		}),
+	)
+	return buf.String(), err
+}
+
 // CallGeminiWithTemperature calls Gemini with a specific temperature setting.
 // Lower temperature (0.0-0.3) = more focused, consistent, factual output
 // Higher temperature (0.7-1.0) = more creative, varied output
