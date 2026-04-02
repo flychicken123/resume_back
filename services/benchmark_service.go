@@ -632,25 +632,170 @@ Return JSON only:
 
 // ---- Generation Quality Benchmark (experience, summary, projects, cover_letter) ----
 
+// Synthetic test data for generation benchmarks
+var generationTestCases = []struct {
+	Experience      string
+	Education       string
+	Skills          []string
+	Summary         string
+	JobDescription  string
+	MatchedSkills   []string
+	MissingSkills   []string
+	ProjectName     string
+	ProjectDesc     string
+	ProjectTech     string
+}{
+	{
+		Experience:     "Software Engineer at Google (2020-2024). Built microservices for ads platform. Improved latency by 40%. Led team of 4 engineers.",
+		Education:      "B.S. Computer Science, Stanford University, 2020",
+		Skills:         []string{"Go", "Python", "Kubernetes", "gRPC", "PostgreSQL", "Redis"},
+		Summary:        "Software engineer with 4 years experience building distributed systems.",
+		JobDescription: "Senior Software Engineer at Stripe. Build payment infrastructure using Go and Kubernetes. 5+ years experience required.",
+		MatchedSkills:  []string{"Go", "Kubernetes", "PostgreSQL"},
+		MissingSkills:  []string{"payments", "Ruby", "AWS"},
+		ProjectName:    "Real-time Analytics Dashboard",
+		ProjectDesc:    "Built a dashboard that shows real-time metrics for ad campaigns using React and WebSockets.",
+		ProjectTech:    "React, WebSockets, D3.js, Node.js",
+	},
+	{
+		Experience:     "Data Analyst at Amazon (2021-2024). Created sales forecasting models. Automated weekly reports saving 10 hours/week. Managed ETL pipelines.",
+		Education:      "M.S. Data Science, UC Berkeley, 2021",
+		Skills:         []string{"Python", "SQL", "Tableau", "Spark", "AWS", "scikit-learn"},
+		Summary:        "Data analyst with expertise in forecasting and automation.",
+		JobDescription: "Senior Data Scientist at Netflix. Build recommendation models using deep learning. Python and TensorFlow required.",
+		MatchedSkills:  []string{"Python", "SQL", "AWS"},
+		MissingSkills:  []string{"TensorFlow", "deep learning", "recommendation systems"},
+		ProjectName:    "Customer Churn Predictor",
+		ProjectDesc:    "ML model predicting customer churn with 92% accuracy using random forest and feature engineering.",
+		ProjectTech:    "Python, scikit-learn, pandas, PostgreSQL",
+	},
+	{
+		Experience:     "Frontend Developer at Shopify (2019-2023). Built checkout flow used by millions. Migrated from jQuery to React. Improved Core Web Vitals by 60%.",
+		Education:      "B.A. Design, RISD, 2019",
+		Skills:         []string{"React", "TypeScript", "CSS", "Next.js", "GraphQL", "Figma"},
+		Summary:        "Frontend developer focused on e-commerce experiences and performance.",
+		JobDescription: "Staff Frontend Engineer at Vercel. Build Next.js framework features. Deep React and TypeScript expertise required.",
+		MatchedSkills:  []string{"React", "TypeScript", "Next.js"},
+		MissingSkills:  []string{"compiler design", "Rust", "WebAssembly"},
+		ProjectName:    "Design System Library",
+		ProjectDesc:    "Created a shared component library with 40+ components used across 3 product teams.",
+		ProjectTech:    "React, TypeScript, Storybook, styled-components",
+	},
+}
+
 func (s *BenchmarkService) runGenerationBenchmark(ctx context.Context, runID string, genType string, sampleSize int) {
 	s.logger.Info("benchmark: starting generation", map[string]interface{}{"run_id": runID, "type": genType})
 
-	// Placeholder: store a single result indicating this benchmark type exists but needs real data
-	quality := 0.0
-	result := models.AiBenchmarkResult{
-		RunID:         runID,
-		BenchmarkType: genType,
-		FieldName:     "quality",
-		AiValue:       "placeholder — needs real user data to benchmark",
-		Score:         &quality,
-		Reasoning:     "Generation benchmarks require sampling actual user resumes. Will be implemented when user data volume is sufficient.",
+	testCases := generationTestCases
+	if sampleSize > 0 && sampleSize < len(testCases) {
+		testCases = testCases[:sampleSize]
 	}
-	_ = s.benchmark.InsertResult(result)
 
 	s.mu.Lock()
-	s.progress = 1
-	s.total = 1
+	s.total = len(testCases)
 	s.mu.Unlock()
+
+	for i, tc := range testCases {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		var aiOutput string
+		var err error
+		var originalContent string
+
+		switch genType {
+		case "experience":
+			originalContent = tc.Experience
+			prompt := BuildExperienceOptimizationPromptWithSkills(tc.JobDescription, tc.Experience, tc.MatchedSkills, tc.MissingSkills)
+			aiOutput, err = CallGeminiWithTemperature(prompt, 0.3)
+		case "summary":
+			originalContent = tc.Summary
+			prompt := BuildSummaryOptimizationPromptWithSkills(tc.Experience, tc.Education, tc.Skills, tc.Summary, tc.JobDescription, tc.MatchedSkills, tc.MissingSkills)
+			aiOutput, err = CallGeminiWithTemperature(prompt, 0.3)
+		case "projects":
+			originalContent = tc.ProjectDesc
+			prompt := fmt.Sprintf("Optimize this project description for a resume. Make it concise, impactful, and highlight technical depth.\n\nProject: %s\nDescription: %s\nTechnologies: %s\nTarget job: %s", tc.ProjectName, tc.ProjectDesc, tc.ProjectTech, tc.JobDescription)
+			aiOutput, err = CallGeminiWithTemperature(prompt, 0.3)
+		case "cover_letter":
+			originalContent = tc.Summary
+			resumeData := map[string]interface{}{
+				"experience": tc.Experience,
+				"education":  tc.Education,
+				"skills":     strings.Join(tc.Skills, ", "),
+				"summary":    tc.Summary,
+			}
+			prompt := BuildCoverLetterPrompt(resumeData, tc.JobDescription, "Test Company")
+			aiOutput, err = CallGeminiWithTemperature(prompt, 0.3)
+		default:
+			continue
+		}
+
+		if err != nil {
+			s.logger.Warn("generation benchmark AI call failed", map[string]interface{}{"type": genType, "error": err.Error()})
+			continue
+		}
+
+		// Judge the output
+		judgePrompt := fmt.Sprintf(`Evaluate this AI-generated %s content for a resume.
+
+ORIGINAL:
+%s
+
+AI OUTPUT:
+%s
+
+TARGET JOB:
+%s
+
+Rate 1-5 on each dimension:
+- quality: Is the output well-written and professional?
+- improvement: Is it better than the original?
+- accuracy: Does it avoid hallucinated claims not supported by the original?
+- relevance: Is it tailored to the target job?
+
+Return JSON only:
+{"quality": 1-5, "improvement": 1-5, "accuracy": 1-5, "relevance": 1-5, "reasoning": "brief explanation"}`,
+			genType, originalContent, aiOutput, tc.JobDescription)
+
+		raw, err := CallGeminiWithTemperature(judgePrompt, 0.0)
+		if err != nil {
+			continue
+		}
+
+		var verdict struct {
+			Quality     float64 `json:"quality"`
+			Improvement float64 `json:"improvement"`
+			Accuracy    float64 `json:"accuracy"`
+			Relevance   float64 `json:"relevance"`
+			Reasoning   string  `json:"reasoning"`
+		}
+		cleaned := strings.TrimSpace(raw)
+		cleaned = strings.TrimPrefix(cleaned, "```json")
+		cleaned = strings.TrimPrefix(cleaned, "```")
+		cleaned = strings.TrimSuffix(cleaned, "```")
+		if err := json.Unmarshal([]byte(strings.TrimSpace(cleaned)), &verdict); err != nil {
+			continue
+		}
+
+		avg := (verdict.Quality + verdict.Improvement + verdict.Accuracy + verdict.Relevance) / 4.0
+		results := []models.AiBenchmarkResult{
+			{RunID: runID, BenchmarkType: genType, FieldName: "quality", AiValue: aiOutput[:min(200, len(aiOutput))], Score: &verdict.Quality, Reasoning: verdict.Reasoning},
+			{RunID: runID, BenchmarkType: genType, FieldName: "improvement", Score: &verdict.Improvement},
+			{RunID: runID, BenchmarkType: genType, FieldName: "accuracy", Score: &verdict.Accuracy},
+			{RunID: runID, BenchmarkType: genType, FieldName: "relevance", Score: &verdict.Relevance},
+			{RunID: runID, BenchmarkType: genType, FieldName: "average", Score: &avg},
+		}
+		_ = s.benchmark.InsertResults(results)
+
+		s.mu.Lock()
+		s.progress = i + 1
+		s.mu.Unlock()
+
+		time.Sleep(300 * time.Millisecond)
+	}
 }
 
 // ---- Chat Benchmark ----
