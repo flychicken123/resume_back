@@ -32,10 +32,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 		opts := []llms.CallOption{
 			llms.WithTools(llmTools),
 		}
-		if onChunk != nil && round == 0 {
-			// Only stream on the first round — subsequent rounds feed tool results
-			// Streaming with tool calls is tricky; we collect first, stream final
-		}
+		_ = buf // used in future streaming rounds
 
 		resp, err := llm.GenerateContent(ctx, messages, opts...)
 		if err != nil {
