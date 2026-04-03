@@ -28,31 +28,43 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 	}
 
 	for round := 0; round < maxToolCallRounds; round++ {
-		var buf strings.Builder
+		var streamedText strings.Builder
 		opts := []llms.CallOption{
 			llms.WithTools(llmTools),
 		}
-		_ = buf // used in future streaming rounds
+
+		// Add streaming callback — tokens flow to client as they arrive
+		if onChunk != nil {
+			opts = append(opts, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
+				s := string(chunk)
+				streamedText.WriteString(s)
+				onChunk(s)
+				return nil
+			}))
+		}
 
 		resp, err := llm.GenerateContent(ctx, messages, opts...)
 		if err != nil {
-			return buf.String(), fmt.Errorf("gemini tool call failed: %w", err)
+			return streamedText.String(), fmt.Errorf("gemini tool call failed: %w", err)
 		}
 
 		if len(resp.Choices) == 0 {
-			return "", fmt.Errorf("no response from model")
+			return streamedText.String(), nil
 		}
 
 		choice := resp.Choices[0]
 
-		// If no tool calls, this is the final text response
+		// If no tool calls, this is the final text response (already streamed via callback)
 		if len(choice.ToolCalls) == 0 {
-			finalText := choice.Content
-			if onChunk != nil && finalText != "" {
-				onChunk(finalText)
+			if streamedText.Len() > 0 {
+				return streamedText.String(), nil
 			}
-			return finalText, nil
+			return choice.Content, nil
 		}
+
+		// Tool calls detected — any streamed text was tool call metadata, not user text
+		// Reset for next round (tool results will be fed back, then LLM generates final text)
+		streamedText.Reset()
 
 		// Process tool calls
 		// Add assistant message with tool calls to conversation
