@@ -135,10 +135,13 @@ func main() {
 	knowledgeSvc := services.NewKnowledgeService(knowledgeModel, embeddingSvc, logger)
 	knowledgeCtrl := controllers.NewKnowledgeController(knowledgeSvc)
 	handlers.SetKnowledgeService(knowledgeSvc)
+	chatProfileModel := models.NewUserChatProfileModel(db)
+	handlers.SetChatProfileModel(chatProfileModel)
 	services.SetToolRegistry(&services.ToolRegistry{
-		JobPostingModel: jobPostingModel,
-		JobAppModel:     jobAppModel,
-		JobMatchModel:   jobMatchModel,
+		JobPostingModel:  jobPostingModel,
+		JobAppModel:      jobAppModel,
+		JobMatchModel:    jobMatchModel,
+		ChatProfileModel: chatProfileModel,
 	})
 	go knowledgeSvc.SeedIfEmpty(ctx)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)

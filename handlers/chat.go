@@ -107,10 +107,16 @@ var chatHistoryModel *models.ChatHistoryModel
 var chatUserModel *models.UserModel
 var chatJobAppModel *models.JobApplicationModel
 var chatKnowledgeSvc *services.KnowledgeService
+var chatProfileModel *models.UserChatProfileModel
 
 // SetKnowledgeService injects the RAG knowledge service for the chat handler.
 func SetKnowledgeService(svc *services.KnowledgeService) {
 	chatKnowledgeSvc = svc
+}
+
+// SetChatProfileModel injects the user profile model for cross-session memory.
+func SetChatProfileModel(m *models.UserChatProfileModel) {
+	chatProfileModel = m
 }
 
 // SetChatHistoryModel injects the persistence layer for chat transcripts.
@@ -345,6 +351,15 @@ func ChatAssistant(c *gin.Context) {
 	pagePath := strings.TrimSpace(req.PagePath)
 	userEmail := strings.TrimSpace(req.UserEmail)
 	ctx := c.Request.Context()
+	chatUserID := c.GetInt("user_id")
+
+	// --- Load user profile for cross-session memory ---
+	var userProfileContext string
+	if chatUserID > 0 && chatProfileModel != nil {
+		if profile, err := chatProfileModel.Get(chatUserID); err == nil && profile != nil && profile.Summary != "" {
+			userProfileContext = fmt.Sprintf("\nUser background (from previous conversations): %s\n", profile.Summary)
+		}
+	}
 
 	// --- Proactive stale app reminder (first message only) ---
 	var staleReminder string
@@ -368,12 +383,14 @@ func ChatAssistant(c *gin.Context) {
 			if polishAgent != nil && len(req.ResumeData) > 0 {
 				if resp := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); resp != nil {
 					go func() {
-						if err := persistChatExchange(ctx, chatPersistencePayload{
+						bgCtx := context.Background()
+						if err := persistChatExchange(bgCtx, chatPersistencePayload{
 							sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
 							userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
 						}); err != nil {
 							log.Printf("failed to persist chat exchange: %v", err)
 						}
+						updateUserProfile(chatUserID, userMessage, resp.Reply)
 					}()
 					if isStream {
 						sse.WriteDone(resp)
@@ -388,12 +405,14 @@ func ChatAssistant(c *gin.Context) {
 			if missing := checkMissingParams(intent, req.ResumeData); len(missing) > 0 {
 				resp := buildMissingParamResponse(intent)
 				go func() {
-					if err := persistChatExchange(ctx, chatPersistencePayload{
+					bgCtx := context.Background()
+					if err := persistChatExchange(bgCtx, chatPersistencePayload{
 						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
 						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
 					}); err != nil {
 						log.Printf("failed to persist chat exchange: %v", err)
 					}
+					updateUserProfile(chatUserID, userMessage, resp.Reply)
 				}()
 				if isStream {
 					sse.WriteDone(resp)
@@ -409,12 +428,14 @@ func ChatAssistant(c *gin.Context) {
 			}
 			if resp, err := routeToFeature(ctx, intent, req, onToken); err == nil {
 				go func() {
-					if err := persistChatExchange(ctx, chatPersistencePayload{
+					bgCtx := context.Background()
+					if err := persistChatExchange(bgCtx, chatPersistencePayload{
 						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
 						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
 					}); err != nil {
 						log.Printf("failed to persist chat exchange: %v", err)
 					}
+					updateUserProfile(chatUserID, userMessage, resp.Reply)
 				}()
 				if isStream {
 					sse.WriteDone(resp)
@@ -437,7 +458,8 @@ func ChatAssistant(c *gin.Context) {
 		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
 			log.Printf("[INTENT-FALLBACK] Keyword polish fallback handled message=%q", userMessage)
 			go func() {
-				if err := persistChatExchange(ctx, chatPersistencePayload{
+				bgCtx := context.Background()
+				if err := persistChatExchange(bgCtx, chatPersistencePayload{
 					sessionID:  sessionID,
 					pagePath:   pagePath,
 					userEmail:  userEmail,
@@ -447,6 +469,7 @@ func ChatAssistant(c *gin.Context) {
 				}); err != nil {
 					log.Printf("failed to persist chat exchange: %v", err)
 				}
+				updateUserProfile(chatUserID, userMessage, polishResponse.Reply)
 			}()
 			if isStream {
 				sse.WriteDone(polishResponse)
@@ -505,18 +528,17 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 		staleBlock = "\n" + staleReminder + "\n"
 	}
 	if resumeContext != "" {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. If the user asks about their resume data, refer to it accurately. For HiHired product questions, use the product facts provided.",
-			systemInstructions, knowledgeContext, resumeContext, staleBlock, historyBuilder.String(), userMessage)
+		prompt = fmt.Sprintf("%s\n%s\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. If the user asks about their resume data, refer to it accurately. For HiHired product questions, use the product facts provided.",
+			systemInstructions, userProfileContext, knowledgeContext, resumeContext, staleBlock, historyBuilder.String(), userMessage)
 	} else {
-		prompt = fmt.Sprintf("%s\n\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. For HiHired product questions, use the product facts provided. If unsure, say you will connect them with support.",
-			systemInstructions, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
+		prompt = fmt.Sprintf("%s\n%s\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. For HiHired product questions, use the product facts provided. If unsure, say you will connect them with support.",
+			systemInstructions, userProfileContext, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
 	}
 
 	var reply string
 	var err error
 
 	// Use tool-enabled call for general chat — allows the LLM to search jobs, track applications, etc.
-	chatUserID := c.GetInt("user_id")
 	tools := services.ChatTools()
 
 	if isStream {
@@ -539,7 +561,8 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 	}
 
 	go func() {
-		if err := persistChatExchange(ctx, chatPersistencePayload{
+		bgCtx := context.Background()
+		if err := persistChatExchange(bgCtx, chatPersistencePayload{
 			sessionID:  sessionID,
 			pagePath:   pagePath,
 			userEmail:  userEmail,
@@ -549,6 +572,7 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 		}); err != nil {
 			log.Printf("failed to persist chat exchange: %v", err)
 		}
+		updateUserProfile(chatUserID, userMessage, cleaned)
 	}()
 
 	resp := &chatResponse{Reply: cleaned}
@@ -1163,4 +1187,96 @@ func getMapKeys(m map[string]interface{}) []string {
 		keys = append(keys, k)
 	}
 	return keys
+}
+
+// updateUserProfile extracts new facts from the chat exchange and updates the user's persistent profile.
+// Runs in a background goroutine — does not block the response.
+func updateUserProfile(userID int, userMsg, botReply string) {
+	if chatProfileModel == nil || userID <= 0 {
+		return
+	}
+
+	// Load existing profile
+	existing, _ := chatProfileModel.Get(userID)
+	existingJSON := "{}"
+	if existing != nil && len(existing.Profile) > 0 {
+		if b, err := json.Marshal(existing.Profile); err == nil {
+			existingJSON = string(b)
+		}
+	}
+
+	// Ask LLM to extract new facts
+	prompt := fmt.Sprintf(`Given this chat exchange, extract any NEW facts about the user that would be useful for a career coach to remember across sessions.
+
+Existing user profile: %s
+
+User said: "%s"
+Assistant said: "%s"
+
+Return JSON with ONLY new or updated fields. Do not repeat unchanged fields.
+Fields to look for:
+- target_roles: job titles/roles they're targeting
+- target_salary: salary range or expectations
+- location_preferences: cities, states, or remote preference
+- career_stage: years of experience, current level, target level
+- applied_companies: companies they mentioned applying to
+- interview_status: interview progress at any company
+- key_preferences: company size, culture, industry preferences
+- skills_focus: skills they want to develop or highlight
+- pain_points: what they're struggling with
+- last_topics: main topics discussed in this exchange
+
+If no new facts were revealed (e.g., user asked a general question), return: {"no_update": true}
+Return JSON only, no explanation:`, existingJSON, userMsg, botReply)
+
+	raw, err := services.CallGeminiFlashWithTemperature(prompt, 0.0)
+	if err != nil {
+		log.Printf("[PROFILE] extraction failed: %v", err)
+		return
+	}
+
+	// Parse response
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var extracted map[string]interface{}
+	if err := json.Unmarshal([]byte(cleaned), &extracted); err != nil {
+		log.Printf("[PROFILE] parse failed: %v", err)
+		return
+	}
+
+	// Check if no update needed
+	if _, noUpdate := extracted["no_update"]; noUpdate {
+		return
+	}
+
+	// Merge with existing profile
+	merged := map[string]interface{}{}
+	if existing != nil {
+		for k, v := range existing.Profile {
+			merged[k] = v
+		}
+	}
+	for k, v := range extracted {
+		merged[k] = v
+	}
+
+	// Generate summary
+	mergedJSON, _ := json.Marshal(merged)
+	summaryPrompt := fmt.Sprintf(`Summarize this user profile in 2-3 sentences for a career coach. Be specific — mention roles, salary, companies, and preferences by name:
+%s
+
+Return only the summary text, no JSON:`, string(mergedJSON))
+
+	summary, err := services.CallGeminiFlashWithTemperature(summaryPrompt, 0.0)
+	if err != nil {
+		summary = existing.Summary // keep old summary if generation fails
+	}
+
+	if err := chatProfileModel.Upsert(userID, merged, strings.TrimSpace(summary)); err != nil {
+		log.Printf("[PROFILE] upsert failed: %v", err)
+	}
 }

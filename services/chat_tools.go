@@ -81,6 +81,12 @@ func ChatTools() []ChatTool {
 			},
 			Handler: handleGetJobCount,
 		},
+		{
+			Name:        "clear_my_profile",
+			Description: "Clear all remembered preferences and facts about the user. Use ONLY when the user explicitly asks to forget their preferences, reset their profile, or start completely fresh.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleClearProfile,
+		},
 	}
 }
 

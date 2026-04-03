@@ -11,9 +11,10 @@ import (
 
 // ToolRegistry holds model references needed by tool handlers.
 type ToolRegistry struct {
-	JobPostingModel *models.JobPostingModel
-	JobAppModel     *models.JobApplicationModel
-	JobMatchModel   *models.ResumeJobMatchModel
+	JobPostingModel  *models.JobPostingModel
+	JobAppModel      *models.JobApplicationModel
+	JobMatchModel    *models.ResumeJobMatchModel
+	ChatProfileModel *models.UserChatProfileModel
 }
 
 var toolRegistry *ToolRegistry
@@ -291,4 +292,17 @@ func handleGetJobCount(ctx context.Context, userID int, args map[string]any) (an
 		msg += " in " + location
 	}
 	return map[string]any{"count": count, "role": role, "location": location, "message": msg}, nil
+}
+
+func handleClearProfile(ctx context.Context, userID int, args map[string]any) (any, error) {
+	if toolRegistry == nil || toolRegistry.ChatProfileModel == nil {
+		return map[string]any{"error": "profile service not available"}, nil
+	}
+	if userID <= 0 {
+		return map[string]any{"error": "not authenticated"}, nil
+	}
+	if err := toolRegistry.ChatProfileModel.Clear(userID); err != nil {
+		return map[string]any{"error": "failed to clear profile"}, nil
+	}
+	return map[string]any{"success": true, "message": "Your preferences and remembered facts have been cleared. I'll start fresh from here."}, nil
 }

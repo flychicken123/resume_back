@@ -1,0 +1,6 @@
+CREATE TABLE user_chat_profiles (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    profile JSONB NOT NULL DEFAULT '{}',
+    summary TEXT NOT NULL DEFAULT '',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
