@@ -199,24 +199,29 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 	}
 
 	company := getStringArg(args, "company_name", "")
+	jobTitle := getStringArg(args, "job_title", "")
 	newStatus := getStringArg(args, "new_status", "")
 	if company == "" || newStatus == "" {
 		return map[string]any{"error": "please provide company name and new status"}, nil
 	}
 
-	// Find app by company name for this user
+	// Find app by company name (and optionally job title) for this user
 	apps, _, err := toolRegistry.JobAppModel.ListByUser(userID, 100, 0, "")
 	if err != nil {
 		return map[string]any{"error": "failed to look up applications"}, nil
 	}
 
 	for _, app := range apps {
-		if strings.EqualFold(app.CompanyName, company) {
-			if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
-				return map[string]any{"error": "failed to update status"}, nil
-			}
-			return map[string]any{"success": true, "message": fmt.Sprintf("Updated %s application to '%s'", company, newStatus)}, nil
+		if !strings.EqualFold(app.CompanyName, company) {
+			continue
 		}
+		if jobTitle != "" && !strings.Contains(strings.ToLower(app.JobTitle), strings.ToLower(jobTitle)) {
+			continue
+		}
+		if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
+			return map[string]any{"error": "failed to update status"}, nil
+		}
+		return map[string]any{"success": true, "message": fmt.Sprintf("Updated '%s' at %s to '%s'", app.JobTitle, company, newStatus)}, nil
 	}
 	return map[string]any{"error": fmt.Sprintf("No application found for '%s'. Track it first.", company)}, nil
 }
@@ -329,5 +334,23 @@ func handleQueryUserData(ctx context.Context, userID int, args map[string]any) (
 	return map[string]any{
 		"results": results,
 		"count":   len(results),
+	}, nil
+}
+
+func handleUpdateResumeField(ctx context.Context, userID int, args map[string]any) (any, error) {
+	field := getStringArg(args, "field", "")
+	action := getStringArg(args, "action", "set")
+	value := getStringArg(args, "value", "")
+
+	if field == "" || value == "" {
+		return map[string]any{"error": "field and value are required"}, nil
+	}
+
+	return map[string]any{
+		"resume_update": true,
+		"field":         field,
+		"action":        action,
+		"value":         value,
+		"message":       fmt.Sprintf("Updated %s: %s '%s'", field, action, value),
 	}, nil
 }

@@ -60,6 +60,7 @@ func ChatTools() []ChatTool {
 			Description: "Update the status of a tracked job application. Use when user reports progress like getting an interview, offer, or rejection.",
 			Parameters: map[string]ToolParam{
 				"company_name": {Type: "string", Description: "Company to update", Required: true},
+				"job_title":    {Type: "string", Description: "Job title to identify specific application (needed when multiple apps at same company)"},
 				"new_status":   {Type: "string", Description: "New status", Required: true, Enum: []string{"screening", "interviewing", "offered", "accepted", "rejected", "withdrawn"}},
 			},
 			Handler: handleUpdateApplicationStatus,
@@ -94,6 +95,16 @@ func ChatTools() []ChatTool {
 				"question": {Type: "string", Description: "What data to look up, in natural language", Required: true},
 			},
 			Handler: handleQueryUserData,
+		},
+		{
+			Name:        "update_resume_field",
+			Description: "Update a field in the user's resume. Use when the user asks to change their name, email, phone, summary, or add/remove skills via chat.",
+			Parameters: map[string]ToolParam{
+				"field":  {Type: "string", Description: "Field to update", Required: true, Enum: []string{"name", "email", "phone", "summary", "skills"}},
+				"action": {Type: "string", Description: "Action to take", Required: true, Enum: []string{"set", "add", "remove", "clear"}},
+				"value":  {Type: "string", Description: "New value, or skill to add/remove", Required: true},
+			},
+			Handler: handleUpdateResumeField,
 		},
 	}
 }

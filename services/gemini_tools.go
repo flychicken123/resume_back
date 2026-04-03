@@ -11,16 +11,22 @@ import (
 
 const maxToolCallRounds = 3
 
+// ToolCallMetadata holds side effects from tool execution (e.g., resume field updates).
+type ToolCallMetadata struct {
+	ResumeUpdates []map[string]any
+}
+
 // CallGeminiWithTools sends a prompt to Gemini with tool definitions.
 // If the model requests a tool call, it executes the handler and feeds the result back.
-// Streams text tokens via onChunk. Returns the final text response.
-func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, onChunk func(string)) (string, error) {
+// Streams text tokens via onChunk. Returns the final text response and any metadata.
+func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, onChunk func(string)) (string, *ToolCallMetadata, error) {
 	llm, err := getLangChainModel()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 
 	llmTools := ConvertToLLMTools(tools)
+	meta := &ToolCallMetadata{}
 
 	messages := []llms.MessageContent{
 		{Role: llms.ChatMessageTypeSystem, Parts: []llms.ContentPart{llms.TextContent{Text: systemPrompt}}},
@@ -45,11 +51,11 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 		resp, err := llm.GenerateContent(ctx, messages, opts...)
 		if err != nil {
-			return streamedText.String(), fmt.Errorf("gemini tool call failed: %w", err)
+			return streamedText.String(), meta, fmt.Errorf("gemini tool call failed: %w", err)
 		}
 
 		if len(resp.Choices) == 0 {
-			return streamedText.String(), nil
+			return streamedText.String(), meta, nil
 		}
 
 		choice := resp.Choices[0]
@@ -57,9 +63,9 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 		// If no tool calls, this is the final text response (already streamed via callback)
 		if len(choice.ToolCalls) == 0 {
 			if streamedText.Len() > 0 {
-				return streamedText.String(), nil
+				return streamedText.String(), meta, nil
 			}
-			return choice.Content, nil
+			return choice.Content, meta, nil
 		}
 
 		// Tool calls detected — any streamed text was tool call metadata, not user text
@@ -67,7 +73,6 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 		streamedText.Reset()
 
 		// Process tool calls
-		// Add assistant message with tool calls to conversation
 		assistantParts := []llms.ContentPart{}
 		for _, tc := range choice.ToolCalls {
 			assistantParts = append(assistantParts, tc)
@@ -105,6 +110,13 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 				} else {
 					resultBytes, _ := json.Marshal(result)
 					resultStr = string(resultBytes)
+
+					// Collect resume update metadata
+					if resultMap, ok := result.(map[string]any); ok {
+						if _, isResumeUpdate := resultMap["resume_update"]; isResumeUpdate {
+							meta.ResumeUpdates = append(meta.ResumeUpdates, resultMap)
+						}
+					}
 				}
 			} else {
 				resultStr = `{"error": "unknown tool"}`
@@ -123,10 +135,10 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 		})
 	}
 
-	return "", fmt.Errorf("exceeded max tool call rounds")
+	return "", meta, fmt.Errorf("exceeded max tool call rounds")
 }
 
 // CallGeminiWithToolsBlocking is the non-streaming version.
-func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int) (string, error) {
+func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int) (string, *ToolCallMetadata, error) {
 	return CallGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil)
 }

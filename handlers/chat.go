@@ -573,11 +573,12 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 
 	// Use tool-enabled call for general chat — allows the LLM to search jobs, track applications, etc.
 	tools := services.ChatTools()
+	var toolMeta *services.ToolCallMetadata
 
 	if isStream {
-		reply, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
+		reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
 	} else {
-		reply, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
+		reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
 	}
 	if err != nil {
 		if isStream {
@@ -589,6 +590,19 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 	}
 
 	cleaned := strings.TrimSpace(reply)
+
+	// Build updatedResumeData from tool metadata (e.g., update_resume_field results)
+	var updatedResumeData map[string]interface{}
+	if toolMeta != nil && len(toolMeta.ResumeUpdates) > 0 {
+		updatedResumeData = map[string]interface{}{}
+		for _, update := range toolMeta.ResumeUpdates {
+			field, _ := update["field"].(string)
+			value, _ := update["value"].(string)
+			if field != "" && value != "" {
+				updatedResumeData[field] = value
+			}
+		}
+	}
 	if cleaned == "" {
 		cleaned = "I'm still learning. Please contact us via the Help bubble or at hihired_support@tactechs.net and our team will help you right away."
 	}
@@ -608,7 +622,7 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 		updateUserProfile(chatUserID, userMessage, cleaned)
 	}()
 
-	resp := &chatResponse{Reply: cleaned, ProactiveSuggestions: proactiveSuggestions}
+	resp := &chatResponse{Reply: cleaned, ProactiveSuggestions: proactiveSuggestions, UpdatedResumeData: updatedResumeData}
 	if isStream {
 		sse.WriteDone(resp)
 	} else {
