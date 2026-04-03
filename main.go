@@ -137,6 +137,7 @@ func main() {
 	handlers.SetKnowledgeService(knowledgeSvc)
 	chatProfileModel := models.NewUserChatProfileModel(db)
 	handlers.SetChatProfileModel(chatProfileModel)
+	handlers.SetChatJobMatchModel(jobMatchModel)
 	services.SetToolRegistry(&services.ToolRegistry{
 		JobPostingModel:  jobPostingModel,
 		JobAppModel:      jobAppModel,

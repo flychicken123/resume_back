@@ -108,6 +108,7 @@ var chatUserModel *models.UserModel
 var chatJobAppModel *models.JobApplicationModel
 var chatKnowledgeSvc *services.KnowledgeService
 var chatProfileModel *models.UserChatProfileModel
+var chatJobMatchModel *models.ResumeJobMatchModel
 
 // SetKnowledgeService injects the RAG knowledge service for the chat handler.
 func SetKnowledgeService(svc *services.KnowledgeService) {
@@ -117,6 +118,11 @@ func SetKnowledgeService(svc *services.KnowledgeService) {
 // SetChatProfileModel injects the user profile model for cross-session memory.
 func SetChatProfileModel(m *models.UserChatProfileModel) {
 	chatProfileModel = m
+}
+
+// SetChatJobMatchModel injects the job match model for proactive suggestions.
+func SetChatJobMatchModel(m *models.ResumeJobMatchModel) {
+	chatJobMatchModel = m
 }
 
 // SetChatHistoryModel injects the persistence layer for chat transcripts.
@@ -361,16 +367,10 @@ func ChatAssistant(c *gin.Context) {
 		}
 	}
 
-	// --- Proactive stale app reminder (first message only) ---
-	var staleReminder string
-	if len(req.History) == 0 && userEmail != "" && chatUserModel != nil && chatJobAppModel != nil {
-		if user, err := chatUserModel.GetByEmail(userEmail); err == nil && user != nil {
-			if user.FollowupRemindersEnabled {
-				if staleApps, err := chatJobAppModel.FindStaleApplications(user.ID, 7); err == nil && len(staleApps) > 0 {
-					staleReminder = buildStaleAppReminder(staleApps)
-				}
-			}
-		}
+	// --- Proactive suggestions (first message only) ---
+	var proactiveBlock string
+	if len(req.History) == 0 {
+		proactiveBlock = buildProactiveSuggestions(chatUserID, userEmail, req.ResumeData)
 	}
 
 	// --- AI Intent Router (primary) ---
@@ -494,15 +494,35 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 
 IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediately with the best parameters you can infer from the conversation. Never ask clarifying questions before calling a tool — use reasonable defaults for missing parameters (e.g., return total count if no filters specified, search broadly if query is vague). If the user's follow-up message provides additional context (like a role or location after asking about job counts), combine it with the previous context and call the appropriate tool. Users expect immediate results, not questions.`
 
+	// --- Build conversation history with summarization for long conversations ---
+	const maxVerbatimMessages = 10
+	const summarizationThreshold = 20
+
 	var historyBuilder strings.Builder
 	titleCaser := cases.Title(language.English)
-	for _, msg := range req.History {
-		role := strings.ToLower(msg.Role)
-		if role != "assistant" && role != "bot" {
-			role = "user"
+
+	if len(req.History) > summarizationThreshold {
+		olderMessages := req.History[:len(req.History)-maxVerbatimMessages]
+		recentMessages := req.History[len(req.History)-maxVerbatimMessages:]
+
+		summary := summarizeConversationHistory(olderMessages)
+		fmt.Fprintf(&historyBuilder, "[Earlier conversation summary: %s]\n\n", summary)
+
+		for _, msg := range recentMessages {
+			role := strings.ToLower(msg.Role)
+			if role != "assistant" && role != "bot" {
+				role = "user"
+			}
+			fmt.Fprintf(&historyBuilder, "%s: %s\n", titleCaser.String(role), strings.TrimSpace(msg.Text))
 		}
-		roleTitle := titleCaser.String(role)
-		fmt.Fprintf(&historyBuilder, "%s: %s\n", roleTitle, strings.TrimSpace(msg.Text))
+	} else {
+		for _, msg := range req.History {
+			role := strings.ToLower(msg.Role)
+			if role != "assistant" && role != "bot" {
+				role = "user"
+			}
+			fmt.Fprintf(&historyBuilder, "%s: %s\n", titleCaser.String(role), strings.TrimSpace(msg.Text))
+		}
 	}
 
 	// RAG knowledge search with fallback to keyword matching
@@ -523,16 +543,16 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 	resumeContext := buildResumeContext(req.ResumeData)
 
 	var prompt string
-	staleBlock := ""
-	if staleReminder != "" {
-		staleBlock = "\n" + staleReminder + "\n"
+	suggestBlock := ""
+	if proactiveBlock != "" {
+		suggestBlock = "\n" + proactiveBlock + "\n"
 	}
 	if resumeContext != "" {
 		prompt = fmt.Sprintf("%s\n%s\nAuthoritative product facts:\n%s\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. If the user asks about their resume data, refer to it accurately. For HiHired product questions, use the product facts provided.",
-			systemInstructions, userProfileContext, knowledgeContext, resumeContext, staleBlock, historyBuilder.String(), userMessage)
+			systemInstructions, userProfileContext, knowledgeContext, resumeContext, suggestBlock, historyBuilder.String(), userMessage)
 	} else {
 		prompt = fmt.Sprintf("%s\n%s\nAuthoritative product facts:\n%s%s\nConversation so far:\n%s\nUser: %s\n\nAnswer using the job-search knowledge above. For HiHired product questions, use the product facts provided. If unsure, say you will connect them with support.",
-			systemInstructions, userProfileContext, knowledgeContext, staleBlock, historyBuilder.String(), userMessage)
+			systemInstructions, userProfileContext, knowledgeContext, suggestBlock, historyBuilder.String(), userMessage)
 	}
 
 	var reply string
@@ -1179,6 +1199,101 @@ func buildStaleAppReminder(staleApps []*models.JobApplication) string {
 	sb.WriteString("Keep the reminder brief (2-3 sentences) and encouraging. Mention the total count, not every individual app.\n")
 
 	return sb.String()
+}
+
+// summarizeConversationHistory condenses older messages into a brief summary.
+func summarizeConversationHistory(messages []chatMessage) string {
+	var msgText strings.Builder
+	for _, msg := range messages {
+		fmt.Fprintf(&msgText, "%s: %s\n", msg.Role, msg.Text)
+	}
+
+	prompt := fmt.Sprintf(`Summarize this conversation in 2-3 sentences. Focus on: key topics discussed, decisions made, actions taken, and any unresolved questions.
+
+Conversation:
+%s
+
+Return only the summary, no JSON:`, msgText.String())
+
+	summary, err := services.CallGeminiFlashWithTemperature(prompt, 0.0)
+	if err != nil {
+		return "Earlier conversation about resume and job search."
+	}
+	return strings.TrimSpace(summary)
+}
+
+// buildProactiveSuggestions generates context-aware suggestions for the first message.
+func buildProactiveSuggestions(userID int, userEmail string, resumeData map[string]interface{}) string {
+	var suggestions []string
+
+	// 1. Stale applications
+	if chatJobAppModel != nil && userEmail != "" && chatUserModel != nil {
+		if user, err := chatUserModel.GetByEmail(userEmail); err == nil && user != nil {
+			if staleApps, err := chatJobAppModel.FindStaleApplications(user.ID, 7); err == nil && len(staleApps) > 0 {
+				suggestions = append(suggestions, buildStaleAppReminder(staleApps))
+			}
+		}
+	}
+
+	// 2. Resume completeness gaps
+	gaps := detectResumeGaps(resumeData)
+	if len(gaps) > 0 {
+		suggestions = append(suggestions, fmt.Sprintf(
+			"PROACTIVE: The user's resume is missing: %s. Suggest they fill these in for better job matches.",
+			strings.Join(gaps, ", ")))
+	}
+
+	// 3. Active interviews
+	if chatJobAppModel != nil && userID > 0 {
+		if byStatus, _, _, _, err := chatJobAppModel.GetStatsByUser(userID); err == nil {
+			if count, ok := byStatus["interviewing"]; ok && count > 0 {
+				suggestions = append(suggestions, fmt.Sprintf(
+					"PROACTIVE: User has %d active interview(s). Offer to help with interview preparation.", count))
+			}
+		}
+	}
+
+	// 4. No job matches yet
+	if chatJobMatchModel != nil && userID > 0 {
+		if matches, _, err := chatJobMatchModel.ListMostRecentByUser(userID, 1); err == nil && len(matches) == 0 {
+			suggestions = append(suggestions,
+				"PROACTIVE: User has no job matches yet. Suggest they complete their resume and run job matching.")
+		}
+	}
+
+	if len(suggestions) == 0 {
+		return ""
+	}
+	return strings.Join(suggestions, "\n")
+}
+
+// detectResumeGaps identifies missing resume sections.
+func detectResumeGaps(resumeData map[string]interface{}) []string {
+	var gaps []string
+
+	hasString := func(key string) bool {
+		v, ok := resumeData[key].(string)
+		return ok && strings.TrimSpace(v) != ""
+	}
+	hasSlice := func(key string) bool {
+		v, ok := resumeData[key].([]interface{})
+		return ok && len(v) > 0
+	}
+
+	if !hasString("summary") {
+		gaps = append(gaps, "professional summary")
+	}
+	if !hasString("skills") {
+		gaps = append(gaps, "skills")
+	}
+	if !hasSlice("experiences") {
+		gaps = append(gaps, "work experience")
+	}
+	if !hasSlice("education") {
+		gaps = append(gaps, "education")
+	}
+
+	return gaps
 }
 
 func getMapKeys(m map[string]interface{}) []string {
