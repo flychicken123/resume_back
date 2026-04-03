@@ -34,14 +34,21 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Reply             string                 `json:"reply"`
-	IsPolishAction    bool                   `json:"isPolishAction,omitempty"`
-	PolishedContent   interface{}            `json:"polishedContent,omitempty"`
-	Section           string                 `json:"section,omitempty"`
-	EntryIndex        int                    `json:"entryIndex,omitempty"`
-	UpdatedResumeData map[string]interface{} `json:"updatedResumeData,omitempty"`
-	FeatureAction     string                 `json:"featureAction,omitempty"`
-	FeatureResult     interface{}            `json:"featureResult,omitempty"`
+	Reply                string                 `json:"reply"`
+	IsPolishAction       bool                   `json:"isPolishAction,omitempty"`
+	PolishedContent      interface{}            `json:"polishedContent,omitempty"`
+	Section              string                 `json:"section,omitempty"`
+	EntryIndex           int                    `json:"entryIndex,omitempty"`
+	UpdatedResumeData    map[string]interface{} `json:"updatedResumeData,omitempty"`
+	FeatureAction        string                 `json:"featureAction,omitempty"`
+	FeatureResult        interface{}            `json:"featureResult,omitempty"`
+	ProactiveSuggestions []ProactiveSuggestion  `json:"proactiveSuggestions,omitempty"`
+}
+
+type ProactiveSuggestion struct {
+	Message string `json:"message"`
+	Action  string `json:"action"`
+	Label   string `json:"label"`
 }
 
 type knowledgeEntry struct {
@@ -317,8 +324,9 @@ func (s *sseWriter) WriteDone(resp *chatResponse) {
 		"updatedResumeData": resp.UpdatedResumeData,
 		"isPolishAction":   resp.IsPolishAction,
 		"polishedContent":  resp.PolishedContent,
-		"section":          resp.Section,
-		"entryIndex":       resp.EntryIndex,
+		"section":              resp.Section,
+		"entryIndex":           resp.EntryIndex,
+		"proactiveSuggestions": resp.ProactiveSuggestions,
 	})
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	if s.flusher != nil {
@@ -369,8 +377,9 @@ func ChatAssistant(c *gin.Context) {
 
 	// --- Proactive suggestions (first message only) ---
 	var proactiveBlock string
+	var proactiveSuggestions []ProactiveSuggestion
 	if len(req.History) == 0 {
-		proactiveBlock = buildProactiveSuggestions(chatUserID, userEmail, req.ResumeData)
+		proactiveBlock, proactiveSuggestions = buildProactiveSuggestions(chatUserID, userEmail, req.ResumeData)
 	}
 
 	// --- AI Intent Router (primary) ---
@@ -382,6 +391,7 @@ func ChatAssistant(c *gin.Context) {
 			// Route to existing polish handler (non-streamable)
 			if polishAgent != nil && len(req.ResumeData) > 0 {
 				if resp := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); resp != nil {
+					resp.ProactiveSuggestions = proactiveSuggestions
 					go func() {
 						bgCtx := context.Background()
 						if err := persistChatExchange(bgCtx, chatPersistencePayload{
@@ -404,6 +414,7 @@ func ChatAssistant(c *gin.Context) {
 			// Check for missing required params
 			if missing := checkMissingParams(intent, req.ResumeData); len(missing) > 0 {
 				resp := buildMissingParamResponse(intent)
+				resp.ProactiveSuggestions = proactiveSuggestions
 				go func() {
 					bgCtx := context.Background()
 					if err := persistChatExchange(bgCtx, chatPersistencePayload{
@@ -427,6 +438,7 @@ func ChatAssistant(c *gin.Context) {
 				onToken = sse.WriteToken
 			}
 			if resp, err := routeToFeature(ctx, intent, req, onToken); err == nil {
+				resp.ProactiveSuggestions = proactiveSuggestions
 				go func() {
 					bgCtx := context.Background()
 					if err := persistChatExchange(bgCtx, chatPersistencePayload{
@@ -456,6 +468,7 @@ func ChatAssistant(c *gin.Context) {
 	// --- Polish keyword fallback (improved) ---
 	if polishAgent != nil && len(req.ResumeData) > 0 {
 		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
+			polishResponse.ProactiveSuggestions = proactiveSuggestions
 			log.Printf("[INTENT-FALLBACK] Keyword polish fallback handled message=%q", userMessage)
 			go func() {
 				bgCtx := context.Background()
@@ -595,7 +608,7 @@ IMPORTANT — TOOL USE: When you have tools available, ALWAYS call them immediat
 		updateUserProfile(chatUserID, userMessage, cleaned)
 	}()
 
-	resp := &chatResponse{Reply: cleaned}
+	resp := &chatResponse{Reply: cleaned, ProactiveSuggestions: proactiveSuggestions}
 	if isStream {
 		sse.WriteDone(resp)
 	} else {
@@ -1223,32 +1236,48 @@ Return only the summary, no JSON:`, msgText.String())
 }
 
 // buildProactiveSuggestions generates context-aware suggestions for the first message.
-func buildProactiveSuggestions(userID int, userEmail string, resumeData map[string]interface{}) string {
-	var suggestions []string
+// Returns prompt text (for LLM context) and structured suggestions (for frontend buttons).
+func buildProactiveSuggestions(userID int, userEmail string, resumeData map[string]interface{}) (string, []ProactiveSuggestion) {
+	var promptParts []string
+	var buttons []ProactiveSuggestion
 
 	// 1. Stale applications
 	if chatJobAppModel != nil && userEmail != "" && chatUserModel != nil {
 		if user, err := chatUserModel.GetByEmail(userEmail); err == nil && user != nil {
 			if staleApps, err := chatJobAppModel.FindStaleApplications(user.ID, 7); err == nil && len(staleApps) > 0 {
-				suggestions = append(suggestions, buildStaleAppReminder(staleApps))
+				promptParts = append(promptParts, buildStaleAppReminder(staleApps))
+				buttons = append(buttons, ProactiveSuggestion{
+					Message: fmt.Sprintf("%d application(s) need follow-up", len(staleApps)),
+					Action:  "go_to_tracking",
+					Label:   "Follow Up",
+				})
 			}
 		}
 	}
 
 	// 2. Resume completeness gaps
 	gaps := detectResumeGaps(resumeData)
-	if len(gaps) > 0 {
-		suggestions = append(suggestions, fmt.Sprintf(
-			"PROACTIVE: The user's resume is missing: %s. Suggest they fill these in for better job matches.",
-			strings.Join(gaps, ", ")))
+	for _, gap := range gaps {
+		promptParts = append(promptParts, fmt.Sprintf("PROACTIVE: User's resume is missing %s.", gap))
+		action, label := gapToAction(gap)
+		buttons = append(buttons, ProactiveSuggestion{
+			Message: fmt.Sprintf("Resume missing: %s", gap),
+			Action:  action,
+			Label:   label,
+		})
 	}
 
 	// 3. Active interviews
 	if chatJobAppModel != nil && userID > 0 {
 		if byStatus, _, _, _, err := chatJobAppModel.GetStatsByUser(userID); err == nil {
 			if count, ok := byStatus["interviewing"]; ok && count > 0 {
-				suggestions = append(suggestions, fmt.Sprintf(
+				promptParts = append(promptParts, fmt.Sprintf(
 					"PROACTIVE: User has %d active interview(s). Offer to help with interview preparation.", count))
+				buttons = append(buttons, ProactiveSuggestion{
+					Message: fmt.Sprintf("%d active interview(s)", count),
+					Action:  "go_to_tracking",
+					Label:   "View Applications",
+				})
 			}
 		}
 	}
@@ -1256,15 +1285,35 @@ func buildProactiveSuggestions(userID int, userEmail string, resumeData map[stri
 	// 4. No job matches yet
 	if chatJobMatchModel != nil && userID > 0 {
 		if matches, _, err := chatJobMatchModel.ListMostRecentByUser(userID, 1); err == nil && len(matches) == 0 {
-			suggestions = append(suggestions,
+			promptParts = append(promptParts,
 				"PROACTIVE: User has no job matches yet. Suggest they complete their resume and run job matching.")
+			buttons = append(buttons, ProactiveSuggestion{
+				Message: "No job matches yet",
+				Action:  "go_to_matches",
+				Label:   "Find Job Matches",
+			})
 		}
 	}
 
-	if len(suggestions) == 0 {
-		return ""
+	if len(promptParts) == 0 {
+		return "", nil
 	}
-	return strings.Join(suggestions, "\n")
+	return strings.Join(promptParts, "\n"), buttons
+}
+
+func gapToAction(gap string) (string, string) {
+	switch gap {
+	case "professional summary":
+		return "go_to_summary", "Add Summary"
+	case "skills":
+		return "go_to_skills", "Add Skills"
+	case "work experience":
+		return "go_to_experience", "Add Experience"
+	case "education":
+		return "go_to_education", "Add Education"
+	default:
+		return "go_to_builder", "Open Builder"
+	}
 }
 
 // detectResumeGaps identifies missing resume sections.
