@@ -513,10 +513,14 @@ IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointme
 	var reply string
 	var err error
 
+	// Use tool-enabled call for general chat — allows the LLM to search jobs, track applications, etc.
+	chatUserID := c.GetInt("user_id")
+	tools := services.ChatTools()
+
 	if isStream {
-		reply, err = services.CallGeminiStreaming(prompt, sse.WriteToken)
+		reply, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
 	} else {
-		reply, err = services.CallGeminiWithAPIKey(prompt)
+		reply, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
 	}
 	if err != nil {
 		if isStream {

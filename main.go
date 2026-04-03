@@ -135,6 +135,11 @@ func main() {
 	knowledgeSvc := services.NewKnowledgeService(knowledgeModel, embeddingSvc, logger)
 	knowledgeCtrl := controllers.NewKnowledgeController(knowledgeSvc)
 	handlers.SetKnowledgeService(knowledgeSvc)
+	services.SetToolRegistry(&services.ToolRegistry{
+		JobPostingModel: jobPostingModel,
+		JobAppModel:     jobAppModel,
+		JobMatchModel:   jobMatchModel,
+	})
 	go knowledgeSvc.SeedIfEmpty(ctx)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)
 	resumeSkillCacheModel := models.NewResumeSkillCacheModel(db)
