@@ -514,6 +514,10 @@ func main() {
 		protected.GET("/user/load", userController.LoadUserData)
 		protected.GET("/user/job-preferences", userController.GetJobPreferences)
 		protected.PUT("/user/job-preferences", userController.SaveJobPreferences)
+
+		// Job profile routes (backed by job_preferences, used by website JobProfileSetup)
+		protected.GET("/job/profile", userController.GetJobProfile)
+		protected.POST("/job/profile", userController.SaveJobProfile)
 		protected.GET("/user/followup-reminders", userController.GetFollowupReminders)
 		protected.PUT("/user/followup-reminders", userController.UpdateFollowupReminders)
 

@@ -335,3 +335,83 @@ func stringFromAnyOrJSON(raw json.RawMessage, key string) string {
 	}
 	return ""
 }
+
+// GetJobProfile returns the user's job profile (backed by job_preferences JSON).
+// Used by the website's JobProfileSetup component via GET /api/job/profile.
+func (c *UserController) GetJobProfile(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	prefs, err := c.userModel.GetJobPreferences(userID.(int))
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to load job profile"})
+		return
+	}
+
+	// Return in the format the frontend expects
+	var profile map[string]interface{}
+	if len(prefs) > 0 {
+		if err := json.Unmarshal(prefs, &profile); err != nil {
+			profile = map[string]interface{}{}
+		}
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"exists":  len(profile) > 0,
+		"profile": profile,
+	})
+}
+
+// SaveJobProfile saves the user's job profile (backed by job_preferences JSON).
+// Used by the website's JobProfileSetup component via POST /api/job/profile.
+// Merges incoming fields into existing preferences so EEO fields from the
+// Chrome extension and profile fields from the website coexist.
+func (c *UserController) SaveJobProfile(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	var incoming map[string]interface{}
+	if err := ctx.ShouldBindJSON(&incoming); err != nil {
+		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
+		return
+	}
+
+	// Load existing preferences
+	existing, _ := c.userModel.GetJobPreferences(userID.(int))
+	var merged map[string]interface{}
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &merged); err != nil {
+			merged = map[string]interface{}{}
+		}
+	} else {
+		merged = map[string]interface{}{}
+	}
+
+	// Merge incoming fields (overwrite existing keys)
+	for k, v := range incoming {
+		merged[k] = v
+	}
+
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode profile"})
+		return
+	}
+
+	if err := c.userModel.SetJobPreferences(userID.(int), json.RawMessage(raw)); err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job profile"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "Job profile saved successfully",
+	})
+}
