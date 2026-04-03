@@ -365,7 +365,17 @@ func ChatAssistant(c *gin.Context) {
 	pagePath := strings.TrimSpace(req.PagePath)
 	userEmail := strings.TrimSpace(req.UserEmail)
 	ctx := c.Request.Context()
+
+	// Extract user ID from JWT if present (chat is a public endpoint, auth is optional)
 	chatUserID := c.GetInt("user_id")
+	if chatUserID == 0 {
+		if authHeader := c.GetHeader("Authorization"); strings.HasPrefix(authHeader, "Bearer ") {
+			tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
+			if claims, err := ValidateJWT(tokenStr); err == nil {
+				chatUserID = claims.UserID
+			}
+		}
+	}
 
 	// --- Load user profile for cross-session memory ---
 	var userProfileContext string
