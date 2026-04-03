@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -15,6 +16,7 @@ type ToolRegistry struct {
 	JobAppModel      *models.JobApplicationModel
 	JobMatchModel    *models.ResumeJobMatchModel
 	ChatProfileModel *models.UserChatProfileModel
+	DB               *sql.DB
 }
 
 var toolRegistry *ToolRegistry
@@ -305,4 +307,27 @@ func handleClearProfile(ctx context.Context, userID int, args map[string]any) (a
 		return map[string]any{"error": "failed to clear profile"}, nil
 	}
 	return map[string]any{"success": true, "message": "Your preferences and remembered facts have been cleared. I'll start fresh from here."}, nil
+}
+
+func handleQueryUserData(ctx context.Context, userID int, args map[string]any) (any, error) {
+	question := getStringArg(args, "question", "")
+	if question == "" {
+		return map[string]any{"error": "question is required"}, nil
+	}
+	if userID <= 0 {
+		return map[string]any{"error": "not authenticated"}, nil
+	}
+	if toolRegistry == nil || toolRegistry.DB == nil {
+		return map[string]any{"error": "database not available"}, nil
+	}
+
+	results, err := ExecuteUserDataQuery(ctx, toolRegistry.DB, question, userID)
+	if err != nil {
+		return map[string]any{"error": err.Error()}, nil
+	}
+
+	return map[string]any{
+		"results": results,
+		"count":   len(results),
+	}, nil
 }

@@ -142,6 +142,7 @@ func main() {
 		JobAppModel:      jobAppModel,
 		JobMatchModel:    jobMatchModel,
 		ChatProfileModel: chatProfileModel,
+		DB:               db,
 	})
 	go knowledgeSvc.SeedIfEmpty(ctx)
 	dismissedJobMatchModel := models.NewDismissedJobMatchModel(db)

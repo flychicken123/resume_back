@@ -87,6 +87,14 @@ func ChatTools() []ChatTool {
 			Parameters:  map[string]ToolParam{},
 			Handler:     handleClearProfile,
 		},
+		{
+			Name:        "query_user_data",
+			Description: "Query the user's data from the database using natural language. Can look up: job applications (status, companies, dates), job matches (scores, details), job postings (titles, locations, companies), and user profile. Use for ANY question about the user's personal data or the job database.",
+			Parameters: map[string]ToolParam{
+				"question": {Type: "string", Description: "What data to look up, in natural language", Required: true},
+			},
+			Handler: handleQueryUserData,
+		},
 	}
 }
 
