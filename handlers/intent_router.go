@@ -76,7 +76,7 @@ Given the user's message and conversation history, classify it into exactly one 
 - categorize_skills: User wants to organize/categorize/group their existing skills
 - optimize_project: User wants to optimize/tailor project descriptions for a job
 - polish: User wants to polish/enhance/refine/rewrite a resume section for better impact (not job-specific tailoring)
-- job_application_query: User is asking about THEIR OWN job applications they've submitted — application status, which companies they applied to, how many they've applied to, tracking progress. Keywords: "my applications", "applied", "application status", "tracking".
+- job_application_query: User is READING/VIEWING their job applications — asking about status, listing companies, counting applications. Keywords: "my applications", "show applications", "application status", "how many applied". This is READ-ONLY — if the user wants to CHANGE/UPDATE/MOVE an application status (e.g., "move X to rejected", "mark as interviewing", "update status"), classify as general_chat so tools can handle the write operation.
 - general_chat: General question, conversational reply, questions about HiHired as a platform, or anything not matching above. This includes questions about the platform's job database (e.g., "how many jobs do you have", "what jobs are available", "how many positions are listed").
 
 IMPORTANT RULES:
@@ -86,7 +86,8 @@ IMPORTANT RULES:
 - If the assistant already generated content (e.g., a cover letter) in the recent history and the user is just responding, classify as general_chat.
 - CRITICAL disambiguation rules:
   * "how many jobs do you have" / "what jobs are available" / "show me jobs" = general_chat (asking about the PLATFORM's database)
-  * "how many jobs have I applied to" / "my applications" / "where did I apply" = job_application_query (asking about PERSONAL applications)
+  * "how many jobs have I applied to" / "my applications" / "where did I apply" = job_application_query (READING application data)
+  * "move X to rejected" / "mark as interviewing" / "update my application" / "change status to" = general_chat (WRITING/UPDATING — needs tools)
   * "improve my resume" / "make my resume better" without specifying a section = resume_advice (wants feedback, not editing)
   * "optimize my experience" / "tailor my experience" = optimize_experience (wants AI to rewrite)
   * "fix my resume" / "fix grammar" = improve_grammar (wants corrections, not content rewriting)
