@@ -41,11 +41,11 @@ func ChatTools() []ChatTool {
 		},
 		{
 			Name:        "application_manager",
-			Description: "Track, update, or list job applications. Use for ANY request about the user's job applications — viewing, adding, or changing status.",
+			Description: "Track, update, or list job applications. Use for ANY request about the user's job applications.",
 			Parameters: map[string]ToolParam{
 				"operation":     {Type: "string", Required: true, Enum: []string{"track", "update_status", "list"}, Description: "track=add new application, update_status=change status, list=show all"},
-				"company_name":  {Type: "string", Description: "Company name"},
-				"job_title":     {Type: "string", Description: "Job title"},
+				"company_name":  {Type: "string", Description: "Company name (extract from user message)"},
+				"job_title":     {Type: "string", Description: "Job title (extract from user message)"},
 				"job_url":       {Type: "string", Description: "Job listing URL (for track)"},
 				"new_status":    {Type: "string", Description: "New status (for update_status)", Enum: []string{"applied", "screening", "interviewing", "offered", "accepted", "rejected", "withdrawn"}},
 				"status_filter": {Type: "string", Description: "Filter by status (for list)"},

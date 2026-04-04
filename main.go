@@ -138,6 +138,8 @@ func main() {
 	chatProfileModel := models.NewUserChatProfileModel(db)
 	handlers.SetChatProfileModel(chatProfileModel)
 	handlers.SetChatJobMatchModel(jobMatchModel)
+	handlers.SetChatResumeHistoryModel(resumeHistoryModel)
+	handlers.SetChatDB(db)
 	services.SetToolRegistry(&services.ToolRegistry{
 		JobPostingModel:  jobPostingModel,
 		JobAppModel:      jobAppModel,
