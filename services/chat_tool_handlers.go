@@ -642,3 +642,71 @@ Return the categorized text only:`, skillsText)
 		"message":       "Categorized skills",
 	}, nil
 }
+
+// --- Merged tool dispatchers (6 tools instead of 19) ---
+
+func handleJobSearchDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "search") {
+	case "count":
+		return handleGetJobCount(ctx, userID, args)
+	case "matches":
+		return handleGetJobMatches(ctx, userID, args)
+	default:
+		return handleSearchJobs(ctx, userID, args)
+	}
+}
+
+func handleApplicationManagerDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "list") {
+	case "track":
+		return handleTrackApplication(ctx, userID, args)
+	case "update_status":
+		return handleUpdateApplicationStatus(ctx, userID, args)
+	default:
+		return handleGetMyApplications(ctx, userID, args)
+	}
+}
+
+func handleResumeEditorDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "update_field") {
+	case "generate_summary":
+		return handleGenerateSummary(ctx, userID, args)
+	case "improve_grammar":
+		return handleImproveGrammar(ctx, userID, args)
+	case "generate_skills":
+		return handleGenerateSkills(ctx, userID, args)
+	case "categorize_skills":
+		return handleCategorizeSkills(ctx, userID, args)
+	default:
+		return handleUpdateResumeField(ctx, userID, args)
+	}
+}
+
+func handleResumeOptimizerDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "analyze") {
+	case "optimize_experience":
+		return handleOptimizeExperience(ctx, userID, args)
+	case "optimize_project":
+		return handleOptimizeProject(ctx, userID, args)
+	default:
+		return handleAnalyzeResume(ctx, userID, args)
+	}
+}
+
+func handleLetterGeneratorDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "cover_letter") {
+	case "recommendation":
+		return handleGenerateRecommendationLetter(ctx, userID, args)
+	default:
+		return handleGenerateCoverLetter(ctx, userID, args)
+	}
+}
+
+func handleQueryDataDispatch(ctx context.Context, userID int, args map[string]any) (any, error) {
+	switch getStringArg(args, "operation", "query") {
+	case "clear_profile":
+		return handleClearProfile(ctx, userID, args)
+	default:
+		return handleQueryUserData(ctx, userID, args)
+	}
+}
