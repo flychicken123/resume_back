@@ -17,6 +17,11 @@ type ToolRegistry struct {
 	JobMatchModel    *models.ResumeJobMatchModel
 	ChatProfileModel *models.UserChatProfileModel
 	DB               *sql.DB
+
+	// Per-request context (set before each tool call, not persistent)
+	requestResumeData map[string]any
+	requestJobDesc    string
+	requestHistory    string
 }
 
 var toolRegistry *ToolRegistry
@@ -24,6 +29,16 @@ var toolRegistry *ToolRegistry
 // SetToolRegistry injects model dependencies for tool handlers.
 func SetToolRegistry(r *ToolRegistry) {
 	toolRegistry = r
+}
+
+// SetRequestContext sets per-request resume data for tool handlers.
+func SetRequestContext(resumeData map[string]any, jobDesc, conversationHistory string) {
+	if toolRegistry == nil {
+		return
+	}
+	toolRegistry.requestResumeData = resumeData
+	toolRegistry.requestJobDesc = jobDesc
+	toolRegistry.requestHistory = conversationHistory
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {
@@ -352,5 +367,278 @@ func handleUpdateResumeField(ctx context.Context, userID int, args map[string]an
 		"action":        action,
 		"value":         value,
 		"message":       fmt.Sprintf("Updated %s: %s '%s'", field, action, value),
+	}, nil
+}
+
+// --- Resume feature tool handlers (migrated from intent router) ---
+
+func getResumeString(key string) string {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return ""
+	}
+	v, _ := toolRegistry.requestResumeData[key].(string)
+	return strings.TrimSpace(v)
+}
+
+func getResumeSlice(key string) []any {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return nil
+	}
+	v, _ := toolRegistry.requestResumeData[key].([]any)
+	return v
+}
+
+func extractExperience() string {
+	exps := getResumeSlice("experiences")
+	if len(exps) == 0 {
+		return getResumeString("experience")
+	}
+	var sb strings.Builder
+	for _, e := range exps {
+		if m, ok := e.(map[string]any); ok {
+			title, _ := m["jobTitle"].(string)
+			company, _ := m["company"].(string)
+			desc, _ := m["description"].(string)
+			if title != "" || company != "" {
+				fmt.Fprintf(&sb, "%s at %s\n%s\n\n", title, company, desc)
+			}
+		}
+	}
+	return sb.String()
+}
+
+func extractEducation() string {
+	edus := getResumeSlice("education")
+	if len(edus) == 0 {
+		return getResumeString("education")
+	}
+	var sb strings.Builder
+	for _, e := range edus {
+		if m, ok := e.(map[string]any); ok {
+			degree, _ := m["degree"].(string)
+			school, _ := m["school"].(string)
+			field, _ := m["field"].(string)
+			fmt.Fprintf(&sb, "%s in %s, %s\n", degree, field, school)
+		}
+	}
+	return sb.String()
+}
+
+func extractSkills() []string {
+	s := getResumeString("skills")
+	if s == "" {
+		return nil
+	}
+	var skills []string
+	for _, part := range strings.Split(s, ",") {
+		t := strings.TrimSpace(part)
+		if t != "" {
+			skills = append(skills, t)
+		}
+	}
+	return skills
+}
+
+func extractProjects() string {
+	projs := getResumeSlice("projects")
+	if len(projs) == 0 {
+		return ""
+	}
+	var sb strings.Builder
+	for _, p := range projs {
+		if m, ok := p.(map[string]any); ok {
+			name, _ := m["projectName"].(string)
+			desc, _ := m["description"].(string)
+			fmt.Fprintf(&sb, "%s: %s\n", name, desc)
+		}
+	}
+	return sb.String()
+}
+
+func handleAnalyzeResume(ctx context.Context, userID int, args map[string]any) (any, error) {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return map[string]any{"error": "no resume data available"}, nil
+	}
+	prompt := BuildResumeAdvicePrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "analysis failed"}, nil
+	}
+	return map[string]any{"advice": strings.TrimSpace(result)}, nil
+}
+
+func handleGenerateCoverLetter(ctx context.Context, userID int, args map[string]any) (any, error) {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return map[string]any{"error": "no resume data available"}, nil
+	}
+	company := getStringArg(args, "company_name", "")
+	prompt := BuildCoverLetterPrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc, company)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "cover letter generation failed"}, nil
+	}
+	return map[string]any{"cover_letter": strings.TrimSpace(result)}, nil
+}
+
+func handleGenerateRecommendationLetter(ctx context.Context, userID int, args map[string]any) (any, error) {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return map[string]any{"error": "no resume data available"}, nil
+	}
+	company := getStringArg(args, "company_name", "")
+	position := getStringArg(args, "position", "")
+	prompt := BuildRecommendationLetterPrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc, company, position)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "letter generation failed"}, nil
+	}
+	return map[string]any{"letter": strings.TrimSpace(result)}, nil
+}
+
+func handleGenerateSummary(ctx context.Context, userID int, args map[string]any) (any, error) {
+	experience := extractExperience()
+	education := extractEducation()
+	skills := extractSkills()
+	existingSummary := getResumeString("summary")
+
+	prompt := BuildSummaryOptimizationPromptWithSkills(experience, education, skills, existingSummary, toolRegistry.requestJobDesc, nil, nil)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "summary generation failed"}, nil
+	}
+	cleaned := strings.TrimSpace(result)
+	return map[string]any{
+		"resume_update": true,
+		"field":         "summary",
+		"action":        "set",
+		"value":         cleaned,
+		"message":       "Generated professional summary",
+	}, nil
+}
+
+func handleOptimizeExperience(ctx context.Context, userID int, args map[string]any) (any, error) {
+	experience := extractExperience()
+	if experience == "" {
+		return map[string]any{"error": "no experience data to optimize"}, nil
+	}
+	prompt := BuildExperienceOptimizationPromptWithSkills(toolRegistry.requestJobDesc, experience, nil, nil)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "optimization failed"}, nil
+	}
+	validated := ValidateAndCleanOutput(experience, result)
+	return map[string]any{"optimized": strings.TrimSpace(validated)}, nil
+}
+
+func handleOptimizeProject(ctx context.Context, userID int, args map[string]any) (any, error) {
+	projects := extractProjects()
+	if projects == "" {
+		return map[string]any{"error": "no project data to optimize"}, nil
+	}
+	prompt := BuildProjectOptimizationPromptWithSkills(toolRegistry.requestJobDesc, projects, "", nil, nil)
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "optimization failed"}, nil
+	}
+	validated := ValidateAndCleanOutput(projects, result)
+	return map[string]any{"optimized": strings.TrimSpace(validated)}, nil
+}
+
+func handleImproveGrammar(ctx context.Context, userID int, args map[string]any) (any, error) {
+	section := getStringArg(args, "section", "experience")
+	var prompt string
+	switch section {
+	case "summary":
+		summary := getResumeString("summary")
+		if summary == "" {
+			return map[string]any{"error": "no summary to improve"}, nil
+		}
+		prompt = BuildSummaryGrammarPrompt(summary)
+	default:
+		experience := extractExperience()
+		if experience == "" {
+			return map[string]any{"error": "no experience to improve"}, nil
+		}
+		prompt = BuildExperienceGrammarPrompt(experience)
+	}
+	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	if err != nil {
+		return map[string]any{"error": "grammar improvement failed"}, nil
+	}
+	cleaned := strings.TrimSpace(result)
+	if section == "summary" {
+		return map[string]any{
+			"resume_update": true,
+			"field":         "summary",
+			"action":        "set",
+			"value":         cleaned,
+			"message":       "Improved summary grammar",
+		}, nil
+	}
+	return map[string]any{"improved": cleaned}, nil
+}
+
+func handleGenerateSkills(ctx context.Context, userID int, args map[string]any) (any, error) {
+	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+		return map[string]any{"error": "no resume data"}, nil
+	}
+	experience := extractExperience()
+	education := extractEducation()
+	projects := extractProjects()
+	prompt := fmt.Sprintf(`Extract relevant professional skills from this resume content. Return a JSON array of skill strings.
+
+Experience: %s
+Education: %s
+Projects: %s
+
+Return JSON array only: ["skill1", "skill2", ...]`, experience, education, projects)
+
+	raw, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	if err != nil {
+		return map[string]any{"error": "skill generation failed"}, nil
+	}
+	cleaned := strings.TrimSpace(raw)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+
+	var skills []string
+	if err := json.Unmarshal([]byte(cleaned), &skills); err != nil {
+		return map[string]any{"error": "failed to parse skills"}, nil
+	}
+	skillsText := strings.Join(skills, ", ")
+	return map[string]any{
+		"resume_update": true,
+		"field":         "skills",
+		"action":        "set",
+		"value":         skillsText,
+		"skills":        skills,
+		"message":       fmt.Sprintf("Generated %d skills", len(skills)),
+	}, nil
+}
+
+func handleCategorizeSkills(ctx context.Context, userID int, args map[string]any) (any, error) {
+	skillsText := getResumeString("skills")
+	if skillsText == "" {
+		return map[string]any{"error": "no skills to categorize"}, nil
+	}
+	prompt := fmt.Sprintf(`Categorize these skills into groups. Return a formatted string like:
+"Languages: Python, Go, TypeScript\n\nFrameworks: React, Django\n\nCloud: AWS, GCP"
+
+Skills: %s
+
+Return the categorized text only:`, skillsText)
+
+	raw, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	if err != nil {
+		return map[string]any{"error": "categorization failed"}, nil
+	}
+	categorized := strings.TrimSpace(raw)
+	return map[string]any{
+		"resume_update": true,
+		"field":         "skills",
+		"action":        "set",
+		"value":         categorized,
+		"message":       "Categorized skills",
 	}, nil
 }

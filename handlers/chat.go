@@ -392,118 +392,8 @@ func ChatAssistant(c *gin.Context) {
 		proactiveBlock, proactiveSuggestions = buildProactiveSuggestions(chatUserID, userEmail, req.ResumeData)
 	}
 
-	// --- AI Intent Router (primary) ---
-	intent, intentErr := classifyIntent(ctx, userMessage, req.ResumeData, req.History)
-	if intentErr == nil && intent.Intent != IntentGeneralChat && intent.Confidence >= intentConfidenceThreshold {
-		log.Printf("[INTENT] Classified intent=%s confidence=%.2f for message=%q", intent.Intent, intent.Confidence, userMessage)
-
-		if intent.Intent == IntentPolish {
-			// Route to existing polish handler (non-streamable)
-			if polishAgent != nil && len(req.ResumeData) > 0 {
-				if resp := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); resp != nil {
-					resp.ProactiveSuggestions = proactiveSuggestions
-					go func() {
-						bgCtx := context.Background()
-						if err := persistChatExchange(bgCtx, chatPersistencePayload{
-							sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-							userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-						}); err != nil {
-							log.Printf("failed to persist chat exchange: %v", err)
-						}
-						updateUserProfile(chatUserID, userMessage, resp.Reply)
-					}()
-					if isStream {
-						sse.WriteDone(resp)
-					} else {
-						c.JSON(http.StatusOK, resp)
-					}
-					return
-				}
-			}
-		} else {
-			// Check for missing required params
-			if missing := checkMissingParams(intent, req.ResumeData); len(missing) > 0 {
-				resp := buildMissingParamResponse(intent)
-				resp.ProactiveSuggestions = proactiveSuggestions
-				go func() {
-					bgCtx := context.Background()
-					if err := persistChatExchange(bgCtx, chatPersistencePayload{
-						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-					}); err != nil {
-						log.Printf("failed to persist chat exchange: %v", err)
-					}
-					updateUserProfile(chatUserID, userMessage, resp.Reply)
-				}()
-				if isStream {
-					sse.WriteDone(resp)
-				} else {
-					c.JSON(http.StatusOK, resp)
-				}
-				return
-			}
-			// Route to the feature (with streaming callback if streaming)
-			var onToken func(string)
-			if isStream {
-				onToken = sse.WriteToken
-			}
-			if resp, err := routeToFeature(ctx, intent, req, onToken); err == nil {
-				resp.ProactiveSuggestions = proactiveSuggestions
-				go func() {
-					bgCtx := context.Background()
-					if err := persistChatExchange(bgCtx, chatPersistencePayload{
-						sessionID: sessionID, pagePath: pagePath, userEmail: userEmail,
-						userInput: userMessage, assistant: resp.Reply, historyLen: len(req.History),
-					}); err != nil {
-						log.Printf("failed to persist chat exchange: %v", err)
-					}
-					updateUserProfile(chatUserID, userMessage, resp.Reply)
-				}()
-				if isStream {
-					sse.WriteDone(resp)
-				} else {
-					c.JSON(http.StatusOK, resp)
-				}
-				return
-			} else {
-				log.Printf("[INTENT] Feature routing failed for intent=%s: %v", intent.Intent, err)
-			}
-		}
-	} else if intentErr != nil {
-		log.Printf("[INTENT-FALLBACK] Intent classification failed (err=%v), falling back to keyword polish check for message=%q", intentErr, userMessage)
-	} else if intent.Intent != IntentGeneralChat {
-		log.Printf("[INTENT-FALLBACK] Low confidence=%.2f intent=%s, falling back to keyword polish check for message=%q", intent.Confidence, intent.Intent, userMessage)
-	}
-
-	// --- Polish keyword fallback (improved) ---
-	if polishAgent != nil && len(req.ResumeData) > 0 {
-		if polishResponse := tryHandlePolishRequest(ctx, userMessage, req.ResumeData, req.History); polishResponse != nil {
-			polishResponse.ProactiveSuggestions = proactiveSuggestions
-			log.Printf("[INTENT-FALLBACK] Keyword polish fallback handled message=%q", userMessage)
-			go func() {
-				bgCtx := context.Background()
-				if err := persistChatExchange(bgCtx, chatPersistencePayload{
-					sessionID:  sessionID,
-					pagePath:   pagePath,
-					userEmail:  userEmail,
-					userInput:  userMessage,
-					assistant:  polishResponse.Reply,
-					historyLen: len(req.History),
-				}); err != nil {
-					log.Printf("failed to persist chat exchange: %v", err)
-				}
-				updateUserProfile(chatUserID, userMessage, polishResponse.Reply)
-			}()
-			if isStream {
-				sse.WriteDone(polishResponse)
-			} else {
-				c.JSON(http.StatusOK, polishResponse)
-			}
-			return
-		}
-	}
-
-	log.Printf("[INTENT] No feature matched, using general chat for message=%q", userMessage)
+	// All feature intents (cover letter, optimize, polish, skills, etc.) are now handled
+	// as tools in the general chat path. No intent classification needed.
 
 	const systemInstructions = `You are HiHired's AI career coach. Keep answers short, clear, and friendly (120 words max).
 You can help with anything related to job searching and career development: resumes, cover letters, interviews, salary negotiation, networking, LinkedIn profiles, career pivots, job boards, follow-up emails, references, and workplace advice.
@@ -603,7 +493,11 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	var reply string
 	var err error
 
-	// Use tool-enabled call for general chat — allows the LLM to search jobs, track applications, etc.
+	// Set per-request context for tool handlers (resume data, job description, conversation)
+	jobDesc, _ := req.ResumeData["jobDescription"].(string)
+	services.SetRequestContext(req.ResumeData, jobDesc, historyBuilder.String())
+
+	// Use tool-enabled call — allows the LLM to search jobs, optimize resume, generate letters, etc.
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
 

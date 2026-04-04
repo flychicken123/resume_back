@@ -106,6 +106,68 @@ func ChatTools() []ChatTool {
 			},
 			Handler: handleUpdateResumeField,
 		},
+		// --- Resume feature tools (migrated from intent router) ---
+		{
+			Name:        "analyze_resume",
+			Description: "Analyze the user's resume and provide expert feedback on strengths, weaknesses, and improvement areas. Use when user asks for resume review, analysis, or advice.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleAnalyzeResume,
+		},
+		{
+			Name:        "generate_cover_letter",
+			Description: "Generate a personalized cover letter tailored to a job. Use when user asks for a cover letter.",
+			Parameters: map[string]ToolParam{
+				"company_name": {Type: "string", Description: "Target company name"},
+			},
+			Handler: handleGenerateCoverLetter,
+		},
+		{
+			Name:        "generate_recommendation_letter",
+			Description: "Generate a recommendation or reference letter. Use when user asks for a recommendation letter or third-party letter.",
+			Parameters: map[string]ToolParam{
+				"company_name": {Type: "string", Description: "Target company"},
+				"position":     {Type: "string", Description: "Target position"},
+			},
+			Handler: handleGenerateRecommendationLetter,
+		},
+		{
+			Name:        "generate_summary",
+			Description: "Generate or rewrite the user's professional resume summary. Use when user asks to create, improve, or rewrite their summary.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleGenerateSummary,
+		},
+		{
+			Name:        "optimize_experience",
+			Description: "Optimize and tailor work experience bullets for a job description. Use when user asks to optimize, tailor, or improve their experience section.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleOptimizeExperience,
+		},
+		{
+			Name:        "optimize_project",
+			Description: "Optimize project descriptions for a job. Use when user asks to improve their projects section.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleOptimizeProject,
+		},
+		{
+			Name:        "improve_grammar",
+			Description: "Fix grammar, spelling, and writing quality in resume sections. Use when user asks to fix grammar or improve writing.",
+			Parameters: map[string]ToolParam{
+				"section": {Type: "string", Description: "Section to fix", Enum: []string{"summary", "experience", "projects"}},
+			},
+			Handler: handleImproveGrammar,
+		},
+		{
+			Name:        "generate_skills",
+			Description: "Auto-generate relevant skills from the user's resume content. Use when user asks to suggest or add skills.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleGenerateSkills,
+		},
+		{
+			Name:        "categorize_skills",
+			Description: "Organize the user's skills into categories (e.g., Languages, Frameworks, Cloud). Use when user asks to categorize or group their skills.",
+			Parameters:  map[string]ToolParam{},
+			Handler:     handleCategorizeSkills,
+		},
 	}
 }
 
