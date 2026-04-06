@@ -217,36 +217,85 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 	company := getStringArg(args, "company_name", "")
 	jobTitle := getStringArg(args, "job_title", "")
 	newStatus := getStringArg(args, "new_status", "")
-	if company == "" || newStatus == "" {
-		return map[string]any{"error": "please provide company name and new status"}, nil
+	if company == "" && jobTitle == "" {
+		return map[string]any{"error": "please provide company name or job title"}, nil
+	}
+	if newStatus == "" {
+		return map[string]any{"error": "please provide the new status"}, nil
 	}
 
-	// Find app by company name (and optionally job title) for this user
 	apps, _, err := toolRegistry.JobAppModel.ListByUser(userID, 100, 0, "")
 	if err != nil {
 		return map[string]any{"error": "failed to look up applications"}, nil
 	}
 
-	for _, app := range apps {
-		if !strings.EqualFold(app.CompanyName, company) {
-			continue
-		}
-		if jobTitle != "" && !strings.Contains(strings.ToLower(app.JobTitle), strings.ToLower(jobTitle)) {
-			continue
-		}
-		if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
-			var ite *models.InvalidTransitionError
-			if errors.As(err, &ite) {
-				if ite.CurrentStatus == newStatus {
-					return map[string]any{"already_done": true, "message": fmt.Sprintf("'%s' at %s is already in '%s' status", app.JobTitle, company, newStatus)}, nil
-				}
-				return map[string]any{"error": fmt.Sprintf("Cannot move from '%s' to '%s'. Allowed transitions: %v", ite.CurrentStatus, ite.RequestedStatus, ite.Allowed)}, nil
-			}
-			return map[string]any{"error": fmt.Sprintf("failed to update status: %s", err.Error())}, nil
-		}
-		return map[string]any{"success": true, "message": fmt.Sprintf("Updated '%s' at %s to '%s'", app.JobTitle, company, newStatus)}, nil
+	// Score each application for best fuzzy match
+	type scored struct {
+		app   *models.JobApplication
+		score int
 	}
-	return map[string]any{"error": fmt.Sprintf("No application found for '%s'. Track it first.", company)}, nil
+	companyLower := strings.ToLower(company)
+	titleLower := strings.ToLower(jobTitle)
+	var matches []scored
+	for _, app := range apps {
+		s := 0
+		appCompany := strings.ToLower(app.CompanyName)
+		appTitle := strings.ToLower(app.JobTitle)
+
+		if company != "" {
+			if strings.EqualFold(app.CompanyName, company) {
+				s += 10 // exact company match
+			} else if strings.Contains(appCompany, companyLower) || strings.Contains(companyLower, appCompany) {
+				s += 5 // partial company match
+			}
+		}
+		if jobTitle != "" {
+			if strings.EqualFold(app.JobTitle, jobTitle) {
+				s += 10 // exact title match
+			} else if strings.Contains(appTitle, titleLower) || strings.Contains(titleLower, appTitle) {
+				s += 5 // partial title match
+			}
+		}
+		if s > 0 {
+			matches = append(matches, scored{app: app, score: s})
+		}
+	}
+
+	if len(matches) == 0 {
+		hint := company
+		if hint == "" {
+			hint = jobTitle
+		}
+		available := make([]string, 0, len(apps))
+		for _, app := range apps {
+			available = append(available, fmt.Sprintf("'%s' at %s (status: %s)", app.JobTitle, app.CompanyName, app.Status))
+		}
+		return map[string]any{
+			"error":              fmt.Sprintf("No application found matching '%s'. Track it first.", hint),
+			"available_apps":     available,
+		}, nil
+	}
+
+	// Pick the best match
+	best := matches[0]
+	for _, m := range matches[1:] {
+		if m.score > best.score {
+			best = m
+		}
+	}
+	app := best.app
+
+	if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
+		var ite *models.InvalidTransitionError
+		if errors.As(err, &ite) {
+			if ite.CurrentStatus == newStatus {
+				return map[string]any{"already_done": true, "message": fmt.Sprintf("'%s' at %s is already in '%s' status", app.JobTitle, app.CompanyName, newStatus)}, nil
+			}
+			return map[string]any{"error": fmt.Sprintf("Cannot move '%s' at %s from '%s' to '%s'. Allowed: %v", app.JobTitle, app.CompanyName, ite.CurrentStatus, ite.RequestedStatus, ite.Allowed)}, nil
+		}
+		return map[string]any{"error": fmt.Sprintf("failed to update status: %s", err.Error())}, nil
+	}
+	return map[string]any{"success": true, "message": fmt.Sprintf("Updated '%s' at %s to '%s'", app.JobTitle, app.CompanyName, newStatus)}, nil
 }
 
 func handleGetMyApplications(ctx context.Context, userID int, args map[string]any) (any, error) {
