@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
@@ -64,6 +65,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 		// If no tool calls, this is the final text response (already streamed via callback)
 		if len(choice.ToolCalls) == 0 {
+			log.Printf("[TOOL-DISPATCH] round=%d: no tool calls, returning text response (len=%d)", round, len(choice.Content))
 			if streamedText.Len() > 0 {
 				return streamedText.String(), meta, nil
 			}
@@ -103,6 +105,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 			}
 
 			// Find and execute handler
+			log.Printf("[TOOL-CALL] tool=%q args=%s", tc.FunctionCall.Name, tc.FunctionCall.Arguments)
 			meta.ToolsCalled = append(meta.ToolsCalled, tc.FunctionCall.Name)
 			handler := FindToolHandler(tc.FunctionCall.Name, tools)
 			var resultStr string
@@ -130,6 +133,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 				meta.ToolErrors = append(meta.ToolErrors, "unknown tool: "+tc.FunctionCall.Name)
 			}
 
+			log.Printf("[TOOL-RESULT] tool=%q result=%s", tc.FunctionCall.Name, resultStr)
 			toolResultParts = append(toolResultParts, llms.ToolCallResponse{
 				ToolCallID: tc.ID,
 				Name:       tc.FunctionCall.Name,

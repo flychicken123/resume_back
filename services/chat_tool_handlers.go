@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"resumeai/models"
@@ -217,17 +218,22 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 	company := getStringArg(args, "company_name", "")
 	jobTitle := getStringArg(args, "job_title", "")
 	newStatus := getStringArg(args, "new_status", "")
+	log.Printf("[TOOL:update_status] userID=%d company=%q jobTitle=%q newStatus=%q", userID, company, jobTitle, newStatus)
 	if company == "" && jobTitle == "" {
+		log.Printf("[TOOL:update_status] FAIL: no company or job title provided")
 		return map[string]any{"error": "please provide company name or job title"}, nil
 	}
 	if newStatus == "" {
+		log.Printf("[TOOL:update_status] FAIL: no new_status provided")
 		return map[string]any{"error": "please provide the new status"}, nil
 	}
 
 	apps, _, err := toolRegistry.JobAppModel.ListByUser(userID, 100, 0, "")
 	if err != nil {
+		log.Printf("[TOOL:update_status] FAIL: ListByUser error: %v", err)
 		return map[string]any{"error": "failed to look up applications"}, nil
 	}
+	log.Printf("[TOOL:update_status] found %d total applications", len(apps))
 
 	// Score each application for best fuzzy match
 	type scored struct {
@@ -270,6 +276,7 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 		for _, app := range apps {
 			available = append(available, fmt.Sprintf("'%s' at %s (status: %s)", app.JobTitle, app.CompanyName, app.Status))
 		}
+		log.Printf("[TOOL:update_status] FAIL: no match for company=%q title=%q. Available: %v", company, jobTitle, available)
 		return map[string]any{
 			"error":              fmt.Sprintf("No application found matching '%s'. Track it first.", hint),
 			"available_apps":     available,
@@ -284,8 +291,10 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 		}
 	}
 	app := best.app
+	log.Printf("[TOOL:update_status] best match: id=%d title=%q company=%q currentStatus=%q score=%d", app.ID, app.JobTitle, app.CompanyName, app.Status, best.score)
 
 	if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
+		log.Printf("[TOOL:update_status] FAIL: UpdateStatus error: %v", err)
 		var ite *models.InvalidTransitionError
 		if errors.As(err, &ite) {
 			if ite.CurrentStatus == newStatus {
