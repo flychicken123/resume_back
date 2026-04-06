@@ -15,6 +15,7 @@ const maxToolCallRounds = 3
 type ToolCallMetadata struct {
 	ResumeUpdates []map[string]any
 	ToolsCalled   []string
+	ToolErrors    []string // errors returned by tool handlers (as data, not Go errors)
 }
 
 // CallGeminiWithTools sends a prompt to Gemini with tool definitions.
@@ -109,19 +110,24 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 				result, err := handler(ctx, userID, args)
 				if err != nil {
 					resultStr = fmt.Sprintf(`{"error": "%s"}`, err.Error())
+					meta.ToolErrors = append(meta.ToolErrors, err.Error())
 				} else {
 					resultBytes, _ := json.Marshal(result)
 					resultStr = string(resultBytes)
 
-					// Collect resume update metadata
+					// Collect resume update metadata and track data-level errors
 					if resultMap, ok := result.(map[string]any); ok {
 						if _, isResumeUpdate := resultMap["resume_update"]; isResumeUpdate {
 							meta.ResumeUpdates = append(meta.ResumeUpdates, resultMap)
+						}
+						if errMsg, hasErr := resultMap["error"]; hasErr {
+							meta.ToolErrors = append(meta.ToolErrors, fmt.Sprintf("%v", errMsg))
 						}
 					}
 				}
 			} else {
 				resultStr = `{"error": "unknown tool"}`
+				meta.ToolErrors = append(meta.ToolErrors, "unknown tool: "+tc.FunctionCall.Name)
 			}
 
 			toolResultParts = append(toolResultParts, llms.ToolCallResponse{

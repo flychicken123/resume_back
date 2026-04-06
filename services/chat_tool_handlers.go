@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -234,7 +235,14 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 			continue
 		}
 		if err := toolRegistry.JobAppModel.UpdateStatus(userID, app.ID, newStatus, ""); err != nil {
-			return map[string]any{"error": "failed to update status"}, nil
+			var ite *models.InvalidTransitionError
+			if errors.As(err, &ite) {
+				if ite.CurrentStatus == newStatus {
+					return map[string]any{"already_done": true, "message": fmt.Sprintf("'%s' at %s is already in '%s' status", app.JobTitle, company, newStatus)}, nil
+				}
+				return map[string]any{"error": fmt.Sprintf("Cannot move from '%s' to '%s'. Allowed transitions: %v", ite.CurrentStatus, ite.RequestedStatus, ite.Allowed)}, nil
+			}
+			return map[string]any{"error": fmt.Sprintf("failed to update status: %s", err.Error())}, nil
 		}
 		return map[string]any{"success": true, "message": fmt.Sprintf("Updated '%s' at %s to '%s'", app.JobTitle, company, newStatus)}, nil
 	}
