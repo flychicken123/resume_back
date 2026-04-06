@@ -595,6 +595,7 @@ IMPORTANT — REASONING: When answering questions, follow this process:
    If the user asks about their job search progress, reference actual numbers from their live data.
    Do NOT ask for information that is already in their data — use it directly.
 2. Determine if you need to WRITE data (call tools for updates/tracking) or if you can answer from the injected data.
+   CRITICAL: For any write operation (move, update, track, change status, add, remove), you MUST call the appropriate tool. NEVER pretend you updated something without calling a tool — the user's data won't actually change. If the tool call fails, tell the user honestly.
 3. Consider the user's specific situation (experience level, target roles, location).
 4. Give a personalized answer grounded in their data, not generic career advice.
 
