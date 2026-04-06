@@ -715,6 +715,23 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 
 	cleaned := strings.TrimSpace(reply)
 
+	// Detect hallucinated write: if message looks like a write request but no tool was called,
+	// append a warning so the user knows the action didn't actually happen
+	if toolMeta != nil && len(toolMeta.ToolsCalled) == 0 {
+		msgLower := strings.ToLower(userMessage)
+		writeKeywords := []string{"move", "update", "change", "set", "mark", "track", "add", "remove", "delete", "reject", "accept"}
+		isWriteRequest := false
+		for _, kw := range writeKeywords {
+			if strings.Contains(msgLower, kw) {
+				isWriteRequest = true
+				break
+			}
+		}
+		if isWriteRequest && (strings.Contains(cleaned, "updated") || strings.Contains(cleaned, "moved") || strings.Contains(cleaned, "changed") || strings.Contains(cleaned, "I've")) {
+			cleaned = "I wasn't able to make that change — please try again or use the Application Tracker directly."
+		}
+	}
+
 	// Build updatedResumeData from tool metadata (e.g., update_resume_field results)
 	var updatedResumeData map[string]interface{}
 	if toolMeta != nil && len(toolMeta.ResumeUpdates) > 0 {

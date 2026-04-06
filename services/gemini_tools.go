@@ -14,6 +14,7 @@ const maxToolCallRounds = 3
 // ToolCallMetadata holds side effects from tool execution (e.g., resume field updates).
 type ToolCallMetadata struct {
 	ResumeUpdates []map[string]any
+	ToolsCalled   []string
 }
 
 // CallGeminiWithTools sends a prompt to Gemini with tool definitions.
@@ -101,6 +102,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 			}
 
 			// Find and execute handler
+			meta.ToolsCalled = append(meta.ToolsCalled, tc.FunctionCall.Name)
 			handler := FindToolHandler(tc.FunctionCall.Name, tools)
 			var resultStr string
 			if handler != nil {
