@@ -43,6 +43,15 @@ type chatResponse struct {
 	FeatureAction        string                 `json:"featureAction,omitempty"`
 	FeatureResult        interface{}            `json:"featureResult,omitempty"`
 	ProactiveSuggestions []ProactiveSuggestion  `json:"proactiveSuggestions,omitempty"`
+	ToolDebug            *ToolDebugInfo         `json:"toolDebug,omitempty"`
+}
+
+// ToolDebugInfo surfaces tool call details to the frontend for debugging.
+type ToolDebugInfo struct {
+	ToolsCalled []string `json:"toolsCalled"`
+	ToolArgs    []string `json:"toolArgs"`
+	ToolResults []string `json:"toolResults"`
+	ToolErrors  []string `json:"toolErrors,omitempty"`
 }
 
 type ProactiveSuggestion struct {
@@ -773,6 +782,20 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	}()
 
 	resp := &chatResponse{Reply: cleaned, ProactiveSuggestions: proactiveSuggestions, UpdatedResumeData: updatedResumeData}
+
+	// Attach tool debug info for admin users
+	if toolMeta != nil {
+		debug := &ToolDebugInfo{
+			ToolsCalled: toolMeta.ToolsCalled,
+			ToolArgs:    toolMeta.ToolArgs,
+			ToolResults: toolMeta.ToolResults,
+			ToolErrors:  toolMeta.ToolErrors,
+		}
+		if len(debug.ToolsCalled) == 0 {
+			debug.ToolsCalled = []string{"(none)"}
+		}
+		resp.ToolDebug = debug
+	}
 	if isStream {
 		sse.WriteDone(resp)
 	} else {

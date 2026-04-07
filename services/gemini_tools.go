@@ -16,6 +16,8 @@ const maxToolCallRounds = 3
 type ToolCallMetadata struct {
 	ResumeUpdates []map[string]any
 	ToolsCalled   []string
+	ToolArgs      []string // raw JSON args for each tool call
+	ToolResults   []string // raw JSON results for each tool call
 	ToolErrors    []string // errors returned by tool handlers (as data, not Go errors)
 }
 
@@ -107,6 +109,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 			// Find and execute handler
 			log.Printf("[TOOL-CALL] tool=%q args=%s", tc.FunctionCall.Name, tc.FunctionCall.Arguments)
 			meta.ToolsCalled = append(meta.ToolsCalled, tc.FunctionCall.Name)
+			meta.ToolArgs = append(meta.ToolArgs, tc.FunctionCall.Arguments)
 			handler := FindToolHandler(tc.FunctionCall.Name, tools)
 			var resultStr string
 			if handler != nil {
@@ -134,6 +137,7 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 			}
 
 			log.Printf("[TOOL-RESULT] tool=%q result=%s", tc.FunctionCall.Name, resultStr)
+			meta.ToolResults = append(meta.ToolResults, resultStr)
 			toolResultParts = append(toolResultParts, llms.ToolCallResponse{
 				ToolCallID: tc.ID,
 				Name:       tc.FunctionCall.Name,
