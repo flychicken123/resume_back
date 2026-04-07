@@ -710,7 +710,22 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
 
-	if isStream {
+	// Pre-LLM interceptor: detect status update commands and call the tool directly.
+	// This avoids the LLM skipping tool calls when it sees the app is already in the target status.
+	if interceptResult, interceptMeta := tryInterceptStatusUpdate(ctx, userMessage, chatUserID); interceptResult != "" {
+		toolMeta = interceptMeta
+		// Feed the tool result to LLM for a natural language response
+		interceptPrompt := fmt.Sprintf("%s\n\nThe user said: %s\n\nI already executed the tool and got this result: %s\n\nWrite a short, friendly response to the user based on this result. Do NOT call any tools.",
+			systemInstructions, userMessage, interceptResult)
+		if isStream {
+			reply, _, err = services.CallGeminiWithTools(ctx, interceptPrompt, interceptPrompt, nil, chatUserID, sse.WriteToken)
+		} else {
+			reply, _, err = services.CallGeminiWithToolsBlocking(ctx, interceptPrompt, interceptPrompt, nil, chatUserID)
+		}
+		if reply == "" && err == nil {
+			reply = interceptResult
+		}
+	} else if isStream {
 		reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
 	} else {
 		reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
@@ -1632,4 +1647,186 @@ Return only the summary text, no JSON:`, string(mergedJSON))
 	if err := chatProfileModel.Upsert(userID, merged, strings.TrimSpace(summary)); err != nil {
 		log.Printf("[PROFILE] upsert failed: %v", err)
 	}
+}
+
+// tryInterceptStatusUpdate detects status-update commands in the user message
+// and calls the application_manager tool directly, bypassing the LLM's tool-call decision.
+// Returns the tool result string and metadata, or ("", nil) if the message is not a status update.
+func tryInterceptStatusUpdate(ctx context.Context, message string, userID int) (string, *services.ToolCallMetadata) {
+	if userID == 0 || chatJobAppModel == nil {
+		return "", nil
+	}
+	msgLower := strings.ToLower(message)
+
+	// Detect status update intent: "move X to rejected", "mark X as rejected", "reject X", etc.
+	statusKeywords := map[string]string{
+		"rejected":     "rejected",
+		"reject":       "rejected",
+		"withdrawn":    "withdrawn",
+		"withdraw":     "withdrawn",
+		"screening":    "screening",
+		"interviewing": "interviewing",
+		"offered":      "offered",
+		"accepted":     "accepted",
+		"applied":      "applied",
+	}
+
+	actionWords := []string{"move", "mark", "set", "change", "update"}
+	hasAction := false
+	for _, w := range actionWords {
+		if strings.Contains(msgLower, w) {
+			hasAction = true
+			break
+		}
+	}
+
+	// Also match direct verbs like "reject this" without action words
+	var targetStatus string
+	for keyword, status := range statusKeywords {
+		if strings.Contains(msgLower, keyword) {
+			targetStatus = status
+			break
+		}
+	}
+
+	if targetStatus == "" || (!hasAction && targetStatus == msgLower) {
+		return "", nil
+	}
+
+	// Extract the subject — look for quoted text or text between action word and status word
+	subject := ""
+	// Try quoted text first: "Staff Machine Learning Engineer"
+	if idx := strings.Index(message, `"`); idx >= 0 {
+		end := strings.Index(message[idx+1:], `"`)
+		if end >= 0 {
+			subject = message[idx+1 : idx+1+end]
+		}
+	}
+	// Fallback: use everything between action word and status keyword
+	if subject == "" {
+		for _, w := range append(actionWords, "reject", "withdraw") {
+			idx := strings.Index(msgLower, w)
+			if idx >= 0 {
+				rest := strings.TrimSpace(message[idx+len(w):])
+				// Remove leading "to", "as", "the"
+				for _, prefix := range []string{"to ", "as ", "the "} {
+					if strings.HasPrefix(strings.ToLower(rest), prefix) {
+						rest = strings.TrimSpace(rest[len(prefix):])
+					}
+				}
+				// Remove trailing status word
+				for kw := range statusKeywords {
+					restLower := strings.ToLower(rest)
+					if idx := strings.LastIndex(restLower, kw); idx > 0 {
+						rest = strings.TrimSpace(rest[:idx])
+					}
+				}
+				// Remove trailing "to"
+				rest = strings.TrimSuffix(strings.TrimSpace(rest), " to")
+				rest = strings.Trim(rest, `"' `)
+				if len(rest) > 2 {
+					subject = rest
+					break
+				}
+			}
+		}
+	}
+
+	if subject == "" {
+		return "", nil
+	}
+
+	log.Printf("[INTERCEPT] Detected status update: subject=%q targetStatus=%q userID=%d", subject, targetStatus, userID)
+
+	// Find the best matching application
+	apps, _, err := chatJobAppModel.ListByUser(userID, 100, 0, "")
+	if err != nil || len(apps) == 0 {
+		return "", nil
+	}
+
+	subjectLower := strings.ToLower(subject)
+	type scored struct {
+		app   *models.JobApplication
+		score int
+	}
+	var matches []scored
+	for _, app := range apps {
+		s := 0
+		titleLower := strings.ToLower(app.JobTitle)
+		companyLower := strings.ToLower(app.CompanyName)
+		if strings.Contains(titleLower, subjectLower) || strings.Contains(subjectLower, titleLower) {
+			s += 10
+		}
+		if strings.Contains(companyLower, subjectLower) || strings.Contains(subjectLower, companyLower) {
+			s += 5
+		}
+		// Check individual words
+		words := strings.Fields(subjectLower)
+		for _, w := range words {
+			if len(w) > 2 && strings.Contains(titleLower, w) {
+				s += 2
+			}
+			if len(w) > 2 && strings.Contains(companyLower, w) {
+				s += 1
+			}
+		}
+		if s > 0 {
+			matches = append(matches, scored{app: app, score: s})
+		}
+	}
+
+	if len(matches) == 0 {
+		result := fmt.Sprintf("No application found matching '%s'.", subject)
+		log.Printf("[INTERCEPT] %s", result)
+		meta := &services.ToolCallMetadata{
+			ToolsCalled: []string{"application_manager (intercepted)"},
+			ToolArgs:    []string{fmt.Sprintf(`{"subject":"%s","target_status":"%s"}`, subject, targetStatus)},
+			ToolResults: []string{result},
+			ToolErrors:  []string{result},
+		}
+		return result, meta
+	}
+
+	best := matches[0]
+	for _, m := range matches[1:] {
+		if m.score > best.score {
+			best = m
+		}
+	}
+	app := best.app
+	log.Printf("[INTERCEPT] Best match: id=%d title=%q company=%q currentStatus=%q score=%d",
+		app.ID, app.JobTitle, app.CompanyName, app.Status, best.score)
+
+	// If already in target status, return friendly message
+	if app.Status == targetStatus {
+		result := fmt.Sprintf("'%s' at %s is already in '%s' status.", app.JobTitle, app.CompanyName, targetStatus)
+		meta := &services.ToolCallMetadata{
+			ToolsCalled: []string{"application_manager (intercepted)"},
+			ToolArgs:    []string{fmt.Sprintf(`{"app_id":%d,"target_status":"%s","current_status":"%s"}`, app.ID, targetStatus, app.Status)},
+			ToolResults: []string{result},
+		}
+		return result, meta
+	}
+
+	// Perform the update
+	if err := chatJobAppModel.UpdateStatus(userID, app.ID, targetStatus, ""); err != nil {
+		result := fmt.Sprintf("Failed to update '%s' at %s: %s", app.JobTitle, app.CompanyName, err.Error())
+		log.Printf("[INTERCEPT] %s", result)
+		meta := &services.ToolCallMetadata{
+			ToolsCalled: []string{"application_manager (intercepted)"},
+			ToolArgs:    []string{fmt.Sprintf(`{"app_id":%d,"target_status":"%s","current_status":"%s"}`, app.ID, targetStatus, app.Status)},
+			ToolResults: []string{result},
+			ToolErrors:  []string{result},
+		}
+		return result, meta
+	}
+
+	result := fmt.Sprintf("Updated '%s' at %s to '%s'.", app.JobTitle, app.CompanyName, targetStatus)
+	log.Printf("[INTERCEPT] %s", result)
+	meta := &services.ToolCallMetadata{
+		ToolsCalled: []string{"application_manager (intercepted)"},
+		ToolArgs:    []string{fmt.Sprintf(`{"app_id":%d,"target_status":"%s","current_status":"%s"}`, app.ID, targetStatus, app.Status)},
+		ToolResults: []string{result},
+	}
+	return result, meta
 }
