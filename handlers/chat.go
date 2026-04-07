@@ -726,23 +726,42 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 
 	cleaned := strings.TrimSpace(reply)
 
-	// Detect hallucinated write: if message looks like a write request but no tool was called
-	// (or tool was called but returned errors), warn the user
+	// --- Write-intent safety net ---
+	// If the user requested a write operation but the LLM didn't call any tool
+	// (or all tool calls failed), retry once with a forced-tool instruction.
+	// This is a generic mechanism that works for any tool, not just status updates.
 	if toolMeta != nil {
 		noToolsCalled := len(toolMeta.ToolsCalled) == 0
 		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
 
 		if noToolsCalled || allToolsFailed {
-			msgLower := strings.ToLower(userMessage)
-			writeKeywords := []string{"move", "update", "change", "set", "mark", "track", "add", "remove", "delete", "reject", "accept"}
-			isWriteRequest := false
-			for _, kw := range writeKeywords {
-				if strings.Contains(msgLower, kw) {
-					isWriteRequest = true
-					break
+			if detectWriteIntent(userMessage) {
+				log.Printf("[WRITE-SAFETY] Write intent detected but no tool succeeded (called=%v errors=%v). Retrying with forced-tool prompt.",
+					toolMeta.ToolsCalled, toolMeta.ToolErrors)
+
+				forcedPrompt := prompt + "\n\nIMPORTANT OVERRIDE: Your previous attempt did NOT call any tool. The user is requesting a DATA CHANGE. You MUST call the appropriate tool NOW. Do not respond with text only. Even if the data appears to already be in the desired state, call the tool anyway — the tool will handle idempotency."
+
+				if isStream {
+					// Reset the stream — send a clear token so frontend replaces the streamed text
+					sse.WriteToken("\n")
+					reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, forcedPrompt, tools, chatUserID, sse.WriteToken)
+				} else {
+					reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, forcedPrompt, tools, chatUserID)
+				}
+				if err == nil {
+					cleaned = strings.TrimSpace(reply)
 				}
 			}
-			if isWriteRequest && (strings.Contains(cleaned, "updated") || strings.Contains(cleaned, "moved") || strings.Contains(cleaned, "changed") || strings.Contains(cleaned, "I've")) {
+		}
+	}
+
+	// Final hallucination guard — if even the retry didn't call a tool, warn the user
+	if toolMeta != nil {
+		noToolsCalled := len(toolMeta.ToolsCalled) == 0
+		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
+
+		if (noToolsCalled || allToolsFailed) && detectWriteIntent(userMessage) {
+			if strings.Contains(cleaned, "updated") || strings.Contains(cleaned, "moved") || strings.Contains(cleaned, "changed") || strings.Contains(cleaned, "I've") {
 				if allToolsFailed && len(toolMeta.ToolErrors) > 0 {
 					cleaned = fmt.Sprintf("I wasn't able to make that change: %s", toolMeta.ToolErrors[0])
 				} else {
@@ -1632,4 +1651,22 @@ Return only the summary text, no JSON:`, string(mergedJSON))
 	if err := chatProfileModel.Upsert(userID, merged, strings.TrimSpace(summary)); err != nil {
 		log.Printf("[PROFILE] upsert failed: %v", err)
 	}
+}
+
+// detectWriteIntent returns true if the user message appears to request a data mutation.
+// This is a generic check — it does not know which tool should be called.
+var writeIntentKeywords = []string{
+	"move", "update", "change", "set", "mark", "track", "add", "remove",
+	"delete", "reject", "accept", "withdraw", "apply", "submit", "save",
+	"edit", "modify", "clear", "reset", "undo",
+}
+
+func detectWriteIntent(message string) bool {
+	msgLower := strings.ToLower(message)
+	for _, kw := range writeIntentKeywords {
+		if strings.Contains(msgLower, kw) {
+			return true
+		}
+	}
+	return false
 }
