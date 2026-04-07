@@ -520,6 +520,7 @@ func (s *sseWriter) WriteDone(resp *chatResponse) {
 		"section":              resp.Section,
 		"entryIndex":           resp.EntryIndex,
 		"proactiveSuggestions": resp.ProactiveSuggestions,
+		"toolDebug":            resp.ToolDebug,
 	})
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
 	if s.flusher != nil {
