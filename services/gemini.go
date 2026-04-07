@@ -132,6 +132,26 @@ func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string,
 		llms.WithTemperature(temperature))
 }
 
+// ClassifyWriteIntent uses a cheap Flash call to determine if a user message
+// requests a data mutation that should trigger a tool call.
+func ClassifyWriteIntent(userMessage string) bool {
+	prompt := fmt.Sprintf(`Classify this user message as ACTION or QUESTION.
+ACTION = user wants to change, update, move, create, delete, track, or modify data
+  Examples: "move X to rejected", "track my application at Google", "update my skills", "delete that entry"
+QUESTION = user is asking something, making conversation, expressing emotion, or requesting information
+  Examples: "what is my status?", "I got rejected from Google", "how many jobs did I apply to?", "hello"
+
+Message: "%s"
+
+Reply with one word only: ACTION or QUESTION`, userMessage)
+
+	result, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(strings.ToUpper(strings.TrimSpace(result)), "ACTION")
+}
+
 // CallGeminiStreaming streams tokens via callback and returns the full text.
 func CallGeminiStreaming(prompt string, onChunk func(chunk string)) (string, error) {
 	llm, err := getLangChainModel()

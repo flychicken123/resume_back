@@ -528,6 +528,14 @@ func (s *sseWriter) WriteDone(resp *chatResponse) {
 	}
 }
 
+func (s *sseWriter) WriteRetryReset() {
+	data, _ := json.Marshal(map[string]interface{}{"retry_reset": true})
+	fmt.Fprintf(s.w, "data: %s\n\n", data)
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
 func (s *sseWriter) WriteError(msg string) {
 	data, _ := json.Marshal(map[string]interface{}{"error": true, "message": msg})
 	fmt.Fprintf(s.w, "data: %s\n\n", data)
@@ -598,6 +606,7 @@ When the user asks about their resume data (like "what is my name", "what did I 
 If the question is completely unrelated to job searching or careers (e.g., cooking, sports, politics, entertainment), briefly say you are focused on job search and career topics, and suggest contacting us via the Help bubble or at hihired_support@tactechs.net for other help.
 
 IMPORTANT — EMOTIONAL SUPPORT: If the user expresses frustration, disappointment, or sadness about their job search (e.g., "I didn't pass the interview", "I got rejected", "I can't find a job", "nobody is hiring", "I feel hopeless"), respond with genuine warmth and empathy FIRST, before anything else. Acknowledge their feelings, remind them that rejection is a normal part of the process and doesn't define their worth, and encourage them to keep going. Then gently offer how HiHired can help (e.g., optimizing their resume, tailoring it for specific roles). Never dismiss their feelings or jump straight to product features.
+Note: This applies when the user is expressing feelings about their situation. If the user is giving a COMMAND to change data (e.g., "move this to rejected", "reject this application"), that is a tool action, not an emotional statement — call the appropriate tool instead.
 
 IMPORTANT — REASONING: When answering questions, follow this process:
 1. Check the user's background context AND live data (applications, matches, preferences, etc.) provided below FIRST.
@@ -613,7 +622,6 @@ IMPORTANT — TOOL USE: When you have tools available:
 1. THINK: What does the user need? What data would help answer this?
 2. ACT: Call the appropriate tool immediately — never ask clarifying questions first. Use reasonable defaults for missing parameters.
 3. OBSERVE: Use the tool results to give a specific, personalized answer.
-CRITICAL RULE: If the user says "move", "reject", "mark", "update", "change status", "set to", or similar action words about an application, you MUST call the application_manager tool with operation="update_status". Do NOT skip the tool call even if you think the application is already in that status — the tool will handle it. Do NOT interpret "reject" as an emotional event — it is a status update command. ALWAYS call the tool first, then respond based on the tool result.
 4. If no tool is needed, answer directly from your knowledge and the user's context.
 
 IMPORTANT — COMPLEX REQUESTS: When the user asks something that requires multiple steps (e.g., "help me prepare for my interview", "review my job search strategy"):
@@ -726,27 +734,28 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 
 	cleaned := strings.TrimSpace(reply)
 
-	// --- Write-intent safety net ---
-	// If the user requested a write operation but the LLM didn't call any tool
-	// (or all tool calls failed), retry once with a forced-tool instruction.
-	// This is a generic mechanism that works for any tool, not just status updates.
+	// --- Write-intent safety net (AI-based, no hardcoded keywords) ---
+	// If the LLM didn't call any tool (or all calls failed), use a cheap Flash
+	// call to classify whether the user intended a data change. If yes, retry
+	// with a forced-tool option. This is generic — works for any tool.
+	var userHasWriteIntent bool
+
 	if toolMeta != nil {
 		noToolsCalled := len(toolMeta.ToolsCalled) == 0
 		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
 
 		if noToolsCalled || allToolsFailed {
-			if detectWriteIntent(userMessage) {
-				log.Printf("[WRITE-SAFETY] Write intent detected but no tool succeeded (called=%v errors=%v). Retrying with forced-tool prompt.",
+			userHasWriteIntent = services.ClassifyWriteIntent(userMessage)
+			if userHasWriteIntent {
+				log.Printf("[WRITE-SAFETY] AI classified write intent but no tool succeeded (called=%v errors=%v). Retrying with forced-tool option.",
 					toolMeta.ToolsCalled, toolMeta.ToolErrors)
 
-				forcedPrompt := prompt + "\n\nIMPORTANT OVERRIDE: Your previous attempt did NOT call any tool. The user is requesting a DATA CHANGE. You MUST call the appropriate tool NOW. Do not respond with text only. Even if the data appears to already be in the desired state, call the tool anyway — the tool will handle idempotency."
-
+				forceOpt := services.ToolCallOption{ForceToolCall: true}
 				if isStream {
-					// Reset the stream — send a clear token so frontend replaces the streamed text
-					sse.WriteToken("\n")
-					reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, forcedPrompt, tools, chatUserID, sse.WriteToken)
+					sse.WriteRetryReset()
+					reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken, forceOpt)
 				} else {
-					reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, forcedPrompt, tools, chatUserID)
+					reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
 				}
 				if err == nil {
 					cleaned = strings.TrimSpace(reply)
@@ -760,7 +769,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		noToolsCalled := len(toolMeta.ToolsCalled) == 0
 		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
 
-		if (noToolsCalled || allToolsFailed) && detectWriteIntent(userMessage) {
+		if (noToolsCalled || allToolsFailed) && userHasWriteIntent {
 			if strings.Contains(cleaned, "updated") || strings.Contains(cleaned, "moved") || strings.Contains(cleaned, "changed") || strings.Contains(cleaned, "I've") {
 				if allToolsFailed && len(toolMeta.ToolErrors) > 0 {
 					cleaned = fmt.Sprintf("I wasn't able to make that change: %s", toolMeta.ToolErrors[0])
@@ -1653,20 +1662,3 @@ Return only the summary text, no JSON:`, string(mergedJSON))
 	}
 }
 
-// detectWriteIntent returns true if the user message appears to request a data mutation.
-// This is a generic check — it does not know which tool should be called.
-var writeIntentKeywords = []string{
-	"move", "update", "change", "set", "mark", "track", "add", "remove",
-	"delete", "reject", "accept", "withdraw", "apply", "submit", "save",
-	"edit", "modify", "clear", "reset", "undo",
-}
-
-func detectWriteIntent(message string) bool {
-	msgLower := strings.ToLower(message)
-	for _, kw := range writeIntentKeywords {
-		if strings.Contains(msgLower, kw) {
-			return true
-		}
-	}
-	return false
-}

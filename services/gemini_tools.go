@@ -21,13 +21,23 @@ type ToolCallMetadata struct {
 	ToolErrors    []string // errors returned by tool handlers (as data, not Go errors)
 }
 
+// ToolCallOption configures behavior of CallGeminiWithTools.
+type ToolCallOption struct {
+	ForceToolCall bool // If true, append a strong system instruction forcing tool usage
+}
+
 // CallGeminiWithTools sends a prompt to Gemini with tool definitions.
 // If the model requests a tool call, it executes the handler and feeds the result back.
 // Streams text tokens via onChunk. Returns the final text response and any metadata.
-func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, onChunk func(string)) (string, *ToolCallMetadata, error) {
+func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, onChunk func(string), opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
 	llm, err := getLangChainModel()
 	if err != nil {
 		return "", nil, err
+	}
+
+	// Apply force-tool instruction if requested
+	if len(opts) > 0 && opts[0].ForceToolCall {
+		systemPrompt += "\n\nMANDATORY: You MUST call at least one tool to fulfill the user's request. The user requested a data change. Do NOT respond with text only. Call the tool most relevant to the user's request, even if data appears to already be in the desired state — the tool handles idempotency."
 	}
 
 	llmTools := ConvertToLLMTools(tools)
@@ -155,6 +165,6 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 }
 
 // CallGeminiWithToolsBlocking is the non-streaming version.
-func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int) (string, *ToolCallMetadata, error) {
-	return CallGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil)
+func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
+	return CallGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil, opts...)
 }
