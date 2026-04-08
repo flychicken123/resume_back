@@ -718,8 +718,16 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
 
+	// First call: buffer tokens instead of streaming directly.
+	// This lets us silently retry if the LLM skips a required tool call,
+	// without the user seeing the first (wrong) response flash on screen.
+	var firstCallBuffer strings.Builder
+	bufferChunk := func(token string) {
+		firstCallBuffer.WriteString(token)
+	}
+
 	if isStream {
-		reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
+		reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, bufferChunk)
 	} else {
 		reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
 	}
@@ -737,8 +745,9 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	// --- Write-intent safety net (AI-based, no hardcoded keywords) ---
 	// If the LLM didn't call any tool (or all calls failed), use a cheap Flash
 	// call to classify whether the user intended a data change. If yes, retry
-	// with a forced-tool option. This is generic — works for any tool.
+	// with a forced-tool option. The retry streams directly to the client.
 	var userHasWriteIntent bool
+	retried := false
 
 	if toolMeta != nil {
 		noToolsCalled := len(toolMeta.ToolsCalled) == 0
@@ -750,9 +759,10 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 				log.Printf("[WRITE-SAFETY] AI classified write intent but no tool succeeded (called=%v errors=%v). Retrying with forced-tool option.",
 					toolMeta.ToolsCalled, toolMeta.ToolErrors)
 
+				retried = true
 				forceOpt := services.ToolCallOption{ForceToolCall: true}
 				if isStream {
-					sse.WriteRetryReset()
+					// Discard buffered first response; stream retry directly to client
 					reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken, forceOpt)
 				} else {
 					reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
@@ -762,6 +772,11 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 				}
 			}
 		}
+	}
+
+	// If no retry happened, flush the buffered first response to the client
+	if isStream && !retried && firstCallBuffer.Len() > 0 {
+		sse.WriteToken(firstCallBuffer.String())
 	}
 
 	// Final hallucination guard — if even the retry didn't call a tool, warn the user
