@@ -219,3 +219,42 @@ func GenerateCoverLetter(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
+
+// ProgressHint uses Gemini Flash to generate a one-line suggestion based on
+// which resume sections are missing.
+func ProgressHint(c *gin.Context) {
+	var req struct {
+		Missing  []string `json:"missing"`
+		Complete []string `json:"complete"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || len(req.Missing) == 0 {
+		c.JSON(http.StatusOK, gin.H{"hint": "Your resume is looking great!"})
+		return
+	}
+
+	prompt := "You are a career coach. The user is building their resume. " +
+		"Completed sections: " + joinOrNone(req.Complete) + ". " +
+		"Missing sections: " + joinOrNone(req.Missing) + ". " +
+		"Give ONE short, encouraging sentence (under 20 words) suggesting which missing section to fill next and why. No markdown."
+
+	hint, err := services.CallGeminiFlashWithTemperature(prompt, 0.3)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"hint": "Consider filling in your " + req.Missing[0] + " section next."})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"hint": hint})
+}
+
+func joinOrNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	result := ""
+	for i, item := range items {
+		if i > 0 {
+			result += ", "
+		}
+		result += item
+	}
+	return result
+}
