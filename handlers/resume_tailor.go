@@ -16,9 +16,9 @@ import (
 )
 
 // TailorResume handles POST /api/resume/tailor
-// It loads the user's resume, polishes all sections based on the provided job description,
-// generates a tailored PDF, uploads it to S3, and returns a presigned download URL.
-func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.ResumeHistoryModel) gin.HandlerFunc {
+// It loads the user's resume, tailors experiences based on the provided job description,
+// generates a PDF using the user's template, uploads to S3, and returns a presigned download URL.
+func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.ResumeHistoryModel, projectModel *models.ProjectModel) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if polishAgent == nil {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "Polish agent is not available"})
@@ -60,23 +60,47 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			experiences = nil
 		}
 
+		// Load projects
+		var projects []*models.Project
+		if projectModel != nil {
+			projects, err = projectModel.GetByResumeID(resume.ID)
+			if err != nil {
+				fmt.Printf("[Tailor] Warning: failed to load projects: %v\n", err)
+				projects = nil
+			}
+		}
+
 		// Build resumeData map for the polish agent
 		resumeData := buildTailorResumeData(resume, experiences)
 
-		// Polish all sections using the existing polishAllSections (from polish.go)
+		// Only tailor experiences based on job description — keep everything else as-is
 		ctx := c.Request.Context()
 		updatedData := copyResumeData(resumeData)
-		msg, err := polishAllSections(ctx, resumeData, jobDesc, updatedData)
-		if err != nil {
-			fmt.Printf("[Tailor] Polish failed: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to polish resume"})
-			return
-		}
-		fmt.Printf("[Tailor] Polish result: %s\n", msg)
 
-		// Build userData for the Python HTML template (reuses generateHTMLResumeWithPython from resume.go)
+		if exps, ok := resumeData["experiences"].([]interface{}); ok && len(exps) > 0 {
+			polishedExps := make([]interface{}, 0, len(exps))
+			for _, exp := range exps {
+				if expMap, ok := exp.(map[string]interface{}); ok {
+					polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
+					if err != nil {
+						fmt.Printf("[Tailor] Failed to polish experience: %v\n", err)
+						polishedExps = append(polishedExps, exp)
+					} else {
+						polishedExps = append(polishedExps, polished)
+					}
+				} else {
+					polishedExps = append(polishedExps, exp)
+				}
+			}
+			updatedData["experiences"] = polishedExps
+			fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedExps))
+		} else {
+			fmt.Println("[Tailor] No structured experiences found to tailor")
+		}
+
+		// Build userData for the Python HTML template
 		templateSlug := normalizeTemplateFormat(resume.SelectedFormat)
-		userData := buildTailorTemplateData(updatedData, resume)
+		userData := buildTailorTemplateData(updatedData, resume, projects)
 
 		// Ensure output directory
 		saveDir := "./static"
@@ -212,32 +236,46 @@ func buildTailorResumeData(resume *models.Resume, experiences []models.Experienc
 }
 
 // buildTailorTemplateData converts polished data into the format expected by
-// generateHTMLResumeWithPython (same fields as ResumeRequest in resume.go).
-func buildTailorTemplateData(polished map[string]interface{}, resume *models.Resume) map[string]interface{} {
+// renderTailorHTML. Keeps original resume data and only uses tailored experiences.
+func buildTailorTemplateData(polished map[string]interface{}, resume *models.Resume, projects []*models.Project) map[string]interface{} {
 	ud := map[string]interface{}{
 		"name":  resume.Name,
 		"email": resume.Email,
 		"phone": resume.Phone,
 	}
 
-	// Summary
-	if s, ok := polished["summary"].(string); ok && s != "" {
-		ud["summary"] = s
+	// Summary — use original from resume (not polished)
+	if len(resume.Summary) > 0 {
+		var s string
+		if err := json.Unmarshal(resume.Summary, &s); err != nil {
+			s = strings.Trim(string(resume.Summary), "\"")
+		}
+		if s != "" {
+			ud["summary"] = s
+		}
 	}
 
-	// Skills → []string for template
-	if s, ok := polished["skills"].(string); ok && s != "" {
-		var cleaned []string
-		for _, sk := range strings.Split(s, ",") {
-			sk = strings.TrimSpace(sk)
-			if sk != "" {
-				cleaned = append(cleaned, sk)
+	// Skills — use original from resume (not polished)
+	if len(resume.Skills) > 0 {
+		var arr []string
+		if err := json.Unmarshal(resume.Skills, &arr); err == nil {
+			ud["skills"] = arr
+		} else {
+			var s string
+			if err := json.Unmarshal(resume.Skills, &s); err == nil && s != "" {
+				var cleaned []string
+				for _, sk := range strings.Split(s, ",") {
+					sk = strings.TrimSpace(sk)
+					if sk != "" {
+						cleaned = append(cleaned, sk)
+					}
+				}
+				ud["skills"] = cleaned
 			}
 		}
-		ud["skills"] = cleaned
 	}
 
-	// Experiences → formatted text string for template
+	// Experiences — use TAILORED version
 	if exps, ok := polished["experiences"].([]interface{}); ok && len(exps) > 0 {
 		ud["experience"] = tailorFormatExperiences(exps)
 	} else if e, ok := polished["experience"].(string); ok && e != "" {
@@ -246,11 +284,14 @@ func buildTailorTemplateData(polished map[string]interface{}, resume *models.Res
 		ud["experience"] = resume.Experience
 	}
 
-	// Education
-	if e, ok := polished["education"].(string); ok && e != "" {
-		ud["education"] = e
-	} else if resume.Education != "" {
+	// Education — use original from resume
+	if resume.Education != "" {
 		ud["education"] = resume.Education
+	}
+
+	// Projects — use original from DB
+	if len(projects) > 0 {
+		ud["projects"] = tailorFormatProjects(projects)
 	}
 
 	if resume.Location != "" {
@@ -258,6 +299,23 @@ func buildTailorTemplateData(polished map[string]interface{}, resume *models.Res
 	}
 
 	return ud
+}
+
+// tailorFormatProjects converts project records into formatted text for the HTML template.
+func tailorFormatProjects(projects []*models.Project) string {
+	var parts []string
+	for _, p := range projects {
+		header := p.ProjectName
+		if p.Technologies != "" {
+			header += " | " + p.Technologies
+		}
+		entry := header
+		if p.Description != "" {
+			entry += "\n" + p.Description
+		}
+		parts = append(parts, entry)
+	}
+	return strings.Join(parts, "\n\n")
 }
 
 // tailorFormatExperiences converts polished experience maps into text for the HTML template.
@@ -295,8 +353,7 @@ func tailorFormatExperiences(experiences []interface{}) string {
 	return strings.Join(parts, "\n\n")
 }
 
-// renderTailorHTML builds a complete HTML resume from the polished data and writes it to outputPath.
-// This replaces the need for pre-rendered htmlContent from the frontend.
+// renderTailorHTML builds a professional HTML resume and writes it to outputPath.
 func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 	name, _ := data["name"].(string)
 	email, _ := data["email"].(string)
@@ -305,6 +362,7 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 	summary, _ := data["summary"].(string)
 	experience, _ := data["experience"].(string)
 	education, _ := data["education"].(string)
+	projectsText, _ := data["projects"].(string)
 
 	// Build contact line
 	var contactParts []string
@@ -317,7 +375,7 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 	if location != "" {
 		contactParts = append(contactParts, html.EscapeString(location))
 	}
-	contactLine := strings.Join(contactParts, " &bull; ")
+	contactLine := strings.Join(contactParts, " | ")
 
 	// Build skills HTML
 	var skillsSection string
@@ -354,17 +412,16 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 				continue
 			}
 			items += fmt.Sprintf(`        <div class="experience-item">
-            <div class="job-title">%s</div>`, html.EscapeString(lines[0]))
+            <div class="job-header">%s</div>`, html.EscapeString(lines[0]))
 			for _, line := range lines[1:] {
 				line = strings.TrimSpace(line)
 				if line == "" {
 					continue
 				}
-				// Remove leading bullet characters
 				line = strings.TrimLeft(line, "•-*· ")
 				if line != "" {
 					items += fmt.Sprintf(`
-            <div class="achievement">&bull; %s</div>`, html.EscapeString(line))
+            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
 				}
 			}
 			items += `
@@ -373,6 +430,39 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 		experienceSection = fmt.Sprintf(`
     <div class="section">
         <div class="section-title">Experience</div>
+%s
+    </div>`, items)
+	}
+
+	// Build projects section
+	var projectsSection string
+	if projectsText != "" {
+		entries := strings.Split(projectsText, "\n\n")
+		var items string
+		for _, entry := range entries {
+			lines := strings.Split(strings.TrimSpace(entry), "\n")
+			if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
+				continue
+			}
+			items += fmt.Sprintf(`        <div class="experience-item">
+            <div class="job-header">%s</div>`, html.EscapeString(lines[0]))
+			for _, line := range lines[1:] {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				line = strings.TrimLeft(line, "•-*· ")
+				if line != "" {
+					items += fmt.Sprintf(`
+            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
+				}
+			}
+			items += `
+        </div>`
+		}
+		projectsSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Projects</div>
 %s
     </div>`, items)
 	}
@@ -395,71 +485,76 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
     <title>%s - Resume</title>
     <style>
         @page { size: Letter; margin: 0; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: Arial, Helvetica, sans-serif;
-            line-height: 1.5;
-            margin: 0;
-            padding: 36px 48px;
-            background-color: white;
-            font-size: 11pt;
-            color: #333;
+            font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+            line-height: 1.4;
+            padding: 0.5in 0.6in;
+            background: white;
+            font-size: 10.5pt;
+            color: #1a1a1a;
         }
         .header {
             text-align: center;
-            border-bottom: 2px solid #2c3e50;
-            padding-bottom: 12px;
-            margin-bottom: 20px;
+            padding-bottom: 8px;
+            margin-bottom: 10px;
+            border-bottom: 1.5px solid #1a1a1a;
         }
         .name {
-            font-size: 22pt;
-            font-weight: bold;
-            color: #2c3e50;
-            margin-bottom: 4px;
+            font-size: 20pt;
+            font-weight: 700;
+            color: #1a1a1a;
+            letter-spacing: 0.5px;
+            margin-bottom: 3px;
         }
         .contact {
-            color: #555;
-            font-size: 10pt;
+            color: #444;
+            font-size: 9.5pt;
         }
         .section {
-            margin-bottom: 16px;
+            margin-bottom: 10px;
         }
         .section-title {
-            font-size: 12pt;
-            font-weight: bold;
-            color: #2c3e50;
-            border-bottom: 1px solid #2c3e50;
-            padding-bottom: 3px;
-            margin-bottom: 8px;
+            font-size: 11pt;
+            font-weight: 700;
+            color: #1a1a1a;
+            border-bottom: 1px solid #999;
+            padding-bottom: 2px;
+            margin-bottom: 6px;
             text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
         .summary-text {
-            margin: 0;
             font-size: 10pt;
-            line-height: 1.5;
+            line-height: 1.45;
+            color: #333;
         }
         .skills {
             font-size: 10pt;
-            line-height: 1.6;
+            line-height: 1.5;
+            color: #333;
         }
         .experience-item {
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
-        .job-title {
-            font-size: 11pt;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 4px;
+        .job-header {
+            font-size: 10.5pt;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 3px;
         }
-        .achievement {
-            margin-left: 16px;
-            margin-bottom: 2px;
+        .bullet {
+            margin-left: 14px;
+            margin-bottom: 1px;
             font-size: 10pt;
-            line-height: 1.5;
+            line-height: 1.4;
+            color: #333;
         }
         .education-text {
             font-size: 10pt;
-            line-height: 1.5;
+            line-height: 1.45;
             white-space: pre-line;
+            color: #333;
         }
     </style>
 </head>
@@ -468,7 +563,7 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
         <div class="name">%s</div>
         <div class="contact">%s</div>
     </div>
-%s%s%s%s
+%s%s%s%s%s
 </body>
 </html>`,
 		html.EscapeString(name),
@@ -477,6 +572,7 @@ func renderTailorHTML(data map[string]interface{}, outputPath string) error {
 		summarySection,
 		skillsSection,
 		experienceSection,
+		projectsSection,
 		educationSection,
 	)
 

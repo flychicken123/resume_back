@@ -239,7 +239,8 @@ func (c *UserController) GetJobPreferences(ctx *gin.Context) {
 	})
 }
 
-// SaveJobPreferences saves the user's job application preferences
+// SaveJobPreferences saves the user's job application preferences (used by Chrome extension).
+// Merges incoming fields into existing preferences so website form data is preserved.
 func (c *UserController) SaveJobPreferences(ctx *gin.Context) {
 	userID, exists := ctx.Get("user_id")
 	if !exists {
@@ -248,14 +249,35 @@ func (c *UserController) SaveJobPreferences(ctx *gin.Context) {
 	}
 
 	var req struct {
-		Preferences json.RawMessage `json:"preferences" binding:"required"`
+		Preferences map[string]interface{} `json:"preferences" binding:"required"`
 	}
 	if err := ctx.ShouldBindJSON(&req); err != nil {
 		ctx.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request data"})
 		return
 	}
 
-	if err := c.userModel.SetJobPreferences(userID.(int), req.Preferences); err != nil {
+	// Load existing preferences and merge
+	existing, _ := c.userModel.GetJobPreferences(userID.(int))
+	var merged map[string]interface{}
+	if len(existing) > 0 {
+		if err := json.Unmarshal(existing, &merged); err != nil {
+			merged = map[string]interface{}{}
+		}
+	} else {
+		merged = map[string]interface{}{}
+	}
+
+	for k, v := range req.Preferences {
+		merged[k] = v
+	}
+
+	raw, err := json.Marshal(merged)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to encode preferences"})
+		return
+	}
+
+	if err := c.userModel.SetJobPreferences(userID.(int), json.RawMessage(raw)); err != nil {
 		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save job preferences"})
 		return
 	}

@@ -49,6 +49,41 @@ func (c *ResumeController) GetHistory(ctx *gin.Context) {
 	})
 }
 
+// GetLatestPDFURL returns a presigned S3 URL for the user's most recent resume PDF
+func (c *ResumeController) GetLatestPDFURL(ctx *gin.Context) {
+	userID, exists := ctx.Get("user_id")
+	if !exists {
+		ctx.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
+		return
+	}
+
+	histories, err := c.resumeHistoryModel.GetByUserID(userID.(int))
+	if err != nil || len(histories) == 0 {
+		ctx.JSON(http.StatusNotFound, gin.H{"error": "No resume PDF found"})
+		return
+	}
+
+	latest := histories[0]
+	// S3Path is the full URL; extract just the filename after "resumes/"
+	s3Path := latest.S3Path
+	filename := s3Path
+	if idx := strings.LastIndex(s3Path, "/"); idx >= 0 {
+		filename = s3Path[idx+1:]
+	}
+
+	presignedURL, err := c.resumeService.GeneratePresignedURL(filename)
+	if err != nil {
+		ctx.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate download URL"})
+		return
+	}
+
+	ctx.JSON(http.StatusOK, gin.H{
+		"success":  true,
+		"url":      presignedURL,
+		"filename": latest.ResumeName,
+	})
+}
+
 func (c *ResumeController) DeleteHistory(ctx *gin.Context) {
 	userID, exists := ctx.Get("user_id")
 	if !exists {
