@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
@@ -220,29 +221,74 @@ func GenerateCoverLetter(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-// ProgressHint uses Gemini Flash to generate a one-line suggestion based on
-// which resume sections are missing.
+// ProgressHint uses Gemini Flash to generate encouragement and a hint based on
+// which resume sections are complete/missing.
 func ProgressHint(c *gin.Context) {
 	var req struct {
 		Missing  []string `json:"missing"`
 		Complete []string `json:"complete"`
 	}
-	if err := c.ShouldBindJSON(&req); err != nil || len(req.Missing) == 0 {
-		c.JSON(http.StatusOK, gin.H{"hint": "Your resume is looking great!"})
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"hint":          "Your resume is looking great!",
+			"encouragement": "You're doing amazing!",
+		})
 		return
 	}
 
-	prompt := "You are a career coach. The user is building their resume. " +
-		"Completed sections: " + joinOrNone(req.Complete) + ". " +
-		"Missing sections: " + joinOrNone(req.Missing) + ". " +
-		"Give ONE short, encouraging sentence (under 20 words) suggesting which missing section to fill next and why. No markdown."
+	completed := len(req.Complete)
+	total := completed + len(req.Missing)
 
-	hint, err := services.CallGeminiFlashWithTemperature(prompt, 0.3)
+	prompt := "You are the user's supportive best friend helping them build their resume. " +
+		"They have completed " + fmt.Sprintf("%d out of %d", completed, total) + " sections. " +
+		"Completed: " + joinOrNone(req.Complete) + ". " +
+		"Still missing: " + joinOrNone(req.Missing) + ". " +
+		"Respond with EXACTLY two lines (no labels, no markdown, no numbering):\n" +
+		"Line 1: A short warm, friendly encouragement about their progress (like a friend cheering them on, under 12 words). " +
+		"Be genuine and specific to their progress level — celebrate if they're far along, be gentle and motivating if just starting.\n" +
+		"Line 2: A brief suggestion for which section to work on next and why (under 20 words)."
+
+	result, err := services.CallGeminiFlashWithTemperature(prompt, 0.7)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"hint": "Consider filling in your " + req.Missing[0] + " section next."})
+		fallbackEncouragement := "You're making great progress!"
+		if completed == 0 {
+			fallbackEncouragement = "Let's get started — you've got this!"
+		} else if completed >= total {
+			fallbackEncouragement = "Your resume is ready to shine!"
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"hint":          "Consider adding your " + req.Missing[0] + " next.",
+			"encouragement": fallbackEncouragement,
+		})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"hint": hint})
+
+	// Split into two lines
+	lines := splitLines(result)
+	encouragement := lines[0]
+	hint := ""
+	if len(lines) > 1 {
+		hint = lines[1]
+	}
+	if len(req.Missing) == 0 {
+		hint = "Your resume is complete! Preview and download it."
+	}
+
+	c.JSON(http.StatusOK, gin.H{"hint": hint, "encouragement": encouragement})
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{strings.TrimSpace(s)}
+	}
+	return lines
 }
 
 func joinOrNone(items []string) string {
