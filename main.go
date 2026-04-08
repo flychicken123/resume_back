@@ -470,6 +470,7 @@ func main() {
 
 		// New final step AI endpoints
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
+		public.POST("/resume/progress-hint", handlers.ProgressHint)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
 		public.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
 		public.POST("/skills/categorize", handlers.CategorizeSkills)

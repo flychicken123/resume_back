@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"fmt"
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
@@ -218,4 +219,88 @@ func GenerateCoverLetter(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// ProgressHint uses Gemini Flash to generate encouragement and a hint based on
+// which resume sections are complete/missing.
+func ProgressHint(c *gin.Context) {
+	var req struct {
+		Missing  []string `json:"missing"`
+		Complete []string `json:"complete"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"hint":          "Your resume is looking great!",
+			"encouragement": "You're doing amazing!",
+		})
+		return
+	}
+
+	completed := len(req.Complete)
+	total := completed + len(req.Missing)
+
+	prompt := "You are the user's supportive best friend helping them build their resume. " +
+		"They have completed " + fmt.Sprintf("%d out of %d", completed, total) + " sections. " +
+		"Completed: " + joinOrNone(req.Complete) + ". " +
+		"Still missing: " + joinOrNone(req.Missing) + ". " +
+		"Respond with EXACTLY two lines (no labels, no markdown, no numbering):\n" +
+		"Line 1: A short warm, friendly encouragement about their progress (like a friend cheering them on, under 12 words). " +
+		"Be genuine and specific to their progress level — celebrate if they're far along, be gentle and motivating if just starting.\n" +
+		"Line 2: A brief suggestion for which section to work on next and why (under 20 words)."
+
+	result, err := services.CallGeminiFlashWithTemperature(prompt, 0.7)
+	if err != nil {
+		fallbackEncouragement := "You're making great progress!"
+		if completed == 0 {
+			fallbackEncouragement = "Let's get started — you've got this!"
+		} else if completed >= total {
+			fallbackEncouragement = "Your resume is ready to shine!"
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"hint":          "Consider adding your " + req.Missing[0] + " next.",
+			"encouragement": fallbackEncouragement,
+		})
+		return
+	}
+
+	// Split into two lines
+	lines := splitLines(result)
+	encouragement := lines[0]
+	hint := ""
+	if len(lines) > 1 {
+		hint = lines[1]
+	}
+	if len(req.Missing) == 0 {
+		hint = "Your resume is complete! Preview and download it."
+	}
+
+	c.JSON(http.StatusOK, gin.H{"hint": hint, "encouragement": encouragement})
+}
+
+func splitLines(s string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(s), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	if len(lines) == 0 {
+		return []string{strings.TrimSpace(s)}
+	}
+	return lines
+}
+
+func joinOrNone(items []string) string {
+	if len(items) == 0 {
+		return "none"
+	}
+	result := ""
+	for i, item := range items {
+		if i > 0 {
+			result += ", "
+		}
+		result += item
+	}
+	return result
 }

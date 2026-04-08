@@ -718,11 +718,9 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
 
-	if isStream {
-		reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken)
-	} else {
-		reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
-	}
+	// First call always runs as blocking (no streaming) so we can decide
+	// whether to show the response or silently retry before the user sees anything.
+	reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
 	if err != nil {
 		if isStream {
 			sse.WriteError("Sorry, something went wrong. Please try again.")
@@ -737,7 +735,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	// --- Write-intent safety net (AI-based, no hardcoded keywords) ---
 	// If the LLM didn't call any tool (or all calls failed), use a cheap Flash
 	// call to classify whether the user intended a data change. If yes, retry
-	// with a forced-tool option. This is generic — works for any tool.
+	// silently. The user only ever sees the final result (success or error).
 	var userHasWriteIntent bool
 
 	if toolMeta != nil {
@@ -751,31 +749,29 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 					toolMeta.ToolsCalled, toolMeta.ToolErrors)
 
 				forceOpt := services.ToolCallOption{ForceToolCall: true}
-				if isStream {
-					sse.WriteRetryReset()
-					reply, toolMeta, err = services.CallGeminiWithTools(ctx, systemInstructions, prompt, tools, chatUserID, sse.WriteToken, forceOpt)
+				retryReply, retryMeta, retryErr := services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
+				if retryErr != nil {
+					log.Printf("[WRITE-SAFETY] Retry failed: %v", retryErr)
 				} else {
-					reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
-				}
-				if err == nil {
-					cleaned = strings.TrimSpace(reply)
+					log.Printf("[WRITE-SAFETY] Retry done: tools=%v errors=%v",
+						retryMeta.ToolsCalled, retryMeta.ToolErrors)
+					toolMeta = retryMeta
+					cleaned = strings.TrimSpace(retryReply)
 				}
 			}
 		}
 	}
 
-	// Final hallucination guard — if even the retry didn't call a tool, warn the user
+	// Final hallucination guard — if even the retry didn't call a tool, show error
 	if toolMeta != nil {
 		noToolsCalled := len(toolMeta.ToolsCalled) == 0
 		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
 
 		if (noToolsCalled || allToolsFailed) && userHasWriteIntent {
-			if strings.Contains(cleaned, "updated") || strings.Contains(cleaned, "moved") || strings.Contains(cleaned, "changed") || strings.Contains(cleaned, "I've") {
-				if allToolsFailed && len(toolMeta.ToolErrors) > 0 {
-					cleaned = fmt.Sprintf("I wasn't able to make that change: %s", toolMeta.ToolErrors[0])
-				} else {
-					cleaned = "I wasn't able to make that change — please try again or use the Application Tracker directly."
-				}
+			if allToolsFailed && len(toolMeta.ToolErrors) > 0 {
+				cleaned = fmt.Sprintf("I wasn't able to make that change: %s", toolMeta.ToolErrors[0])
+			} else {
+				cleaned = "I wasn't able to make that change — please try again or use the Application Tracker directly."
 			}
 		}
 	}
