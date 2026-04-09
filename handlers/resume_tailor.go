@@ -1,12 +1,12 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -16,8 +16,9 @@ import (
 )
 
 // TailorResume handles POST /api/resume/tailor
-// It loads the user's resume, tailors experiences based on the provided job description,
-// generates a PDF using the user's template, uploads to S3, and returns a presigned download URL.
+// It loads the user's last rendered resume HTML, tailors experience descriptions
+// based on the provided job description, and generates a PDF that looks identical
+// to the user's frontend template.
 func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.ResumeHistoryModel, projectModel *models.ProjectModel) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if polishAgent == nil {
@@ -39,7 +40,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			return
 		}
 
-		// Get authenticated user (reuses extractUserID from resume.go)
+		// Get authenticated user
 		userIDInt, ok := extractUserID(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not authenticated"})
@@ -53,6 +54,13 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			return
 		}
 
+		// Load the user's last rendered HTML (saved when they generated a PDF from the frontend)
+		savedHTML, err := resumeModel.GetLastHTML(userIDInt)
+		if err != nil || strings.TrimSpace(savedHTML) == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No saved resume template found. Please generate a PDF from the resume builder first."})
+			return
+		}
+
 		// Load structured experiences
 		experiences, err := resumeModel.GetExperiencesByResumeID(resume.ID)
 		if err != nil {
@@ -60,47 +68,43 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			experiences = nil
 		}
 
-		// Load projects
-		var projects []*models.Project
-		if projectModel != nil {
-			projects, err = projectModel.GetByResumeID(resume.ID)
-			if err != nil {
-				fmt.Printf("[Tailor] Warning: failed to load projects: %v\n", err)
-				projects = nil
-			}
-		}
-
-		// Build resumeData map for the polish agent
-		resumeData := buildTailorResumeData(resume, experiences)
-
-		// Only tailor experiences based on job description — keep everything else as-is
-		ctx := c.Request.Context()
-		updatedData := copyResumeData(resumeData)
-
-		if exps, ok := resumeData["experiences"].([]interface{}); ok && len(exps) > 0 {
-			polishedExps := make([]interface{}, 0, len(exps))
-			for _, exp := range exps {
-				if expMap, ok := exp.(map[string]interface{}); ok {
-					polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
-					if err != nil {
-						fmt.Printf("[Tailor] Failed to polish experience: %v\n", err)
-						polishedExps = append(polishedExps, exp)
-					} else {
-						polishedExps = append(polishedExps, polished)
-					}
-				} else {
-					polishedExps = append(polishedExps, exp)
-				}
-			}
-			updatedData["experiences"] = polishedExps
-			fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedExps))
-		} else {
+		if len(experiences) == 0 {
 			fmt.Println("[Tailor] No structured experiences found to tailor")
+			c.JSON(http.StatusBadRequest, gin.H{"error": "No experiences found to tailor."})
+			return
 		}
 
-		// Build userData for the Python HTML template
-		templateSlug := normalizeTemplateFormat(resume.SelectedFormat)
-		userData := buildTailorTemplateData(updatedData, resume, projects)
+		// Build experience maps for the polish agent
+		expMaps := make([]map[string]interface{}, 0, len(experiences))
+		for _, exp := range experiences {
+			expMaps = append(expMaps, map[string]interface{}{
+				"jobTitle":         exp.JobTitle,
+				"company":          exp.Company,
+				"city":             exp.City,
+				"state":            exp.State,
+				"startDate":        exp.StartDate,
+				"endDate":          exp.EndDate,
+				"currentlyWorking": exp.CurrentlyWorking,
+				"description":      exp.Description,
+			})
+		}
+
+		// Polish each experience with AI
+		ctx := c.Request.Context()
+		polishedMaps := make([]map[string]interface{}, 0, len(expMaps))
+		for _, expMap := range expMaps {
+			polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
+			if err != nil {
+				fmt.Printf("[Tailor] Failed to polish experience: %v\n", err)
+				polishedMaps = append(polishedMaps, expMap)
+			} else {
+				polishedMaps = append(polishedMaps, polished)
+			}
+		}
+		fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedMaps))
+
+		// Replace experience bullet points in the saved HTML
+		tailoredHTML := replaceExperienceBulletsInHTML(savedHTML, experiences, polishedMaps)
 
 		// Ensure output directory
 		saveDir := "./static"
@@ -111,16 +115,16 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 
 		timestamp := time.Now().UnixNano()
 
-		// Step 1: Render HTML directly from polished data (no frontend needed)
+		// Write tailored HTML to disk
 		htmlFilename := fmt.Sprintf("tailored_%d.html", timestamp)
 		htmlPath := filepath.Join(saveDir, htmlFilename)
-		if err := renderTailorHTML(userData, htmlPath); err != nil {
-			fmt.Printf("[Tailor] HTML generation failed: %v\n", err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate resume HTML"})
+		if err := os.WriteFile(htmlPath, []byte(tailoredHTML), 0644); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write tailored HTML"})
 			return
 		}
 
-		// Step 2: Convert HTML to PDF (reuses generatePDFResumeWithPython)
+		// Convert HTML to PDF
+		templateSlug := normalizeTemplateFormat(resume.SelectedFormat)
 		pdfFilename := fmt.Sprintf("tailored_%d.pdf", timestamp)
 		pdfPath := filepath.Join(saveDir, pdfFilename)
 		pdfData := map[string]interface{}{
@@ -133,7 +137,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			return
 		}
 
-		// Step 3: Upload to S3 (reuses same pattern as resume_pdf_handler.go)
+		// Upload to S3
 		s3svc, s3err := services.NewS3Service()
 		if s3err != nil {
 			fmt.Printf("[Tailor] S3 unavailable: %v\n", s3err)
@@ -148,7 +152,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			return
 		}
 
-		// Step 4: Save to resume history (reuses same pattern as resume_pdf_handler.go)
+		// Save to resume history
 		if resumeHistoryModel != nil {
 			resumeName := fmt.Sprintf("Tailored Resume %s", time.Now().Format("2006-01-02 15:04"))
 			if _, err := resumeHistoryModel.Create(userIDInt, resumeName, key); err != nil {
@@ -159,7 +163,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			}
 		}
 
-		// Step 5: Generate presigned download URL
+		// Generate presigned download URL
 		presignedURL, err := s3svc.GeneratePresignedURL(key)
 		if err != nil {
 			fmt.Printf("[Tailor] Presigned URL failed: %v\n", err)
@@ -178,403 +182,176 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 	}
 }
 
-// buildTailorResumeData converts the DB resume + experiences into the map format
-// expected by polishAllSections.
-func buildTailorResumeData(resume *models.Resume, experiences []models.ExperienceRecord) map[string]interface{} {
-	data := make(map[string]interface{})
-
-	// Summary: json.RawMessage → string
-	if len(resume.Summary) > 0 {
-		var s string
-		if err := json.Unmarshal(resume.Summary, &s); err != nil {
-			s = strings.Trim(string(resume.Summary), "\"")
-		}
-		data["summary"] = s
+// replaceExperienceBulletsInHTML finds each experience-entry in the saved HTML
+// by matching the company name, then replaces its bullet-point divs with the
+// polished description from the AI agent.
+//
+// The frontend HTML structure for each experience:
+//
+//	<div class="experience-entry ...">
+//	  <div class="experience-header">...company name spans...</div>
+//	  <div class="experience-field experience-field-block ...">
+//	    <div style="...">• bullet text</div>
+//	    <div style="...">• bullet text</div>
+//	  </div>
+//	</div>
+func replaceExperienceBulletsInHTML(htmlContent string, original []models.ExperienceRecord, polished []map[string]interface{}) string {
+	if len(original) != len(polished) || len(original) == 0 {
+		return htmlContent
 	}
 
-	// Skills: json.RawMessage → comma-separated string
-	if len(resume.Skills) > 0 {
-		var arr []string
-		if err := json.Unmarshal(resume.Skills, &arr); err == nil {
-			data["skills"] = strings.Join(arr, ", ")
-		} else {
-			var s string
-			if err := json.Unmarshal(resume.Skills, &s); err == nil {
-				data["skills"] = s
-			} else {
-				data["skills"] = strings.Trim(string(resume.Skills), "\"")
-			}
-		}
-	}
+	result := htmlContent
 
-	// Structured experiences → []interface{} with camelCase keys (polish agent format)
-	if len(experiences) > 0 {
-		expList := make([]interface{}, 0, len(experiences))
-		for _, exp := range experiences {
-			expList = append(expList, map[string]interface{}{
-				"jobTitle":         exp.JobTitle,
-				"company":          exp.Company,
-				"city":             exp.City,
-				"state":            exp.State,
-				"startDate":        exp.StartDate,
-				"endDate":          exp.EndDate,
-				"currentlyWorking": exp.CurrentlyWorking,
-				"description":      exp.Description,
-			})
-		}
-		data["experiences"] = expList
-	}
-
-	if resume.Experience != "" {
-		data["experience"] = resume.Experience
-	}
-	if resume.Education != "" {
-		data["education"] = resume.Education
-	}
-
-	return data
-}
-
-// buildTailorTemplateData converts polished data into the format expected by
-// renderTailorHTML. Keeps original resume data and only uses tailored experiences.
-func buildTailorTemplateData(polished map[string]interface{}, resume *models.Resume, projects []*models.Project) map[string]interface{} {
-	ud := map[string]interface{}{
-		"name":  resume.Name,
-		"email": resume.Email,
-		"phone": resume.Phone,
-	}
-
-	// Summary — use original from resume (not polished)
-	if len(resume.Summary) > 0 {
-		var s string
-		if err := json.Unmarshal(resume.Summary, &s); err != nil {
-			s = strings.Trim(string(resume.Summary), "\"")
-		}
-		if s != "" {
-			ud["summary"] = s
-		}
-	}
-
-	// Skills — use original from resume (not polished)
-	if len(resume.Skills) > 0 {
-		var arr []string
-		if err := json.Unmarshal(resume.Skills, &arr); err == nil {
-			ud["skills"] = arr
-		} else {
-			var s string
-			if err := json.Unmarshal(resume.Skills, &s); err == nil && s != "" {
-				var cleaned []string
-				for _, sk := range strings.Split(s, ",") {
-					sk = strings.TrimSpace(sk)
-					if sk != "" {
-						cleaned = append(cleaned, sk)
-					}
-				}
-				ud["skills"] = cleaned
-			}
-		}
-	}
-
-	// Experiences — use TAILORED version
-	if exps, ok := polished["experiences"].([]interface{}); ok && len(exps) > 0 {
-		ud["experience"] = tailorFormatExperiences(exps)
-	} else if e, ok := polished["experience"].(string); ok && e != "" {
-		ud["experience"] = e
-	} else if resume.Experience != "" {
-		ud["experience"] = resume.Experience
-	}
-
-	// Education — use original from resume
-	if resume.Education != "" {
-		ud["education"] = resume.Education
-	}
-
-	// Projects — use original from DB
-	if len(projects) > 0 {
-		ud["projects"] = tailorFormatProjects(projects)
-	}
-
-	if resume.Location != "" {
-		ud["location"] = resume.Location
-	}
-
-	return ud
-}
-
-// tailorFormatProjects converts project records into formatted text for the HTML template.
-func tailorFormatProjects(projects []*models.Project) string {
-	var parts []string
-	for _, p := range projects {
-		header := p.ProjectName
-		if p.Technologies != "" {
-			header += " | " + p.Technologies
-		}
-		entry := header
-		if p.Description != "" {
-			entry += "\n" + p.Description
-		}
-		parts = append(parts, entry)
-	}
-	return strings.Join(parts, "\n\n")
-}
-
-// tailorFormatExperiences converts polished experience maps into text for the HTML template.
-func tailorFormatExperiences(experiences []interface{}) string {
-	var parts []string
-	for _, exp := range experiences {
-		m, ok := exp.(map[string]interface{})
-		if !ok {
+	for i, exp := range original {
+		polishedMap := polished[i]
+		polishedDesc, _ := polishedMap["description"].(string)
+		if strings.TrimSpace(polishedDesc) == "" {
 			continue
 		}
-		title, _ := m["jobTitle"].(string)
-		company, _ := m["company"].(string)
-		start, _ := m["startDate"].(string)
-		end, _ := m["endDate"].(string)
-		desc, _ := m["description"].(string)
 
-		header := title
-		if company != "" {
-			header += " at " + company
+		if strings.TrimSpace(exp.Description) == "" {
+			continue
 		}
-		if start != "" {
-			header += " | " + start
-			if end != "" {
-				header += " - " + end
-			} else {
-				header += " - Present"
-			}
-		}
-		entry := header
-		if desc != "" {
-			entry += "\n" + desc
-		}
-		parts = append(parts, entry)
+
+		// Strategy: find the experience-field-block div that belongs to this
+		// experience (identified by company name appearing in the preceding
+		// experience-header), then replace the bullet divs inside it.
+		result = replaceBlockForCompany(result, exp.Company, polishedDesc)
 	}
-	return strings.Join(parts, "\n\n")
+
+	return result
 }
 
-// renderTailorHTML builds a professional HTML resume and writes it to outputPath.
-func renderTailorHTML(data map[string]interface{}, outputPath string) error {
-	name, _ := data["name"].(string)
-	email, _ := data["email"].(string)
-	phone, _ := data["phone"].(string)
-	location, _ := data["location"].(string)
-	summary, _ := data["summary"].(string)
-	experience, _ := data["experience"].(string)
-	education, _ := data["education"].(string)
-	projectsText, _ := data["projects"].(string)
-
-	// Build contact line
-	var contactParts []string
-	if email != "" {
-		contactParts = append(contactParts, html.EscapeString(email))
-	}
-	if phone != "" {
-		contactParts = append(contactParts, html.EscapeString(phone))
-	}
-	if location != "" {
-		contactParts = append(contactParts, html.EscapeString(location))
-	}
-	contactLine := strings.Join(contactParts, " | ")
-
-	// Build skills HTML
-	var skillsSection string
-	if skills, ok := data["skills"].([]string); ok && len(skills) > 0 {
-		var escaped []string
-		for _, sk := range skills {
-			escaped = append(escaped, html.EscapeString(sk))
-		}
-		skillsSection = fmt.Sprintf(`
-    <div class="section">
-        <div class="section-title">Skills</div>
-        <div class="skills">%s</div>
-    </div>`, strings.Join(escaped, " &bull; "))
+// replaceBlockForCompany finds the experience-field-block associated with a
+// given company in the HTML and replaces its bullet content with the polished
+// description.
+func replaceBlockForCompany(htmlContent, company, polishedDesc string) string {
+	if company == "" {
+		return htmlContent
 	}
 
-	// Build summary section
-	var summarySection string
-	if summary != "" {
-		summarySection = fmt.Sprintf(`
-    <div class="section">
-        <div class="section-title">Summary</div>
-        <p class="summary-text">%s</p>
-    </div>`, html.EscapeString(summary))
+	// Find the company name in the HTML (HTML-escaped)
+	escapedCompany := html.EscapeString(company)
+
+	// Locate the position of this company in the HTML
+	companyIdx := strings.Index(htmlContent, escapedCompany)
+	if companyIdx < 0 {
+		// Try case-insensitive
+		companyIdx = strings.Index(strings.ToLower(htmlContent), strings.ToLower(escapedCompany))
+	}
+	if companyIdx < 0 {
+		fmt.Printf("[Tailor] Could not find company '%s' in HTML\n", company)
+		return htmlContent
 	}
 
-	// Build experience section
-	var experienceSection string
-	if experience != "" {
-		entries := strings.Split(experience, "\n\n")
-		var items string
-		for _, entry := range entries {
-			lines := strings.Split(strings.TrimSpace(entry), "\n")
-			if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
-				continue
-			}
-			items += fmt.Sprintf(`        <div class="experience-item">
-            <div class="job-header">%s</div>`, html.EscapeString(lines[0]))
-			for _, line := range lines[1:] {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				line = strings.TrimLeft(line, "•-*· ")
-				if line != "" {
-					items += fmt.Sprintf(`
-            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
-				}
-			}
-			items += `
-        </div>`
-		}
-		experienceSection = fmt.Sprintf(`
-    <div class="section">
-        <div class="section-title">Experience</div>
-%s
-    </div>`, items)
+	// Find the experience-field-block div after the company name
+	blockMarker := `experience-field-block`
+	blockStart := strings.Index(htmlContent[companyIdx:], blockMarker)
+	if blockStart < 0 {
+		fmt.Printf("[Tailor] Could not find experience-field-block after company '%s'\n", company)
+		return htmlContent
+	}
+	blockStart += companyIdx
+
+	// Find the opening tag of the block div
+	// Walk backwards from blockMarker to find the '<div' that contains it
+	divStart := strings.LastIndex(htmlContent[:blockStart], "<div")
+	if divStart < 0 {
+		return htmlContent
 	}
 
-	// Build projects section
-	var projectsSection string
-	if projectsText != "" {
-		entries := strings.Split(projectsText, "\n\n")
-		var items string
-		for _, entry := range entries {
-			lines := strings.Split(strings.TrimSpace(entry), "\n")
-			if len(lines) == 0 || strings.TrimSpace(lines[0]) == "" {
-				continue
-			}
-			items += fmt.Sprintf(`        <div class="experience-item">
-            <div class="job-header">%s</div>`, html.EscapeString(lines[0]))
-			for _, line := range lines[1:] {
-				line = strings.TrimSpace(line)
-				if line == "" {
-					continue
-				}
-				line = strings.TrimLeft(line, "•-*· ")
-				if line != "" {
-					items += fmt.Sprintf(`
-            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
-				}
-			}
-			items += `
-        </div>`
-		}
-		projectsSection = fmt.Sprintf(`
-    <div class="section">
-        <div class="section-title">Projects</div>
-%s
-    </div>`, items)
+	// Find the closing '>' of this opening div tag
+	tagEnd := strings.Index(htmlContent[divStart:], ">")
+	if tagEnd < 0 {
+		return htmlContent
+	}
+	contentStart := divStart + tagEnd + 1
+
+	// Find the matching closing </div> for this block
+	// We need to handle nested divs
+	contentEnd := findMatchingCloseDiv(htmlContent, contentStart)
+	if contentEnd < 0 {
+		return htmlContent
 	}
 
-	// Build education section
-	var educationSection string
-	if education != "" {
-		educationSection = fmt.Sprintf(`
-    <div class="section">
-        <div class="section-title">Education</div>
-        <div class="education-text">%s</div>
-    </div>`, html.EscapeString(education))
-	}
+	// Extract the opening tag (to preserve its style attributes)
+	openingTag := htmlContent[divStart : contentStart]
 
-	htmlContent := fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>%s - Resume</title>
-    <style>
-        @page { size: Letter; margin: 0; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
-            line-height: 1.4;
-            padding: 0.5in 0.6in;
-            background: white;
-            font-size: 10.5pt;
-            color: #1a1a1a;
-        }
-        .header {
-            text-align: center;
-            padding-bottom: 8px;
-            margin-bottom: 10px;
-            border-bottom: 1.5px solid #1a1a1a;
-        }
-        .name {
-            font-size: 20pt;
-            font-weight: 700;
-            color: #1a1a1a;
-            letter-spacing: 0.5px;
-            margin-bottom: 3px;
-        }
-        .contact {
-            color: #444;
-            font-size: 9.5pt;
-        }
-        .section {
-            margin-bottom: 10px;
-        }
-        .section-title {
-            font-size: 11pt;
-            font-weight: 700;
-            color: #1a1a1a;
-            border-bottom: 1px solid #999;
-            padding-bottom: 2px;
-            margin-bottom: 6px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-        .summary-text {
-            font-size: 10pt;
-            line-height: 1.45;
-            color: #333;
-        }
-        .skills {
-            font-size: 10pt;
-            line-height: 1.5;
-            color: #333;
-        }
-        .experience-item {
-            margin-bottom: 8px;
-        }
-        .job-header {
-            font-size: 10.5pt;
-            font-weight: 600;
-            color: #1a1a1a;
-            margin-bottom: 3px;
-        }
-        .bullet {
-            margin-left: 14px;
-            margin-bottom: 1px;
-            font-size: 10pt;
-            line-height: 1.4;
-            color: #333;
-        }
-        .education-text {
-            font-size: 10pt;
-            line-height: 1.45;
-            white-space: pre-line;
-            color: #333;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <div class="name">%s</div>
-        <div class="contact">%s</div>
-    </div>
-%s%s%s%s%s
-</body>
-</html>`,
-		html.EscapeString(name),
-		html.EscapeString(name),
-		contactLine,
-		summarySection,
-		skillsSection,
-		experienceSection,
-		projectsSection,
-		educationSection,
-	)
+	// Build the new bullet content from the polished description
+	// Extract the style from the first existing bullet div to reuse it
+	existingContent := htmlContent[contentStart:contentEnd]
+	bulletStyle := extractBulletDivStyle(existingContent)
 
-	return os.WriteFile(outputPath, []byte(htmlContent), 0644)
+	newBullets := buildBulletDivs(polishedDesc, bulletStyle)
+
+	// Replace the block content
+	result := htmlContent[:contentStart] + newBullets + htmlContent[contentEnd:]
+
+	_ = openingTag // used implicitly (we keep the original opening tag)
+	return result
 }
+
+// findMatchingCloseDiv finds the position of the </div> that closes the div
+// starting at contentStart. Returns the index of the start of </div>.
+func findMatchingCloseDiv(s string, contentStart int) int {
+	depth := 1
+	pos := contentStart
+	for depth > 0 && pos < len(s) {
+		nextOpen := strings.Index(s[pos:], "<div")
+		nextClose := strings.Index(s[pos:], "</div>")
+
+		if nextClose < 0 {
+			return -1
+		}
+
+		if nextOpen >= 0 && nextOpen < nextClose {
+			depth++
+			pos += nextOpen + 4
+		} else {
+			depth--
+			if depth == 0 {
+				return pos + nextClose
+			}
+			pos += nextClose + 6
+		}
+	}
+	return -1
+}
+
+// extractBulletDivStyle extracts the style attribute from the first bullet div
+// in the existing content, so we can reuse the same styling for polished bullets.
+func extractBulletDivStyle(existingContent string) string {
+	// Match: <div style="color: rgb(55, 65, 81); font-size: 14.4px; margin-left: 8.4px; margin-bottom: 3.12px; ...">
+	re := regexp.MustCompile(`<div\s+style="([^"]*)"[^>]*>\s*(?:•|&#x2022;|&bull;)`)
+	match := re.FindStringSubmatch(existingContent)
+	if len(match) > 1 {
+		return match[1]
+	}
+	// Fallback default style matching the frontend's classic template
+	return "color: rgb(55, 65, 81); font-size: 14.4px; margin-left: 8.4px; margin-bottom: 3.12px;"
+}
+
+// buildBulletDivs converts a polished description (newline-separated bullets)
+// into HTML divs matching the frontend's bullet point structure.
+func buildBulletDivs(description, style string) string {
+	lines := strings.Split(description, "\n")
+	var sb strings.Builder
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Strip leading bullet characters
+		line = strings.TrimLeft(line, "•-*·  ")
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		// Remove height normalization styles that might be in the original
+		// (those are added by the frontend's cloneNode logic)
+		cleanStyle := style
+		sb.WriteString(fmt.Sprintf(`<div style="%s">• %s</div>`, cleanStyle, html.EscapeString(line)))
+	}
+	return sb.String()
+}
+

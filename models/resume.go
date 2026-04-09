@@ -29,6 +29,7 @@ type Resume struct {
 	JobDescription string          `json:"job_description,omitempty"`
 	Location       string          `json:"location,omitempty"`
 	SelectedFormat string          `json:"selected_format"`
+	LastResumeHTML string          `json:"last_resume_html,omitempty"`
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 }
@@ -175,6 +176,19 @@ func (m *ResumeModel) SaveProfile(ctx context.Context, userID int, input ResumeP
 	}
 
 	return resume, nil
+}
+
+// SaveLastHTML stores the user's last rendered resume HTML for tailor reuse.
+func (m *ResumeModel) SaveLastHTML(userID int, htmlContent string) error {
+	_, err := m.DB.Exec(`UPDATE resumes SET last_resume_html = $1, updated_at = NOW() WHERE user_id = $2`, htmlContent, userID)
+	return err
+}
+
+// GetLastHTML returns the user's last rendered resume HTML.
+func (m *ResumeModel) GetLastHTML(userID int) (string, error) {
+	var html string
+	err := m.DB.QueryRow(`SELECT COALESCE(last_resume_html, '') FROM resumes WHERE user_id = $1`, userID).Scan(&html)
+	return html, err
 }
 
 // Save is kept for backward compatibility; it delegates to SaveProfile.

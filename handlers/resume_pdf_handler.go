@@ -16,7 +16,7 @@ import (
 )
 
 // GeneratePDFResumeHandler handles PDF generation with database integration
-func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHistoryModel, userModel *models.UserModel) gin.HandlerFunc {
+func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHistoryModel, userModel *models.UserModel, resumeModel *models.ResumeModel) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		fmt.Println("GeneratePDFResumeHandler called")
 
@@ -64,6 +64,15 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		if err := c.SaveUploadedFile(file, htmlPath); err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save uploaded HTML"})
 			return
+		}
+
+		// Save the HTML to DB so the tailor endpoint can reuse the user's template
+		if userIDInt > 0 && resumeModel != nil {
+			if htmlBytes, readErr := os.ReadFile(htmlPath); readErr == nil {
+				if saveErr := resumeModel.SaveLastHTML(userIDInt, string(htmlBytes)); saveErr != nil {
+					fmt.Printf("Warning: failed to save last resume HTML for user %d: %v\n", userIDInt, saveErr)
+				}
+			}
 		}
 
 		// Prepare the target PDF path

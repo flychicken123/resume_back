@@ -35,6 +35,7 @@ CREATE TABLE resumes (
     job_description TEXT,
     location VARCHAR(255),
     selected_format VARCHAR(50) DEFAULT 'classic-professional',
+    last_resume_html TEXT DEFAULT '',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
