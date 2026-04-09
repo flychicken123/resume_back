@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -55,11 +56,9 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 		}
 
 		// Load the user's last rendered HTML (saved when they generated a PDF from the frontend)
-		savedHTML, err := resumeModel.GetLastHTML(userIDInt)
-		if err != nil || strings.TrimSpace(savedHTML) == "" {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "No saved resume template found. Please generate a PDF from the resume builder first."})
-			return
-		}
+		// Load the user's last rendered HTML (saved when they generated a PDF from the frontend)
+		savedHTML, _ := resumeModel.GetLastHTML(userIDInt)
+		hasSavedHTML := strings.TrimSpace(savedHTML) != ""
 
 		// Load structured experiences
 		experiences, err := resumeModel.GetExperiencesByResumeID(resume.ID)
@@ -103,8 +102,17 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 		}
 		fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedMaps))
 
-		// Replace experience bullet points in the saved HTML
-		tailoredHTML := replaceExperienceBulletsInHTML(savedHTML, experiences, polishedMaps)
+		// Generate the tailored HTML
+		var tailoredHTML string
+		if hasSavedHTML {
+			// Best path: replace bullets in the user's actual frontend-rendered HTML
+			tailoredHTML = replaceExperienceBulletsInHTML(savedHTML, experiences, polishedMaps)
+			fmt.Println("[Tailor] Using saved frontend HTML template")
+		} else {
+			// Fallback: generate a simple HTML resume from polished data
+			fmt.Println("[Tailor] No saved HTML found, using fallback template")
+			tailoredHTML = renderFallbackTailorHTML(resume, experiences, polishedMaps, projectModel)
+		}
 
 		// Ensure output directory
 		saveDir := "./static"
@@ -350,8 +358,231 @@ func buildBulletDivs(description, style string) string {
 		// Remove height normalization styles that might be in the original
 		// (those are added by the frontend's cloneNode logic)
 		cleanStyle := style
-		sb.WriteString(fmt.Sprintf(`<div style="%s">• %s</div>`, cleanStyle, html.EscapeString(line)))
+		fmt.Fprintf(&sb, `<div style="%s">• %s</div>`, cleanStyle, html.EscapeString(line))
 	}
 	return sb.String()
+}
+
+// renderFallbackTailorHTML generates a simple but clean HTML resume when the
+// user has no saved frontend HTML (e.g. they never downloaded a PDF from the
+// builder). This uses the polished experience descriptions directly.
+func renderFallbackTailorHTML(resume *models.Resume, experiences []models.ExperienceRecord, polished []map[string]interface{}, projectModel *models.ProjectModel) string {
+	name := resume.Name
+	email := resume.Email
+	phone := resume.Phone
+	location := resume.Location
+
+	// Contact line
+	var contactParts []string
+	if email != "" {
+		contactParts = append(contactParts, html.EscapeString(email))
+	}
+	if phone != "" {
+		contactParts = append(contactParts, html.EscapeString(phone))
+	}
+	if location != "" {
+		contactParts = append(contactParts, html.EscapeString(location))
+	}
+	contactLine := strings.Join(contactParts, " | ")
+
+	// Summary
+	var summarySection string
+	if len(resume.Summary) > 0 {
+		var s string
+		if err := json.Unmarshal(resume.Summary, &s); err != nil {
+			s = strings.Trim(string(resume.Summary), "\"")
+		}
+		if s != "" {
+			summarySection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Summary</div>
+        <p class="summary-text">%s</p>
+    </div>`, html.EscapeString(s))
+		}
+	}
+
+	// Skills
+	var skillsSection string
+	if len(resume.Skills) > 0 {
+		var arr []string
+		if err := json.Unmarshal(resume.Skills, &arr); err == nil && len(arr) > 0 {
+			var escaped []string
+			for _, sk := range arr {
+				escaped = append(escaped, html.EscapeString(sk))
+			}
+			skillsSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Skills</div>
+        <div class="skills">%s</div>
+    </div>`, strings.Join(escaped, " &bull; "))
+		}
+	}
+
+	// Experiences (using polished descriptions)
+	var experienceSection string
+	if len(polished) > 0 {
+		var items strings.Builder
+		for idx, p := range polished {
+			title, _ := p["jobTitle"].(string)
+			company, _ := p["company"].(string)
+			desc, _ := p["description"].(string)
+
+			// Build header from original experience data for dates/location
+			var header string
+			if idx < len(experiences) {
+				exp := experiences[idx]
+				header = html.EscapeString(title)
+				if company != "" {
+					header += " &bull; " + html.EscapeString(company)
+				}
+				loc := strings.TrimSpace(exp.City + ", " + exp.State)
+				loc = strings.Trim(loc, ", ")
+				if loc != "" {
+					header += " &bull; " + html.EscapeString(loc)
+				}
+				dates := formatExpDates(exp.StartDate, exp.EndDate, exp.CurrentlyWorking)
+				if dates != "" {
+					header += " &bull; " + html.EscapeString(dates)
+				}
+			} else {
+				header = html.EscapeString(title)
+				if company != "" {
+					header += " &bull; " + html.EscapeString(company)
+				}
+			}
+
+			items.WriteString(fmt.Sprintf(`        <div class="experience-item">
+            <div class="job-header">%s</div>`, header))
+			for _, line := range strings.Split(desc, "\n") {
+				line = strings.TrimSpace(line)
+				line = strings.TrimLeft(line, "•-*· ")
+				line = strings.TrimSpace(line)
+				if line != "" {
+					fmt.Fprintf(&items, `
+            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
+				}
+			}
+			items.WriteString(`
+        </div>`)
+		}
+		experienceSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Experience</div>
+%s
+    </div>`, items.String())
+	}
+
+	// Projects
+	var projectsSection string
+	if projectModel != nil {
+		projects, err := projectModel.GetByResumeID(resume.ID)
+		if err == nil && len(projects) > 0 {
+			var items strings.Builder
+			for _, p := range projects {
+				header := html.EscapeString(p.ProjectName)
+				if p.Technologies != "" {
+					header += " | " + html.EscapeString(p.Technologies)
+				}
+				items.WriteString(fmt.Sprintf(`        <div class="experience-item">
+            <div class="job-header">%s</div>`, header))
+				if p.Description != "" {
+					for _, line := range strings.Split(p.Description, "\n") {
+						line = strings.TrimSpace(line)
+						line = strings.TrimLeft(line, "•-*· ")
+						line = strings.TrimSpace(line)
+						if line != "" {
+							fmt.Fprintf(&items, `
+            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
+						}
+					}
+				}
+				items.WriteString(`
+        </div>`)
+			}
+			projectsSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Projects</div>
+%s
+    </div>`, items.String())
+		}
+	}
+
+	// Education
+	var educationSection string
+	if resume.Education != "" {
+		educationSection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Education</div>
+        <div class="education-text">%s</div>
+    </div>`, html.EscapeString(resume.Education))
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>%s - Resume</title>
+    <style>
+        @page { size: Letter; margin: 0; }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Calibri', 'Segoe UI', Arial, sans-serif;
+            line-height: 1.4;
+            padding: 0.5in 0.6in;
+            background: white;
+            font-size: 10.5pt;
+            color: #1a1a1a;
+        }
+        .header { text-align: center; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1.5px solid #1a1a1a; }
+        .name { font-size: 20pt; font-weight: 700; color: #1a1a1a; letter-spacing: 0.5px; margin-bottom: 3px; }
+        .contact { color: #444; font-size: 9.5pt; }
+        .section { margin-bottom: 10px; }
+        .section-title { font-size: 11pt; font-weight: 700; color: #1a1a1a; border-bottom: 1px solid #999; padding-bottom: 2px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .summary-text { font-size: 10pt; line-height: 1.45; color: #333; }
+        .skills { font-size: 10pt; line-height: 1.5; color: #333; }
+        .experience-item { margin-bottom: 8px; }
+        .job-header { font-size: 10.5pt; font-weight: 600; color: #1a1a1a; margin-bottom: 3px; }
+        .bullet { margin-left: 14px; margin-bottom: 1px; font-size: 10pt; line-height: 1.4; color: #333; }
+        .education-text { font-size: 10pt; line-height: 1.45; white-space: pre-line; color: #333; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="name">%s</div>
+        <div class="contact">%s</div>
+    </div>
+%s%s%s%s%s
+</body>
+</html>`,
+		html.EscapeString(name),
+		html.EscapeString(name),
+		contactLine,
+		summarySection,
+		skillsSection,
+		experienceSection,
+		projectsSection,
+		educationSection,
+	)
+}
+
+// formatExpDates formats experience start/end dates into a readable string.
+func formatExpDates(start, end string, currentlyWorking bool) string {
+	if start == "" && end == "" {
+		return ""
+	}
+	if currentlyWorking {
+		if start != "" {
+			return start + " - Present"
+		}
+		return "Present"
+	}
+	if start != "" && end != "" {
+		return start + " - " + end
+	}
+	if start != "" {
+		return start
+	}
+	return end
 }
 
