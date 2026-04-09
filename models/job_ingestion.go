@@ -536,6 +536,24 @@ type JobPostingModel struct {
 	db *sql.DB
 }
 
+func (m *JobCompanyModel) UpdateCareersURL(companyID int, careersURL string) error {
+	_, err := m.db.Exec(`UPDATE job_companies SET careers_url = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, careersURL, companyID)
+	return err
+}
+
+func (m *JobCompanyModel) UpdateExternalIdentifier(companyID int, identifier string) error {
+	_, err := m.db.Exec(`UPDATE job_companies SET external_identifier = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`, identifier, companyID)
+	return err
+}
+
+func (m *JobCompanyModel) ResetFailures(companyID int) error {
+	_, err := m.db.Exec(`UPDATE job_companies SET sync_failure_count = 0, last_sync_error = NULL, last_sync_status = 'pending', updated_at = CURRENT_TIMESTAMP WHERE id = $2`, companyID)
+	if err != nil && isUndefinedColumnError(err) {
+		_, err = m.db.Exec(`UPDATE job_companies SET sync_failure_count = 0, updated_at = CURRENT_TIMESTAMP WHERE id = $1`, companyID)
+	}
+	return err
+}
+
 func NewJobPostingModel(db *sql.DB) *JobPostingModel {
 	return &JobPostingModel{db: db}
 }

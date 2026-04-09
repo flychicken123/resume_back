@@ -307,6 +307,59 @@ func (jc *JobsController) UpdateCompanyStatus(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"company": company})
 }
 
+type updateCompanyRequest struct {
+	CareersURL         *string `json:"careers_url"`
+	ExternalIdentifier *string `json:"external_identifier"`
+	IsActive           *bool   `json:"is_active"`
+	ResetFailures      *bool   `json:"reset_failures"`
+}
+
+func (jc *JobsController) UpdateCompany(c *gin.Context) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid company id"})
+		return
+	}
+
+	var req updateCompanyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
+		return
+	}
+
+	if req.CareersURL != nil {
+		if err := jc.companies.UpdateCareersURL(id, *req.CareersURL); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update careers_url"})
+			return
+		}
+	}
+	if req.ExternalIdentifier != nil {
+		if err := jc.companies.UpdateExternalIdentifier(id, *req.ExternalIdentifier); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update external_identifier"})
+			return
+		}
+	}
+	if req.IsActive != nil {
+		if err := jc.companies.SetCompanyActive(id, *req.IsActive); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update is_active"})
+			return
+		}
+	}
+	if req.ResetFailures != nil && *req.ResetFailures {
+		if err := jc.companies.ResetFailures(id); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset failures"})
+			return
+		}
+	}
+
+	company, err := jc.companies.GetByID(id)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"company": company})
+}
+
 func (jc *JobsController) ImportCompanies(c *gin.Context) {
 	file, err := c.FormFile("file")
 	if err != nil {

@@ -654,6 +654,7 @@ func main() {
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 			admin.PATCH("/jobs/companies/:id/status", jobsController.UpdateCompanyStatus)
+			admin.PUT("/jobs/companies/:id", jobsController.UpdateCompany)
 
 			// Admin job postings management
 			admin.GET("/jobs/postings", jobsController.AdminListPostings)
