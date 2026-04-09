@@ -17,14 +17,6 @@ type ExperienceAgent struct {
 	llm llms.Model
 }
 
-// ExperienceProject represents a single project within a role.
-type ExperienceProject struct {
-	ProjectName  string `json:"projectName"`
-	Description  string `json:"description"`
-	Technologies string `json:"technologies"`
-	ProjectURL   string `json:"projectUrl"`
-}
-
 // ExperienceRecord represents a structured work experience entry aligned with
 // the resume builder's Experience model.
 type ExperienceRecord struct {
@@ -37,7 +29,6 @@ type ExperienceRecord struct {
 	EndDate          string             `json:"endDate"`
 	CurrentlyWorking bool               `json:"currentlyWorking"`
 	Description      string             `json:"description"`
-	ProjectsForRole  []ExperienceProject `json:"projectsForRole"`
 }
 
 // ExperienceParseResult is the top-level payload returned by the agent.
@@ -106,15 +97,7 @@ Your goal is to turn the user's text into one or more experience entries that ma
       "startDate": "<start date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
       "endDate": "<end date in YYYY-MM format if possible, or any reasonable date string, or empty string>",
       "currentlyWorking": <true if this is the current role, otherwise false>,
-      "description": "<1-3 sentence summary of responsibilities and impact for this role>",
-      "projectsForRole": [
-        {
-          "projectName": "<short project name or label>",
-          "description": "<optional one-sentence description; empty string if not provided>",
-          "technologies": "<optional technologies/tools; empty string if not provided>",
-          "projectUrl": "<URL if explicitly provided in the text, otherwise empty string>"
-        }
-      ]
+      "description": "<1-3 sentence summary of responsibilities and impact for this role, including any project details>"
     }
   ]
 }
@@ -147,8 +130,7 @@ GENERAL RULES:
 - If the text clearly mentions multiple NEW jobs (e.g., Microsoft then Amazon), create multiple entries in "experiences".
 - If dates are approximate (e.g., "from 2018 to 2025"), use a best-effort YYYY-MM (e.g., "2018-07") or just the year; if you truly can't infer, use an empty string.
 - For location like "Redmond WA", split into city "Redmond" and state "WA" when possible.
-- For project lists like "project a, project b, project c", create one entry per project in "projectsForRole" with those as projectName values.
-- If you can't infer a project description/technologies, leave those fields as empty strings rather than inventing details.
+- Include all project details as part of the experience description.
 - Do NOT use placeholder text in square brackets like "[Project 1 Name]" or "[Briefly describe the project]".
 - If you don't know specific project names or details, describe them naturally (for example, "an internal cost analytics platform") instead of leaving blanks or bracketed prompts.
 
@@ -182,17 +164,6 @@ User text:
 		exp.StartDate = strings.TrimSpace(exp.StartDate)
 		exp.EndDate = strings.TrimSpace(exp.EndDate)
 		exp.Description = strings.TrimSpace(exp.Description)
-		if exp.ProjectsForRole == nil {
-			exp.ProjectsForRole = []ExperienceProject{}
-		} else {
-			for j := range exp.ProjectsForRole {
-				proj := &exp.ProjectsForRole[j]
-				proj.ProjectName = strings.TrimSpace(proj.ProjectName)
-				proj.Description = strings.TrimSpace(proj.Description)
-				proj.Technologies = strings.TrimSpace(proj.Technologies)
-				proj.ProjectURL = strings.TrimSpace(proj.ProjectURL)
-			}
-		}
 	}
 
 	return result, nil
