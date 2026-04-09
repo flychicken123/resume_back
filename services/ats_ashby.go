@@ -43,21 +43,8 @@ func (p *AshbyProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 func (p *AshbyProvider) fetchJobsGraphQL(ctx context.Context, companyID int, slug string) ([]*models.JobPosting, error) {
 	gqlQuery := `query ApiJobBoardWithTeams($organizationHostedJobsPageName: String!) {
 		jobBoard: jobBoardWithTeams(organizationHostedJobsPageName: $organizationHostedJobsPageName) {
-			jobPostings {
-				id
-				title
-				publishedDate
-				isListed
-				departmentName
-				teamName
-				locationName
-				employmentType
-				descriptionPlain
-				descriptionHtml
-				isRemote
-				compensationTierSummary
-				secondaryLocations { locationName }
-			}
+			teams { id name }
+			jobPostings { id title teamId locationName }
 		}
 	}`
 
@@ -92,7 +79,8 @@ func (p *AshbyProvider) fetchJobsGraphQL(ctx context.Context, companyID int, slu
 	var gqlResp struct {
 		Data struct {
 			JobBoard *struct {
-				JobPostings []ashbyGQLJob `json:"jobPostings"`
+				Teams       []ashbyGQLTeam `json:"teams"`
+				JobPostings []ashbyGQLJob  `json:"jobPostings"`
 			} `json:"jobBoard"`
 		} `json:"data"`
 	}
@@ -104,9 +92,15 @@ func (p *AshbyProvider) fetchJobsGraphQL(ctx context.Context, companyID int, slu
 		return nil, fmt.Errorf("ashby returned status 404")
 	}
 
+	// Build team ID → name lookup
+	teamMap := make(map[string]string)
+	for _, t := range gqlResp.Data.JobBoard.Teams {
+		teamMap[t.ID] = t.Name
+	}
+
 	results := make([]*models.JobPosting, 0, len(gqlResp.Data.JobBoard.JobPostings))
 	for _, job := range gqlResp.Data.JobBoard.JobPostings {
-		posting := p.transformGQLJob(companyID, slug, job)
+		posting := p.transformGQLJob(companyID, slug, job, teamMap)
 		if posting != nil {
 			results = append(results, posting)
 		}
@@ -115,49 +109,31 @@ func (p *AshbyProvider) fetchJobsGraphQL(ctx context.Context, companyID int, slu
 	return results, nil
 }
 
-type ashbyGQLJob struct {
-	ID                      string `json:"id"`
-	Title                   string `json:"title"`
-	PublishedDate           string `json:"publishedDate"`
-	IsListed                bool   `json:"isListed"`
-	DepartmentName          string `json:"departmentName"`
-	TeamName                string `json:"teamName"`
-	LocationName            string `json:"locationName"`
-	EmploymentType          string `json:"employmentType"`
-	DescriptionPlain        string `json:"descriptionPlain"`
-	DescriptionHTML         string `json:"descriptionHtml"`
-	IsRemote                bool   `json:"isRemote"`
-	CompensationTierSummary string `json:"compensationTierSummary"`
-	SecondaryLocations      []struct {
-		LocationName string `json:"locationName"`
-	} `json:"secondaryLocations"`
+type ashbyGQLTeam struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
-func (p *AshbyProvider) transformGQLJob(companyID int, slug string, job ashbyGQLJob) *models.JobPosting {
+type ashbyGQLJob struct {
+	ID           string `json:"id"`
+	Title        string `json:"title"`
+	TeamID       string `json:"teamId"`
+	LocationName string `json:"locationName"`
+}
+
+func (p *AshbyProvider) transformGQLJob(companyID int, slug string, job ashbyGQLJob, teamMap map[string]string) *models.JobPosting {
 	if strings.TrimSpace(job.ID) == "" || strings.TrimSpace(job.Title) == "" {
 		return nil
 	}
 
+	location := strings.TrimSpace(job.LocationName)
 	remote := ""
-	if job.IsRemote {
+	if strings.Contains(strings.ToLower(location), "remote") {
 		remote = "Remote"
 	}
 
-	department := job.DepartmentName
-	if department == "" {
-		department = job.TeamName
-	}
-
-	postedAt := parseAshbyTime(job.PublishedDate)
+	department := teamMap[job.TeamID]
 	jobURL := fmt.Sprintf("https://jobs.ashbyhq.com/%s/%s", url.PathEscape(slug), url.PathEscape(job.ID))
-
-	description := job.DescriptionPlain
-	if description == "" {
-		description = job.DescriptionHTML
-	}
-	if description == "" {
-		description = job.Title
-	}
 
 	raw, _ := json.Marshal(job)
 
@@ -165,14 +141,12 @@ func (p *AshbyProvider) transformGQLJob(companyID int, slug string, job ashbyGQL
 		CompanyID:      companyID,
 		ExternalJobID:  strings.TrimSpace(job.ID),
 		Title:          strings.TrimSpace(job.Title),
-		Location:       strings.TrimSpace(job.LocationName),
+		Location:       location,
 		RemoteType:     remote,
 		Department:     department,
-		EmploymentType: strings.TrimSpace(job.EmploymentType),
 		JobURL:         jobURL,
 		ApplicationURL: jobURL,
-		Description:    description,
-		PostedAt:       postedAt,
+		Description:    job.Title,
 		RawPayload:     raw,
 	}
 }
@@ -204,18 +178,3 @@ func (p *AshbyProvider) resolveOrgSlug(company *models.JobCompany) (string, erro
 	return "", fmt.Errorf("could not derive ashby org slug from %s", company.CareersURL)
 }
 
-func parseAshbyTime(value string) *time.Time {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return nil
-	}
-	formats := []string{time.RFC3339, "2006-01-02T15:04:05.999Z"}
-	for _, layout := range formats {
-		if ts, err := time.Parse(layout, trimmed); err == nil {
-			return &ts
-		}
-	}
-	return nil
-}
-
-// rebuild 1775761180
