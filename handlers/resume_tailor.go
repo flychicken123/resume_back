@@ -342,7 +342,7 @@ func buildBulletDivs(description, style string) string {
 			continue
 		}
 		// Strip leading bullet characters
-		line = strings.TrimLeft(line, "•-*·  ")
+		line = strings.TrimLeft(line, "•-*· ")
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

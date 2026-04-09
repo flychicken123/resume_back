@@ -70,38 +70,6 @@ func main() {
 
 	log.Println("Database connection successful!")
 
-	// One-time ATS company URL fixes (safe to re-run, uses WHERE clause)
-	atsFixSQL := []string{
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/weave', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 12022 AND careers_url = 'https://boards.greenhouse.io/getweave'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/togetherai', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11969 AND careers_url = 'https://boards.greenhouse.io/together'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/toast', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11968 AND careers_url = 'https://boards.greenhouse.io/toasttab'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/shifttechnology', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11875 AND careers_url = 'https://boards.greenhouse.io/shift-technology'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/scaleai', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11857 AND careers_url = 'https://boards.greenhouse.io/scale'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/rampnetwork', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11808 AND careers_url = 'https://boards.greenhouse.io/ramp'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/processstreet', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11787 AND careers_url = 'https://boards.greenhouse.io/process'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/platformsh', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11776 AND careers_url = 'https://boards.greenhouse.io/platform'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/planetlabs', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11774 AND careers_url = 'https://boards.greenhouse.io/planet'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/peloton', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11754 AND careers_url = 'https://boards.greenhouse.io/onepeloton'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/pantherlabs', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11744 AND careers_url = 'https://boards.greenhouse.io/runpanther'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/oscar', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11733 AND careers_url = 'https://boards.greenhouse.io/hioscar'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/lucidsoftware', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11646 AND careers_url = 'https://boards.greenhouse.io/lucid'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/grafanalabs', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11508 AND careers_url = 'https://boards.greenhouse.io/grafana'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/googlefiber', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11506 AND careers_url = 'https://boards.greenhouse.io/fiber'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/nextdoor', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11497 AND careers_url = 'https://boards.greenhouse.io/about'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/datadog', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11394 AND careers_url = 'https://boards.greenhouse.io/datadoghq'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/boxinc', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11280 AND careers_url = 'https://boards.greenhouse.io/box'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/aurorainnovation', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11233 AND careers_url = 'https://boards.greenhouse.io/aurora'`,
-		`UPDATE job_companies SET careers_url = 'https://boards.greenhouse.io/daangn', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 11600 AND careers_url = 'https://boards.greenhouse.io/joinkarrot'`,
-		`UPDATE job_companies SET careers_url = 'https://jobs.ashbyhq.com/zip', sync_failure_count = 0, last_sync_error = NULL, is_active = true WHERE id = 12046 AND careers_url = 'https://jobs.ashbyhq.com/ziphq'`,
-		`UPDATE job_companies SET is_active = false WHERE id IN (12016,11950,11923,11882,11757,11708,11663,11612,11590,11540,11538,11500,11486,11432,11335,11275,11240,11221,11219,11177,11512) AND is_active = true`,
-	}
-	for _, q := range atsFixSQL {
-		if _, err := db.Exec(q); err != nil {
-			log.Printf("[ATS Fix] Warning: %v", err)
-		}
-	}
-	log.Println("[ATS Fix] Company URL corrections applied")
-
 	// Run database migrations on startup
 	// migrationsPath := "./database/migrations"
 	// if err := database.RunMigrations(db, migrationsPath); err != nil {
