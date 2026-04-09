@@ -70,6 +70,34 @@ func main() {
 
 	log.Println("Database connection successful!")
 
+	// Fix remaining Greenhouse companies with wrong board tokens
+	for _, fix := range [][2]string{
+		{"https://boards.greenhouse.io/getweave", "https://boards.greenhouse.io/weave"},
+		{"https://boards.greenhouse.io/together", "https://boards.greenhouse.io/togetherai"},
+		{"https://boards.greenhouse.io/toasttab", "https://boards.greenhouse.io/toast"},
+		{"https://boards.greenhouse.io/ramp", "https://boards.greenhouse.io/rampnetwork"},
+		{"https://boards.greenhouse.io/process", "https://boards.greenhouse.io/processstreet"},
+		{"https://boards.greenhouse.io/platform", "https://boards.greenhouse.io/platformsh"},
+		{"https://boards.greenhouse.io/planet", "https://boards.greenhouse.io/planetlabs"},
+		{"https://boards.greenhouse.io/onepeloton", "https://boards.greenhouse.io/peloton"},
+		{"https://boards.greenhouse.io/runpanther", "https://boards.greenhouse.io/pantherlabs"},
+		{"https://boards.greenhouse.io/hioscar", "https://boards.greenhouse.io/oscar"},
+		{"https://boards.greenhouse.io/lucid", "https://boards.greenhouse.io/lucidsoftware"},
+		{"https://boards.greenhouse.io/grafana", "https://boards.greenhouse.io/grafanalabs"},
+		{"https://boards.greenhouse.io/fiber", "https://boards.greenhouse.io/googlefiber"},
+		{"https://boards.greenhouse.io/about", "https://boards.greenhouse.io/nextdoor"},
+		{"https://boards.greenhouse.io/datadoghq", "https://boards.greenhouse.io/datadog"},
+		{"https://boards.greenhouse.io/box", "https://boards.greenhouse.io/boxinc"},
+		{"https://boards.greenhouse.io/aurora", "https://boards.greenhouse.io/aurorainnovation"},
+		{"https://boards.greenhouse.io/joinkarrot", "https://boards.greenhouse.io/daangn"},
+		{"https://jobs.ashbyhq.com/ziphq", "https://jobs.ashbyhq.com/zip"},
+	} {
+		_, _ = db.Exec("UPDATE job_companies SET careers_url=$1, sync_failure_count=0, last_sync_error=NULL, is_active=true WHERE careers_url=$2", fix[1], fix[0])
+	}
+	// Deactivate defunct companies
+	_, _ = db.Exec("UPDATE job_companies SET is_active=false WHERE careers_url IN ('https://boards.greenhouse.io/wmjobs','https://boards.greenhouse.io/goteleport','https://boards.greenhouse.io/getstream','https://boards.greenhouse.io/side','https://boards.greenhouse.io/people','https://boards.greenhouse.io/nianticlabs','https://boards.greenhouse.io/material','https://boards.greenhouse.io/konghq','https://boards.greenhouse.io/jobber','https://boards.greenhouse.io/hippo','https://boards.greenhouse.io/forhims','https://boards.greenhouse.io/glu','https://boards.greenhouse.io/gem','https://boards.greenhouse.io/dagster','https://boards.greenhouse.io/ciscomeraki','https://boards.greenhouse.io/hellobonsai','https://boards.greenhouse.io/awaytravel','https://boards.greenhouse.io/arista','https://boards.greenhouse.io/aquasec','https://boards.greenhouse.io/adept') AND is_active=true")
+	log.Println("[Startup] ATS company fixes applied")
+
 	// Run database migrations on startup
 	// migrationsPath := "./database/migrations"
 	// if err := database.RunMigrations(db, migrationsPath); err != nil {
