@@ -94,6 +94,8 @@ func main() {
 	} {
 		_, _ = db.Exec("UPDATE job_companies SET careers_url=$1, sync_failure_count=0, last_sync_error=NULL, is_active=true WHERE careers_url=$2", fix[1], fix[0])
 	}
+	// Fix Character AI: moved from Ashby to Lever
+	_, _ = db.Exec("UPDATE job_companies SET careers_url='https://jobs.lever.co/character', ats_provider='lever', external_identifier='character', sync_failure_count=0, last_sync_error=NULL, is_active=true WHERE careers_url='https://jobs.ashbyhq.com/character'")
 	// Deactivate defunct companies
 	_, _ = db.Exec("UPDATE job_companies SET is_active=false WHERE careers_url IN ('https://boards.greenhouse.io/wmjobs','https://boards.greenhouse.io/goteleport','https://boards.greenhouse.io/getstream','https://boards.greenhouse.io/side','https://boards.greenhouse.io/people','https://boards.greenhouse.io/nianticlabs','https://boards.greenhouse.io/material','https://boards.greenhouse.io/konghq','https://boards.greenhouse.io/jobber','https://boards.greenhouse.io/hippo','https://boards.greenhouse.io/forhims','https://boards.greenhouse.io/glu','https://boards.greenhouse.io/gem','https://boards.greenhouse.io/dagster','https://boards.greenhouse.io/ciscomeraki','https://boards.greenhouse.io/hellobonsai','https://boards.greenhouse.io/awaytravel','https://boards.greenhouse.io/arista','https://boards.greenhouse.io/aquasec','https://boards.greenhouse.io/adept') AND is_active=true")
 	log.Println("[Startup] ATS company fixes applied")
