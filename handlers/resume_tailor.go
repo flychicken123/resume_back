@@ -118,6 +118,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 		var tailoredHTML string
 		if hasSavedHTML {
 			// Best path: replace bullets in the user's actual frontend-rendered HTML
+			savedHTML = stripUIChrome(savedHTML)
 			tailoredHTML = replaceExperienceBulletsInHTML(savedHTML, experiences, polishedMaps)
 			fmt.Println("[Tailor] Using saved frontend HTML template")
 		} else {
@@ -374,6 +375,30 @@ func buildBulletDivs(description, style string) string {
 		fmt.Fprintf(&sb, `<div style="%s">• %s</div>`, cleanStyle, html.EscapeString(line))
 	}
 	return sb.String()
+}
+
+// stripUIChrome removes non-resume UI elements and preview-only styles from
+// saved HTML that the frontend may have captured inside .live-preview-container.
+func stripUIChrome(h string) string {
+	// Remove anchor tags (e.g. "Open resume manually")
+	h = regexp.MustCompile(`<a\b[^>]*>.*?</a>`).ReplaceAllString(h, "")
+	// Remove button tags
+	h = regexp.MustCompile(`<button\b[^>]*>.*?</button>`).ReplaceAllString(h, "")
+	// Remove the download-notice wrapper div (contains "pop-ups" or "new tab" text)
+	h = regexp.MustCompile(`(?s)<div[^>]*>\s*(?:We opened your resume|If it did not appear)[^<]*(?:<[^>]*>[^<]*)*?</div>\s*</div>`).ReplaceAllString(h, "")
+
+	// Inject a style block before </head> (or prepend) to clean up preview artifacts
+	cleanup := `<style id="tailor-cleanup">
+.live-preview-container { background: #fff !important; padding: 0 !important; border: none !important; box-shadow: none !important; }
+.single-page-container, .page-wrapper { border: none !important; box-shadow: none !important; outline: none !important; overflow: visible !important; }
+*:focus-within { outline: none !important; }
+</style>`
+	if idx := strings.Index(h, "</head>"); idx >= 0 {
+		h = h[:idx] + cleanup + h[idx:]
+	} else {
+		h = cleanup + h
+	}
+	return h
 }
 
 // renderFallbackTailorHTML generates HTML using the user's selected template
