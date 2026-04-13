@@ -136,9 +136,6 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 
 		timestamp := time.Now().UnixNano()
 
-		// Inject PDF-safe CSS overrides (strips dark background & focus outlines from saved HTML)
-		tailoredHTML = injectPDFSafeCSS(tailoredHTML)
-
 		// Write tailored HTML to disk
 		htmlFilename := fmt.Sprintf("tailored_%d.html", timestamp)
 		htmlPath := filepath.Join(saveDir, htmlFilename)
@@ -377,46 +374,6 @@ func buildBulletDivs(description, style string) string {
 		fmt.Fprintf(&sb, `<div style="%s">• %s</div>`, cleanStyle, html.EscapeString(line))
 	}
 	return sb.String()
-}
-
-// injectPDFSafeCSS injects override CSS into saved HTML before Puppeteer renders it.
-// The frontend's LivePreview has a dark outer background and focus-within outlines
-// that look fine in the browser but pollute the generated PDF.
-func injectPDFSafeCSS(htmlContent string) string {
-	override := `<style id="pdf-safe-overrides">
-/* Strip dark outer container background */
-.live-preview-container {
-  background: white !important;
-  padding: 0 !important;
-  box-shadow: none !important;
-}
-/* Remove blue focus-within outline (triggered by Puppeteer auto-focus) */
-.page-wrapper:focus-within,
-.single-page-container:focus-within,
-*:focus-within {
-  outline: none !important;
-  box-shadow: none !important;
-}
-/* Reset page wrappers for clean PDF pages */
-.page-wrapper, .single-page-container {
-  margin: 0 auto !important;
-  box-shadow: none !important;
-  border: none !important;
-}
-/* Remove any preview highlight artifacts */
-.live-preview-container.preview-updating .page-wrapper,
-.live-preview-container.preview-updating .single-page-container {
-  background: white !important;
-  box-shadow: none !important;
-}
-</style>`
-
-	// Inject before </head> so it overrides earlier styles
-	if idx := strings.Index(htmlContent, "</head>"); idx >= 0 {
-		return htmlContent[:idx] + override + htmlContent[idx:]
-	}
-	// Fallback: prepend to the content
-	return override + htmlContent
 }
 
 // renderFallbackTailorHTML generates HTML using the user's selected template
