@@ -403,16 +403,18 @@ func isUndefinedColumnError(err error) bool {
 
 func scanResumeRowFull(scanner rowScanner, resume *Resume) error {
 	var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
+	// Use NullString for columns that may be NULL in older rows
+	var nameVal, emailVal, phoneVal, fmtVal sql.NullString
 
 	if err := scanner.Scan(
 		&resume.ID,
 		&resume.UserID,
-		&resume.Name,
-		&resume.Email,
-		&resume.Phone,
+		&nameVal,
+		&emailVal,
+		&phoneVal,
 		&summaryVal,
 		&skillsVal,
-		&resume.SelectedFormat,
+		&fmtVal,
 		&skillsCatVal,
 		&experienceVal,
 		&educationVal,
@@ -424,6 +426,10 @@ func scanResumeRowFull(scanner rowScanner, resume *Resume) error {
 		return err
 	}
 
+	resume.Name = nameVal.String
+	resume.Email = emailVal.String
+	resume.Phone = phoneVal.String
+	resume.SelectedFormat = fmtVal.String
 	resume.Summary = toRawMessage(summaryVal)
 	resume.Skills = toRawMessage(skillsVal)
 	resume.SkillsCategorized = stringFromAny(skillsCatVal)
@@ -436,22 +442,27 @@ func scanResumeRowFull(scanner rowScanner, resume *Resume) error {
 
 func scanResumeRowLegacy(scanner rowScanner, resume *Resume) error {
 	var summaryVal, skillsVal interface{}
+	var nameVal, emailVal, phoneVal, fmtVal sql.NullString
 
 	if err := scanner.Scan(
 		&resume.ID,
 		&resume.UserID,
-		&resume.Name,
-		&resume.Email,
-		&resume.Phone,
+		&nameVal,
+		&emailVal,
+		&phoneVal,
 		&summaryVal,
 		&skillsVal,
-		&resume.SelectedFormat,
+		&fmtVal,
 		&resume.CreatedAt,
 		&resume.UpdatedAt,
 	); err != nil {
 		return err
 	}
 
+	resume.Name = nameVal.String
+	resume.Email = emailVal.String
+	resume.Phone = phoneVal.String
+	resume.SelectedFormat = fmtVal.String
 	resume.Summary = toRawMessage(summaryVal)
 	resume.Skills = toRawMessage(skillsVal)
 	return nil

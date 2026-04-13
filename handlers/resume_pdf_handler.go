@@ -191,3 +191,44 @@ func GeneratePDFResumeHandler(db *sql.DB, resumeHistoryModel *models.ResumeHisto
 		})
 	}
 }
+
+// SaveHTMLHandler handles POST /api/resume/save-html
+// Saves the user's current resume HTML (sent as a multipart 'html' file) so the
+// Chrome extension can later use it as the tailoring template.
+func SaveHTMLHandler(resumeModel *models.ResumeModel) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID, exists := c.Get("user_id")
+		if !exists {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "Not authenticated"})
+			return
+		}
+		userIDInt := userID.(int)
+
+		file, err := c.FormFile("html")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "Missing 'html' file field"})
+			return
+		}
+
+		f, err := file.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read HTML"})
+			return
+		}
+		defer f.Close()
+
+		buf := make([]byte, file.Size)
+		if _, err := f.Read(buf); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to read HTML content"})
+			return
+		}
+
+		if err := resumeModel.SaveLastHTML(userIDInt, string(buf)); err != nil {
+			fmt.Printf("SaveHTMLHandler: failed to save HTML for user %d: %v\n", userIDInt, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save resume HTML"})
+			return
+		}
+
+		c.JSON(http.StatusOK, gin.H{"message": "Resume template saved for plugin"})
+	}
+}

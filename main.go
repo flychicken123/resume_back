@@ -741,6 +741,7 @@ func main() {
 		resumeGenRoutes.POST("/resume/generate", handlers.GenerateResume)
 		resumeGenRoutes.POST("/resume/generate-pdf", handlers.GeneratePDFResume)
 		resumeGenRoutes.POST("/resume/generate-pdf-file", handlers.GeneratePDFResumeHandler(db, resumeHistoryModel, userModel, resumeModel))
+		resumeGenRoutes.POST("/resume/save-html", handlers.SaveHTMLHandler(resumeModel))
 		resumeGenRoutes.POST("/resume/tailor", handlers.TailorResume(resumeModel, resumeHistoryModel, projectModel))
 	}
 
