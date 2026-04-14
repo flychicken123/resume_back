@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -103,6 +104,23 @@ func (ac *AutofillController) CreateSession(ctx *gin.Context) {
 		return string(r)
 	}
 
+	// Fall back to first non-remote experience city when resume.Location is empty
+	location := resume.Location
+	if location == "" || location == `""` {
+		for _, exp := range experiences {
+			city := strings.TrimSpace(exp.City)
+			state := strings.TrimSpace(exp.State)
+			if city != "" && !strings.EqualFold(city, "remote") {
+				parts := []string{city}
+				if state != "" {
+					parts = append(parts, state)
+				}
+				location = strings.Join(parts, ", ")
+				break
+			}
+		}
+	}
+
 	payload := gin.H{
 		"name":              resume.Name,
 		"email":             resume.Email,
@@ -114,7 +132,7 @@ func (ac *AutofillController) CreateSession(ctx *gin.Context) {
 		"experience":        resume.Experience,
 		"education":         resume.Education,
 		"jobDescription":    resume.JobDescription,
-		"location":          resume.Location,
+		"location":          location,
 		"selectedFormat":    resume.SelectedFormat,
 		"jobPreferences":    jobPrefs,
 	}
