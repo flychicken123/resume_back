@@ -206,6 +206,8 @@ jobs:
           docker network inspect ai-resume-network >/dev/null 2>&1 || docker network create ai-resume-network
            
           # Build new image - FAIL on error
+          # Disable Buildx to avoid "file already closed" bug
+          export DOCKER_BUILDKIT=0
           echo "🔨 Building new backend image..."
           if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml build --no-cache backend; then
             echo "❌ Failed to build Docker image"
