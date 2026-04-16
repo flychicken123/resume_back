@@ -8,7 +8,7 @@ ENV WKHTML_VERSION=0.12.6-1
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     ca-certificates curl fontconfig xz-utils \
-    libjpeg-turbo8 libpng16-16 libxrender1 libxtst6 libssl1.1 \
+    libjpeg-turbo8 libpng16-16 libxrender1 libxtst6 \
     fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
     python3 python3-pip poppler-utils tesseract-ocr tesseract-ocr-eng && \
     rm -rf /var/lib/apt/lists/*
