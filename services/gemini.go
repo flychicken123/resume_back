@@ -434,16 +434,10 @@ AVOID these weak phrases:
 IMPORTANT: Return ONLY the optimized description text with each achievement on a separate line. Do NOT include:
 - Job title, company name, dates
 - Bullet point symbols (• or -)
-- Explanations or additional text
+- Explanations, instructions, or additional text
+- Example bullets — ONLY rewrite the user's ACTUAL experience
 
-Format example:
-Architected and deployed a real-time data processing pipeline using Apache Kafka and Python, handling 50M+ daily events and reducing data latency from 2 hours to under 5 minutes
-
-Led cross-functional team of 8 engineers to migrate legacy monolith to microservices architecture, resulting in 60%% improvement in deployment frequency and 40%% reduction in production incidents
-
-Implemented automated testing framework that increased code coverage from 45%% to 95%%, reducing critical bugs in production by 80%% and saving 20 hours per week in manual testing
-
-Each achievement should demonstrate clear ownership, specific actions, and measurable business impact.`, jobDescription, userExperience)
+CRITICAL: Output the SAME NUMBER of bullet points as the user's original. Do NOT add extra bullets. Do NOT repeat bullets. Do NOT copy example text. ONLY rephrase what the user actually did.`, jobDescription, userExperience)
 }
 
 func BuildEducationOptimizationPrompt(education string, existingEducation ...string) string {

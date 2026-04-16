@@ -187,12 +187,25 @@ func (a *PolishAgent) PolishExperience(ctx context.Context, experience map[strin
 		fmt.Printf("[PolishExperience] Fabrications removed: %v\n", fabrications)
 	}
 
+	// Deduplicate bullets — AI sometimes repeats the same lines
+	cleaned := cleanupPolishedText(validated)
+	cleaned = deduplicateBullets(cleaned)
+
+	// Ensure we don't return more bullets than the original
+	origCount := len(splitBullets(description))
+	newBullets := splitBullets(cleaned)
+	if origCount > 0 && len(newBullets) > origCount {
+		newBullets = newBullets[:origCount]
+		cleaned = strings.Join(newBullets, "\n")
+		fmt.Printf("[PolishExperience] Trimmed from %d to %d bullets to match original\n", len(splitBullets(validated)), origCount)
+	}
+
 	// Create a copy with polished description
 	result := make(map[string]interface{})
 	for k, v := range experience {
 		result[k] = v
 	}
-	result["description"] = cleanupPolishedText(validated)
+	result["description"] = cleaned
 
 	return result, nil
 }
@@ -493,6 +506,36 @@ func cleanupPolishedText(text string) string {
 	}
 
 	return strings.Join(cleanedLines, "\n\n")
+}
+
+// splitBullets splits a description into individual bullet lines.
+func splitBullets(text string) []string {
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
+// deduplicateBullets removes duplicate lines from a newline-separated description.
+func deduplicateBullets(text string) string {
+	seen := map[string]bool{}
+	var out []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		if seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	return strings.Join(out, "\n")
 }
 
 // PolishExperiencesBatch polishes multiple experiences in a single API call.
