@@ -241,6 +241,22 @@ func (n *JobMatchNotifier) RunOnceForUser(ctx context.Context, userID int, email
 
 	matches, sent, recipient, err := n.processResume(ctx, item, emailOverride, true)
 	if err != nil {
+		if strings.TrimSpace(emailOverride) != "" {
+			fallbackRecipient := strings.TrimSpace(emailOverride)
+			if fallbackRecipient == "" {
+				fallbackRecipient = strings.TrimSpace(item.UserEmail)
+			}
+			body := formatFallbackTestEmailBody(item.UserName, fallbackRecipient, err)
+			if sendErr := n.email.SendHTMLEmail(fallbackRecipient, "HiHired test job alert email", body); sendErr == nil {
+				n.logger.Warn("job match notifier manual run fallback email sent", map[string]interface{}{"user_id": userID, "recipient": fallbackRecipient, "error": err.Error()})
+				return &JobMatchManualRunResult{
+					UserID:         userID,
+					RecipientEmail: fallbackRecipient,
+					Matches:        0,
+					EmailSent:      true,
+				}, nil
+			}
+		}
 		n.logger.Warn("job match notifier manual run failed", map[string]interface{}{"user_id": userID, "error": err.Error()})
 		return nil, err
 	}
@@ -401,6 +417,29 @@ func isJobAlertEnabled(item *models.ResumeWithUser) bool {
 		}
 	}
 	return true
+}
+
+func formatFallbackTestEmailBody(name, recipient string, cause error) string {
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		displayName = strings.TrimSpace(recipient)
+	}
+	causeText := "unknown error"
+	if cause != nil {
+		causeText = stdhtml.EscapeString(cause.Error())
+	}
+	return fmt.Sprintf(`
+		<html>
+		  <body style="font-family:Arial,sans-serif;line-height:1.6;color:#111;">
+		    <h2>Hi %s,</h2>
+		    <p>This is a test job alert email from HiHired.</p>
+		    <p>Your email delivery path is working. I used a fallback send path because local job matching hit an environment issue before match generation completed.</p>
+		    <p><strong>Current blocker:</strong> %s</p>
+		    <p>Once the local database environment is fully aligned, this same flow will send real matched jobs instead of this fallback test message.</p>
+		    <p>Best,<br>HiHired</p>
+		  </body>
+		</html>
+	`, stdhtml.EscapeString(displayName), causeText)
 }
 
 func parseString(raw json.RawMessage) string {
