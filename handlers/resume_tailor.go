@@ -613,7 +613,7 @@ type tailoredProject struct {
 	Description  string
 }
 
-func loadProjectsForTailor(projectModel *models.ProjectModel, resumeID int) ([]models.Project, error) {
+func loadProjectsForTailor(projectModel *models.ProjectModel, resumeID int) ([]*models.Project, error) {
 	if projectModel == nil {
 		return nil, nil
 	}
@@ -661,13 +661,16 @@ func tailorSummaryForJob(jobDesc string, resume *models.Resume, polished []map[s
 	return result
 }
 
-func tailorProjectsForJob(jobDesc string, projects []models.Project) []tailoredProject {
+func tailorProjectsForJob(jobDesc string, projects []*models.Project) []tailoredProject {
 	if len(projects) == 0 {
 		return nil
 	}
 
 	out := make([]tailoredProject, 0, len(projects))
 	for _, p := range projects {
+		if p == nil {
+			continue
+		}
 		desc := strings.TrimSpace(p.Description)
 		if desc == "" {
 			out = append(out, tailoredProject{Name: p.ProjectName, Technologies: p.Technologies, Description: p.Description})
