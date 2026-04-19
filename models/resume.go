@@ -16,31 +16,35 @@ import (
 const defaultResumeFormat = "classic-professional"
 
 type Resume struct {
-	ID             int             `json:"id"`
-	UserID         int             `json:"user_id"`
-	Name           string          `json:"name"`
-	Email          string          `json:"email,omitempty"`
-	Phone          string          `json:"phone,omitempty"`
-	Summary        json.RawMessage `json:"summary"`
-	Skills         json.RawMessage `json:"skills"`
-	SkillsCategorized string       `json:"skills_categorized,omitempty"`
-	Experience     string          `json:"experience,omitempty"`
-	Education      string          `json:"education,omitempty"`
-	JobDescription string          `json:"job_description,omitempty"`
-	Location       string          `json:"location,omitempty"`
-	SelectedFormat string          `json:"selected_format"`
-	LastResumeHTML string          `json:"last_resume_html,omitempty"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
+	ID                int             `json:"id"`
+	UserID            int             `json:"user_id"`
+	Name              string          `json:"name"`
+	Email             string          `json:"email,omitempty"`
+	Phone             string          `json:"phone,omitempty"`
+	Summary           json.RawMessage `json:"summary"`
+	Skills            json.RawMessage `json:"skills"`
+	SkillsCategorized string          `json:"skills_categorized,omitempty"`
+	Experience        string          `json:"experience,omitempty"`
+	Education         string          `json:"education,omitempty"`
+	JobDescription    string          `json:"job_description,omitempty"`
+	Location          string          `json:"location,omitempty"`
+	SelectedFormat    string          `json:"selected_format"`
+	LastResumeHTML    string          `json:"last_resume_html,omitempty"`
+	CreatedAt         time.Time       `json:"created_at"`
+	UpdatedAt         time.Time       `json:"updated_at"`
 }
 
 // ResumeWithUser carries a resume along with its owning user's contact info.
 type ResumeWithUser struct {
-	Resume            Resume
-	UserEmail         string
-	UserName          string
-	EmailUnsubscribed bool
-	MarketingOptIn    bool
+	Resume                   Resume
+	UserEmail                string
+	UserName                 string
+	EmailUnsubscribed        bool
+	MarketingOptIn           bool
+	JobPreferences           json.RawMessage
+	FollowupRemindersEnabled bool
+	LastJobAlertSentAt       *time.Time
+	LastJobAlertResumeHash   string
 }
 
 // ResumeProfileSaveInput captures the complete resume payload we store per user.
@@ -74,15 +78,15 @@ type ExperienceInput struct {
 
 // ExperienceRecord represents a stored experience row.
 type ExperienceRecord struct {
-	ID               int        `json:"id"`
-	JobTitle         string     `json:"job_title"`
-	Company          string     `json:"company"`
-	City             string     `json:"city,omitempty"`
-	State            string     `json:"state,omitempty"`
-	StartDate        string     `json:"start_date,omitempty"`
-	EndDate          string     `json:"end_date,omitempty"`
-	CurrentlyWorking bool       `json:"currently_working"`
-	Description      string     `json:"description,omitempty"`
+	ID               int    `json:"id"`
+	JobTitle         string `json:"job_title"`
+	Company          string `json:"company"`
+	City             string `json:"city,omitempty"`
+	State            string `json:"state,omitempty"`
+	StartDate        string `json:"start_date,omitempty"`
+	EndDate          string `json:"end_date,omitempty"`
+	CurrentlyWorking bool   `json:"currently_working"`
+	Description      string `json:"description,omitempty"`
 }
 
 type ResumeModel struct {
@@ -218,7 +222,11 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		       r.created_at, r.updated_at,
 		       u.email AS user_email, u.name AS user_name,
 		       COALESCE(u.email_unsubscribed, false) AS email_unsubscribed,
-		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in
+		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in,
+		       COALESCE(u.job_preferences::text, '{}') AS job_preferences,
+		       COALESCE(u.followup_reminders_enabled, true) AS followup_reminders_enabled,
+		       u.last_job_alert_sent_at,
+		       COALESCE(u.last_job_alert_resume_hash, '') AS last_job_alert_resume_hash
 		FROM resumes r
 		JOIN users u ON u.id = r.user_id
 	`)
@@ -231,8 +239,10 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 	for rows.Next() {
 		var resume Resume
 		var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
-		var userEmail, userName string
-		var emailUnsubscribed, marketingOptIn bool
+		var userEmail, userName, lastJobAlertResumeHash string
+		var emailUnsubscribed, marketingOptIn, followupRemindersEnabled bool
+		var jobPreferences json.RawMessage
+		var lastJobAlertSentAt sql.NullTime
 
 		if err := rows.Scan(
 			&resume.ID,
@@ -254,6 +264,10 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 			&userName,
 			&emailUnsubscribed,
 			&marketingOptIn,
+			&jobPreferences,
+			&followupRemindersEnabled,
+			&lastJobAlertSentAt,
+			&lastJobAlertResumeHash,
 		); err != nil {
 			return nil, err
 		}
@@ -267,11 +281,15 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		resume.Location = stringFromAny(locationVal)
 
 		results = append(results, &ResumeWithUser{
-			Resume:            resume,
-			UserEmail:         userEmail,
-			UserName:          userName,
-			EmailUnsubscribed: emailUnsubscribed,
-			MarketingOptIn:    marketingOptIn,
+			Resume:                   resume,
+			UserEmail:                userEmail,
+			UserName:                 userName,
+			EmailUnsubscribed:        emailUnsubscribed,
+			MarketingOptIn:           marketingOptIn,
+			JobPreferences:           jobPreferences,
+			FollowupRemindersEnabled: followupRemindersEnabled,
+			LastJobAlertSentAt:       nullTimeToPtr(lastJobAlertSentAt),
+			LastJobAlertResumeHash:   lastJobAlertResumeHash,
 		})
 	}
 
@@ -289,7 +307,11 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 		       r.created_at, r.updated_at,
 		       u.email AS user_email, u.name AS user_name,
 		       COALESCE(u.email_unsubscribed, false) AS email_unsubscribed,
-		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in
+		       COALESCE(u.marketing_opt_in, false) AS marketing_opt_in,
+		       COALESCE(u.job_preferences::text, '{}') AS job_preferences,
+		       COALESCE(u.followup_reminders_enabled, true) AS followup_reminders_enabled,
+		       u.last_job_alert_sent_at,
+		       COALESCE(u.last_job_alert_resume_hash, '') AS last_job_alert_resume_hash
 		FROM resumes r
 		JOIN users u ON u.id = r.user_id
 		WHERE r.user_id = $1
@@ -297,8 +319,10 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 
 	var resume Resume
 	var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
-	var userEmail, userName string
-	var emailUnsubscribed, marketingOptIn bool
+	var userEmail, userName, lastJobAlertResumeHash string
+	var emailUnsubscribed, marketingOptIn, followupRemindersEnabled bool
+	var jobPreferences json.RawMessage
+	var lastJobAlertSentAt sql.NullTime
 	if err := row.Scan(
 		&resume.ID,
 		&resume.UserID,
@@ -319,6 +343,10 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 		&userName,
 		&emailUnsubscribed,
 		&marketingOptIn,
+		&jobPreferences,
+		&followupRemindersEnabled,
+		&lastJobAlertSentAt,
+		&lastJobAlertResumeHash,
 	); err != nil {
 		return nil, err
 	}
@@ -332,11 +360,15 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 	resume.Location = stringFromAny(locationVal)
 
 	return &ResumeWithUser{
-		Resume:            resume,
-		UserEmail:         userEmail,
-		UserName:          userName,
-		EmailUnsubscribed: emailUnsubscribed,
-		MarketingOptIn:    marketingOptIn,
+		Resume:                   resume,
+		UserEmail:                userEmail,
+		UserName:                 userName,
+		EmailUnsubscribed:        emailUnsubscribed,
+		MarketingOptIn:           marketingOptIn,
+		JobPreferences:           jobPreferences,
+		FollowupRemindersEnabled: followupRemindersEnabled,
+		LastJobAlertSentAt:       nullTimeToPtr(lastJobAlertSentAt),
+		LastJobAlertResumeHash:   lastJobAlertResumeHash,
 	}, nil
 }
 

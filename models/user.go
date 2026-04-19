@@ -8,22 +8,24 @@ import (
 )
 
 type User struct {
-	ID                   int        `json:"id"`
-	Email                string     `json:"email"`
-	Name                 string     `json:"name"`
-	Password             string     `json:"-"` // Don't include password in JSON
-	AuthProvider         string     `json:"auth_provider"`
-	GoogleID             string     `json:"google_id,omitempty"`
-	ProfilePicture       string     `json:"profile_picture,omitempty"`
-	IsAdmin              bool       `json:"is_admin"`
-	MarketingOptIn       bool       `json:"marketing_opt_in"`
-	MarketingOptedAt     *time.Time `json:"marketing_opted_at,omitempty"`
-	MarketingOptInSource string     `json:"marketing_opt_in_source,omitempty"`
-	SignupPlanPreference string     `json:"signup_plan_preference,omitempty"`
+	ID                       int             `json:"id"`
+	Email                    string          `json:"email"`
+	Name                     string          `json:"name"`
+	Password                 string          `json:"-"` // Don't include password in JSON
+	AuthProvider             string          `json:"auth_provider"`
+	GoogleID                 string          `json:"google_id,omitempty"`
+	ProfilePicture           string          `json:"profile_picture,omitempty"`
+	IsAdmin                  bool            `json:"is_admin"`
+	MarketingOptIn           bool            `json:"marketing_opt_in"`
+	MarketingOptedAt         *time.Time      `json:"marketing_opted_at,omitempty"`
+	MarketingOptInSource     string          `json:"marketing_opt_in_source,omitempty"`
+	SignupPlanPreference     string          `json:"signup_plan_preference,omitempty"`
 	EmailUnsubscribed        bool            `json:"email_unsubscribed"`
 	EmailUnsubscribedAt      *time.Time      `json:"email_unsubscribed_at,omitempty"`
 	JobPreferences           json.RawMessage `json:"job_preferences,omitempty"`
 	FollowupRemindersEnabled bool            `json:"followup_reminders_enabled"`
+	LastJobAlertSentAt       *time.Time      `json:"last_job_alert_sent_at,omitempty"`
+	LastJobAlertResumeHash   string          `json:"last_job_alert_resume_hash,omitempty"`
 	CreatedAt                time.Time       `json:"created_at"`
 	UpdatedAt                time.Time       `json:"updated_at"`
 }
@@ -80,6 +82,7 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		RETURNING id, email, name, auth_provider, google_id, profile_picture, is_admin,
 		          marketing_opt_in, marketing_opted_at, marketing_opt_in_source, signup_plan_preference,
 		          COALESCE(followup_reminders_enabled, true),
+		          last_job_alert_sent_at, COALESCE(last_job_alert_resume_hash, ''),
 		          created_at, updated_at
 	`
 
@@ -108,6 +111,8 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		&marketingSourceNS,
 		&planPreferenceNS,
 		&user.FollowupRemindersEnabled,
+		&user.LastJobAlertSentAt,
+		&user.LastJobAlertResumeHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -143,6 +148,8 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
 		       COALESCE(followup_reminders_enabled, true),
+		       last_job_alert_sent_at,
+		       COALESCE(last_job_alert_resume_hash, ''),
 		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
@@ -162,6 +169,8 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
 		&user.FollowupRemindersEnabled,
+		&user.LastJobAlertSentAt,
+		&user.LastJobAlertResumeHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -194,6 +203,8 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
 		       COALESCE(followup_reminders_enabled, true),
+		       last_job_alert_sent_at,
+		       COALESCE(last_job_alert_resume_hash, ''),
 		       created_at, updated_at
 		FROM users WHERE id = $1
 	`
@@ -209,6 +220,8 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
 		&user.FollowupRemindersEnabled,
+		&user.LastJobAlertSentAt,
+		&user.LastJobAlertResumeHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
@@ -295,6 +308,19 @@ func (m *UserModel) SetJobPreferences(userID int, prefs json.RawMessage) error {
 		string(prefs), time.Now(), userID,
 	)
 	return err
+}
+
+func (m *UserModel) UpdateJobAlertState(userID int, sentAt time.Time, resumeHash string) error {
+	query := `UPDATE users SET last_job_alert_sent_at = $1, last_job_alert_resume_hash = $2, updated_at = $3 WHERE id = $4`
+	result, err := m.DB.Exec(query, sentAt, strings.TrimSpace(resumeHash), time.Now(), userID)
+	if err != nil {
+		return err
+	}
+	n, _ := result.RowsAffected()
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 func nullTimeToPtr(nt sql.NullTime) *time.Time {

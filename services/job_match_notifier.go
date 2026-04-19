@@ -25,6 +25,7 @@ const defaultJobNotifyInterval = 72 * time.Hour
 // JobMatchNotifier periodically computes matches for all users and emails them.
 type JobMatchNotifier struct {
 	resumes *models.ResumeModel
+	users   *models.UserModel
 	matcher ResumeJobMatcher
 	email   *EmailService
 	logger  *utils.Logger
@@ -58,12 +59,13 @@ type JobMatchRunAllStatus struct {
 }
 
 // NewJobMatchNotifier wires the notifier dependencies.
-func NewJobMatchNotifier(resumes *models.ResumeModel, matcher ResumeJobMatcher, email *EmailService, logger *utils.Logger) *JobMatchNotifier {
+func NewJobMatchNotifier(resumes *models.ResumeModel, users *models.UserModel, matcher ResumeJobMatcher, email *EmailService, logger *utils.Logger) *JobMatchNotifier {
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
 	return &JobMatchNotifier{
 		resumes: resumes,
+		users:   users,
 		matcher: matcher,
 		email:   email,
 		logger:  logger,
@@ -72,7 +74,7 @@ func NewJobMatchNotifier(resumes *models.ResumeModel, matcher ResumeJobMatcher, 
 
 // Start begins the periodic notifier loop.
 func (n *JobMatchNotifier) Start(ctx context.Context, interval time.Duration) {
-	if n == nil || n.resumes == nil || n.matcher == nil {
+	if n == nil || n.resumes == nil || n.users == nil || n.matcher == nil {
 		return
 	}
 	if interval <= 0 {
@@ -183,32 +185,46 @@ func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.Resum
 		return 0, false, recipient, nil
 	}
 
-	if !sendEmail {
+	freshMatches := filterFreshMatches(item, resumeHash, matches)
+	if len(freshMatches) == 0 {
 		return len(matches), false, recipient, nil
+	}
+
+	if !sendEmail {
+		return len(freshMatches), false, recipient, nil
 	}
 
 	// Skip sending email if user has unsubscribed or opted out of marketing (unless using email override for testing)
 	if emailOverride == "" {
 		if item.EmailUnsubscribed {
 			n.logger.Debug("skipping email for unsubscribed user", map[string]interface{}{"user_id": resume.UserID, "email": recipient})
-			return len(matches), false, recipient, nil
+			return len(freshMatches), false, recipient, nil
 		}
 		if !item.MarketingOptIn {
 			n.logger.Debug("skipping email for user who opted out of marketing", map[string]interface{}{"user_id": resume.UserID, "email": recipient})
-			return len(matches), false, recipient, nil
+			return len(freshMatches), false, recipient, nil
+		}
+		if !isJobAlertEnabled(item) {
+			n.logger.Debug("skipping email for user who disabled job alerts", map[string]interface{}{"user_id": resume.UserID, "email": recipient})
+			return len(freshMatches), false, recipient, nil
 		}
 	}
 
-	body := formatMatchEmailBody(item.UserName, recipient, matches)
+	body := formatMatchEmailBody(item.UserName, recipient, freshMatches)
 	if err := n.email.SendHTMLEmail(recipient, "New job matches for your resume", body); err != nil {
-		return len(matches), false, recipient, err
+		return len(freshMatches), false, recipient, err
 	}
-	return len(matches), true, recipient, nil
+	if emailOverride == "" {
+		if err := n.users.UpdateJobAlertState(resume.UserID, time.Now(), resumeHash); err != nil {
+			n.logger.Warn("job match notifier: failed to persist alert state", map[string]interface{}{"user_id": resume.UserID, "error": err.Error()})
+		}
+	}
+	return len(freshMatches), true, recipient, nil
 }
 
 // RunOnceForUser computes matches for a single user and sends the email if there are any matches.
 func (n *JobMatchNotifier) RunOnceForUser(ctx context.Context, userID int, emailOverride string) (*JobMatchManualRunResult, error) {
-	if n == nil || n.resumes == nil || n.matcher == nil {
+	if n == nil || n.resumes == nil || n.users == nil || n.matcher == nil {
 		return nil, errors.New("job match notifier not configured")
 	}
 	if n.email == nil || !n.email.Enabled() {
@@ -245,7 +261,7 @@ func (n *JobMatchNotifier) RunOnceForUser(ctx context.Context, userID int, email
 // RunOnceForAll computes matches for all users and optionally sends emails.
 // For safety, callers should gate this behind strong auth + explicit confirmation.
 func (n *JobMatchNotifier) RunOnceForAll(ctx context.Context, limit int, emailOverride string, sendEmail bool) (*JobMatchRunAllResult, error) {
-	if n == nil || n.resumes == nil || n.matcher == nil {
+	if n == nil || n.resumes == nil || n.users == nil || n.matcher == nil {
 		return nil, errors.New("job match notifier not configured")
 	}
 	if sendEmail && (n.email == nil || !n.email.Enabled()) {
@@ -290,7 +306,7 @@ func (n *JobMatchNotifier) RunOnceForAll(ctx context.Context, limit int, emailOv
 }
 
 func (n *JobMatchNotifier) TriggerRunAll(limit int, emailOverride string, sendEmail bool) (JobMatchRunAllStatus, error) {
-	if n == nil || n.resumes == nil || n.matcher == nil {
+	if n == nil || n.resumes == nil || n.users == nil || n.matcher == nil {
 		return JobMatchRunAllStatus{}, errors.New("job match notifier not configured")
 	}
 	if sendEmail && (n.email == nil || !n.email.Enabled()) {
@@ -341,6 +357,50 @@ func (n *JobMatchNotifier) RunAllStatus() JobMatchRunAllStatus {
 	n.runAllMu.Lock()
 	defer n.runAllMu.Unlock()
 	return n.runAllStatus
+}
+
+func filterFreshMatches(item *models.ResumeWithUser, resumeHash string, matches []*models.ResumeJobMatchRecord) []*models.ResumeJobMatchRecord {
+	if item == nil || len(matches) == 0 {
+		return nil
+	}
+	if item.LastJobAlertSentAt == nil {
+		return matches
+	}
+
+	lastSentAt := *item.LastJobAlertSentAt
+	resumeChanged := strings.TrimSpace(item.LastJobAlertResumeHash) != strings.TrimSpace(resumeHash)
+	fresh := make([]*models.ResumeJobMatchRecord, 0, len(matches))
+	for _, match := range matches {
+		if match == nil {
+			continue
+		}
+		if resumeChanged || match.MatchedAt.After(lastSentAt) {
+			fresh = append(fresh, match)
+		}
+	}
+	return fresh
+}
+
+func isJobAlertEnabled(item *models.ResumeWithUser) bool {
+	if item == nil {
+		return false
+	}
+	prefs := strings.TrimSpace(string(item.JobPreferences))
+	if prefs == "" || prefs == "{}" {
+		return true
+	}
+	var raw map[string]interface{}
+	if err := json.Unmarshal(item.JobPreferences, &raw); err != nil {
+		return true
+	}
+	for _, key := range []string{"jobAlertsEnabled", "job_alerts_enabled", "emailJobMatches", "email_job_matches"} {
+		if value, ok := raw[key]; ok {
+			if enabled, ok := value.(bool); ok {
+				return enabled
+			}
+		}
+	}
+	return true
 }
 
 func parseString(raw json.RawMessage) string {

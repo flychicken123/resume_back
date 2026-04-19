@@ -268,7 +268,7 @@ func main() {
 	autofillController := controllers.NewAutofillController(userModel, resumeModel)
 
 	jobsService.StartScheduler(ctx, 24*time.Hour)
-	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
+	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, userModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
 	jobEmbeddingCtrl := controllers.NewJobEmbeddingController(jobEmbeddingBackfill, ctx)
