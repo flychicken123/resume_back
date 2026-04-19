@@ -241,7 +241,7 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
 		var userEmail, userName, lastJobAlertResumeHash string
 		var emailUnsubscribed, marketingOptIn, followupRemindersEnabled bool
-		var jobPreferences json.RawMessage
+		var jobPreferencesText sql.NullString
 		var lastJobAlertSentAt sql.NullTime
 
 		if err := rows.Scan(
@@ -264,7 +264,7 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 			&userName,
 			&emailUnsubscribed,
 			&marketingOptIn,
-			&jobPreferences,
+			&jobPreferencesText,
 			&followupRemindersEnabled,
 			&lastJobAlertSentAt,
 			&lastJobAlertResumeHash,
@@ -279,6 +279,11 @@ func (m *ResumeModel) ListWithUsers() ([]*ResumeWithUser, error) {
 		resume.Education = stringFromAny(educationVal)
 		resume.JobDescription = stringFromAny(jobDescVal)
 		resume.Location = stringFromAny(locationVal)
+
+		jobPreferences := json.RawMessage(`{}`)
+		if jobPreferencesText.Valid && strings.TrimSpace(jobPreferencesText.String) != "" {
+			jobPreferences = json.RawMessage(jobPreferencesText.String)
+		}
 
 		results = append(results, &ResumeWithUser{
 			Resume:                   resume,
@@ -321,7 +326,7 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 	var summaryVal, skillsVal, skillsCatVal, experienceVal, educationVal, jobDescVal, locationVal interface{}
 	var userEmail, userName, lastJobAlertResumeHash string
 	var emailUnsubscribed, marketingOptIn, followupRemindersEnabled bool
-	var jobPreferences json.RawMessage
+	var jobPreferencesText sql.NullString
 	var lastJobAlertSentAt sql.NullTime
 	if err := row.Scan(
 		&resume.ID,
@@ -343,7 +348,7 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 		&userName,
 		&emailUnsubscribed,
 		&marketingOptIn,
-		&jobPreferences,
+		&jobPreferencesText,
 		&followupRemindersEnabled,
 		&lastJobAlertSentAt,
 		&lastJobAlertResumeHash,
@@ -358,6 +363,11 @@ func (m *ResumeModel) GetWithUserByUserID(userID int) (*ResumeWithUser, error) {
 	resume.Education = stringFromAny(educationVal)
 	resume.JobDescription = stringFromAny(jobDescVal)
 	resume.Location = stringFromAny(locationVal)
+
+	jobPreferences := json.RawMessage(`{}`)
+	if jobPreferencesText.Valid && strings.TrimSpace(jobPreferencesText.String) != "" {
+		jobPreferences = json.RawMessage(jobPreferencesText.String)
+	}
 
 	return &ResumeWithUser{
 		Resume:                   resume,
