@@ -114,18 +114,29 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 		}
 		fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedMaps))
 
+		projects, projectErr := loadProjectsForTailor(projectModel, resume.ID)
+		if projectErr != nil {
+			fmt.Printf("[Tailor] Warning: failed to load projects: %v\n", projectErr)
+		}
+
+		tailoredSummary := tailorSummaryForJob(jobDesc, resume, polishedMaps)
+		tailoredProjects := tailorProjectsForJob(jobDesc, projects)
+
 		// Generate tailored HTML
 		var tailoredHTML string
 		if hasSavedHTML {
-			// Best path: replace bullets in the user's actual frontend-rendered HTML
+			// Saved HTML path still preserves the user's exact frontend template,
+			// but now we also inject a JD-specific summary so the result is not
+			// just lightly rewritten bullets.
 			savedHTML = stripUIChrome(savedHTML)
 			tailoredHTML = replaceExperienceBulletsInHTML(savedHTML, experiences, polishedMaps)
+			tailoredHTML = replaceSummaryInHTML(tailoredHTML, tailoredSummary)
 			fmt.Println("[Tailor] Using saved frontend HTML template")
 		} else {
 			// Fallback: user has resume data but hasn't generated a PDF since
 			// we started saving HTML — use a template matching their selected format
 			fmt.Println("[Tailor] No saved HTML, using fallback template")
-			tailoredHTML = renderFallbackTailorHTML(resume, experiences, polishedMaps, projectModel)
+			tailoredHTML = renderFallbackTailorHTML(resume, experiences, polishedMaps, tailoredSummary, tailoredProjects)
 		}
 
 		// Ensure output directory
@@ -403,7 +414,7 @@ func stripUIChrome(h string) string {
 
 // renderFallbackTailorHTML generates HTML using the user's selected template
 // style when no saved frontend HTML exists (user hasn't downloaded a PDF yet).
-func renderFallbackTailorHTML(resume *models.Resume, experiences []models.ExperienceRecord, polished []map[string]interface{}, projectModel *models.ProjectModel) string {
+func renderFallbackTailorHTML(resume *models.Resume, experiences []models.ExperienceRecord, polished []map[string]interface{}, tailoredSummary string, tailoredProjects []tailoredProject) string {
 	name := resume.Name
 	email := resume.Email
 	phone := resume.Phone
@@ -422,7 +433,13 @@ func renderFallbackTailorHTML(resume *models.Resume, experiences []models.Experi
 	contactLine := strings.Join(contactParts, " | ")
 
 	var summarySection string
-	if len(resume.Summary) > 0 {
+	if strings.TrimSpace(tailoredSummary) != "" {
+		summarySection = fmt.Sprintf(`
+    <div class="section">
+        <div class="section-title">Summary</div>
+        <p class="summary-text">%s</p>
+    </div>`, html.EscapeString(strings.TrimSpace(tailoredSummary)))
+	} else if len(resume.Summary) > 0 {
 		var s string
 		if err := json.Unmarshal(resume.Summary, &s); err != nil {
 			s = strings.Trim(string(resume.Summary), "\"")
@@ -505,37 +522,32 @@ func renderFallbackTailorHTML(resume *models.Resume, experiences []models.Experi
 	}
 
 	var projectsSection string
-	if projectModel != nil {
-		projects, err := projectModel.GetByResumeID(resume.ID)
-		if err == nil && len(projects) > 0 {
-			var items strings.Builder
-			for _, p := range projects {
-				header := html.EscapeString(p.ProjectName)
-				if p.Technologies != "" {
-					header += " | " + html.EscapeString(p.Technologies)
-				}
-				fmt.Fprintf(&items, `        <div class="experience-item">
-            <div class="job-header">%s</div>`, header)
-				if p.Description != "" {
-					for _, line := range strings.Split(p.Description, "\n") {
-						line = strings.TrimSpace(line)
-						line = strings.TrimLeft(line, "•-*· ")
-						line = strings.TrimSpace(line)
-						if line != "" {
-							fmt.Fprintf(&items, `
-            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
-						}
-					}
-				}
-				items.WriteString(`
-        </div>`)
+	if len(tailoredProjects) > 0 {
+		var items strings.Builder
+		for _, p := range tailoredProjects {
+			header := html.EscapeString(p.Name)
+			if p.Technologies != "" {
+				header += " | " + html.EscapeString(p.Technologies)
 			}
-			projectsSection = fmt.Sprintf(`
+			fmt.Fprintf(&items, `        <div class="experience-item">
+            <div class="job-header">%s</div>`, header)
+			for _, line := range strings.Split(p.Description, "\n") {
+				line = strings.TrimSpace(line)
+				line = strings.TrimLeft(line, "•-*· ")
+				line = strings.TrimSpace(line)
+				if line != "" {
+					fmt.Fprintf(&items, `
+            <div class="bullet">&bull; %s</div>`, html.EscapeString(line))
+				}
+			}
+			items.WriteString(`
+        </div>`)
+		}
+		projectsSection = fmt.Sprintf(`
     <div class="section">
         <div class="section-title">Projects</div>
 %s
     </div>`, items.String())
-		}
 	}
 
 	var educationSection string
@@ -593,6 +605,101 @@ func formatExpDates(start, end string, currentlyWorking bool) string {
 		return start
 	}
 	return end
+}
+
+type tailoredProject struct {
+	Name         string
+	Technologies string
+	Description  string
+}
+
+func loadProjectsForTailor(projectModel *models.ProjectModel, resumeID int) ([]models.Project, error) {
+	if projectModel == nil {
+		return nil, nil
+	}
+	return projectModel.GetByResumeID(resumeID)
+}
+
+func tailorSummaryForJob(jobDesc string, resume *models.Resume, polished []map[string]interface{}) string {
+	var existingSummary string
+	if len(resume.Summary) > 0 {
+		if err := json.Unmarshal(resume.Summary, &existingSummary); err != nil {
+			existingSummary = strings.Trim(string(resume.Summary), "\"")
+		}
+	}
+
+	var expLines []string
+	for _, p := range polished {
+		if desc, _ := p["description"].(string); strings.TrimSpace(desc) != "" {
+			expLines = append(expLines, desc)
+		}
+	}
+
+	var skills []string
+	if len(resume.Skills) > 0 {
+		_ = json.Unmarshal(resume.Skills, &skills)
+	}
+
+	prompt := services.BuildSummaryOptimizationPromptWithSkills(
+		strings.Join(expLines, "\n"),
+		resume.Education,
+		skills,
+		existingSummary,
+		jobDesc,
+		nil,
+		nil,
+	)
+	result, err := services.CallGeminiStrict(prompt)
+	if err != nil {
+		fmt.Printf("[Tailor] Failed to tailor summary: %v\n", err)
+		return existingSummary
+	}
+	result = strings.TrimSpace(result)
+	if result == "" {
+		return existingSummary
+	}
+	return result
+}
+
+func tailorProjectsForJob(jobDesc string, projects []models.Project) []tailoredProject {
+	if len(projects) == 0 {
+		return nil
+	}
+
+	out := make([]tailoredProject, 0, len(projects))
+	for _, p := range projects {
+		desc := strings.TrimSpace(p.Description)
+		if desc == "" {
+			out = append(out, tailoredProject{Name: p.ProjectName, Technologies: p.Technologies, Description: p.Description})
+			continue
+		}
+		prompt := services.BuildProjectOptimizationPromptWithSkills(jobDesc, desc, desc, nil, nil)
+		result, err := services.CallGeminiStrict(prompt)
+		if err != nil || strings.TrimSpace(result) == "" {
+			if err != nil {
+				fmt.Printf("[Tailor] Failed to tailor project '%s': %v\n", p.ProjectName, err)
+			}
+			result = desc
+		}
+		out = append(out, tailoredProject{
+			Name:         p.ProjectName,
+			Technologies: p.Technologies,
+			Description:  strings.TrimSpace(result),
+		})
+	}
+	return out
+}
+
+func replaceSummaryInHTML(htmlContent, tailoredSummary string) string {
+	if strings.TrimSpace(tailoredSummary) == "" {
+		return htmlContent
+	}
+
+	re := regexp.MustCompile(`(?is)(<div[^>]*class="[^"]*section-title[^"]*"[^>]*>\s*Summary\s*</div>\s*<p[^>]*class="[^"]*summary-text[^"]*"[^>]*>)(.*?)(</p>)`)
+	if re.MatchString(htmlContent) {
+		return re.ReplaceAllString(htmlContent, `${1}`+html.EscapeString(strings.TrimSpace(tailoredSummary))+`${3}`)
+	}
+	return htmlContent
 }
 
 func getFallbackTemplateCSS(selectedFormat string) string {
