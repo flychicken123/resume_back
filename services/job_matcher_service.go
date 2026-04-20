@@ -1163,10 +1163,13 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	return filteredJobs
 }
 
-// applyLLMReRank uses Gemini Flash to re-rank the top K matches based on a
-// richer understanding of the resume and job descriptions. It caches scores
-// per (resume_hash, job_id) to avoid repeat LLM calls.
+// applyLLMReRank uses the CopilotAgent (Gemini Pro) to re-rank the top K
+// matches based on a richer understanding of the resume and job descriptions.
+// It caches scores per (resume_hash, job_id) to avoid repeat LLM calls.
 func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobMatchInput, scored []scoredJob, maxResults int) {
+	if s.copilot == nil {
+		return
+	}
 	if len(scored) == 0 {
 		return
 	}
@@ -1253,34 +1256,7 @@ func (s *jobMatcherService) applyLLMReRank(ctx context.Context, input ResumeJobM
 	ctxWithTimeout, cancel := context.WithTimeout(ctx, llmReRankTimeout)
 	defer cancel()
 
-	// Call Flash with timeout wrapper
-	type llmResult struct {
-		raw string
-		err error
-	}
-	ch := make(chan llmResult, 1)
-	go func() {
-		r, e := CallGeminiFlashWithTemperature(prompt, 0.3)
-		ch <- llmResult{r, e}
-	}()
-
-	var raw string
-	var err error
-	select {
-	case res := <-ch:
-		raw, err = res.raw, res.err
-	case <-ctxWithTimeout.Done():
-		s.logger.Warn("job re-rank LLM timed out", nil)
-		// Re-sort with whatever scores we have (cached + heuristic)
-		sort.Slice(scored[:k], func(i, j int) bool {
-			if scored[i].score == scored[j].score {
-				return scored[i].posting.LastSeenAt.After(scored[j].posting.LastSeenAt)
-			}
-			return scored[i].score > scored[j].score
-		})
-		return
-	}
-
+	raw, err := s.copilot.RunPrompt(ctxWithTimeout, prompt)
 	if err != nil {
 		s.logger.Warn("job re-rank LLM failed", map[string]interface{}{"error": err.Error()})
 		sort.Slice(scored[:k], func(i, j int) bool {
