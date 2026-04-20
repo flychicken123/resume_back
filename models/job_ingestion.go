@@ -586,7 +586,8 @@ func isRecoverableJobRowError(err error) bool {
 		strings.Contains(msg, "corrupted") ||
 		strings.Contains(msg, "unexpected eof") ||
 		strings.Contains(msg, "invalid compressed") ||
-		strings.Contains(msg, "toast")
+		strings.Contains(msg, "toast") ||
+		strings.Contains(msg, "pglz")
 }
 
 // DB returns the underlying database connection for direct queries.
@@ -769,6 +770,22 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
     `, strings.Join(where, " AND "), placeholder)
 
 	rows, err := m.db.Query(query, args...)
+	if err != nil && isRecoverableJobRowError(err) {
+		fallbackQuery := fmt.Sprintf(`
+        SELECT id, company_id, external_job_id, title,
+               COALESCE(location, ''), COALESCE(remote_type, ''),
+               COALESCE(department, ''), COALESCE(employment_type, ''),
+               job_url, COALESCE(application_url, ''),
+               '' AS description, salary_min, salary_max, COALESCE(salary_currency, ''),
+               posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+               COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, '')
+        FROM job_postings
+        WHERE %s
+        ORDER BY COALESCE(posted_at, first_seen_at) DESC
+        LIMIT $%d
+    `, strings.Join(where, " AND "), placeholder)
+		rows, err = m.db.Query(fallbackQuery, args...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -902,6 +919,32 @@ func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string
 	`, strings.Join(conditions, " OR "), limitPlaceholder)
 
 	rows, err := m.db.Query(query, args...)
+	if err != nil && isRecoverableJobRowError(err) {
+		fallbackConditions := make([]string, 0, len(searchTerms))
+		fallbackArgs := make([]interface{}, 0, len(searchTerms)+1)
+		for i, term := range searchTerms {
+			pattern := "%" + term + "%"
+			placeholder := i + 1
+			fallbackConditions = append(fallbackConditions, fmt.Sprintf("(LOWER(title) LIKE $%d OR LOWER(COALESCE(department, '')) LIKE $%d)", placeholder, placeholder))
+			fallbackArgs = append(fallbackArgs, pattern)
+		}
+		fallbackArgs = append(fallbackArgs, limit)
+		fallbackQuery := fmt.Sprintf(`
+			SELECT id, company_id, external_job_id, title,
+			       COALESCE(location, ''), COALESCE(remote_type, ''),
+			       COALESCE(department, ''), COALESCE(employment_type, ''),
+			       job_url, COALESCE(application_url, ''),
+			       '' AS description, salary_min, salary_max, COALESCE(salary_currency, ''),
+			       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+			       COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, '')
+			FROM job_postings
+			WHERE is_active = TRUE
+			  AND (%s)
+			ORDER BY COALESCE(posted_at, first_seen_at) DESC
+			LIMIT $%d
+		`, strings.Join(fallbackConditions, " OR "), len(searchTerms)+1)
+		rows, err = m.db.Query(fallbackQuery, fallbackArgs...)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1092,6 +1135,25 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 	`
 
 	rows, err := tx.QueryContext(ctx, query, pgvector.NewVector(embedding), threshold, limit)
+	if err != nil && isRecoverableJobRowError(err) {
+		const fallbackQuery = `
+			SELECT id, company_id, external_job_id, title,
+			       COALESCE(location, ''), COALESCE(remote_type, ''),
+			       COALESCE(department, ''), COALESCE(employment_type, ''),
+			       job_url, COALESCE(application_url, ''),
+			       '' AS description, salary_min, salary_max, COALESCE(salary_currency, ''),
+			       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+			       COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, ''),
+			       1 - (embedding <=> $1::halfvec) AS similarity
+			FROM job_postings
+			WHERE is_active = TRUE
+			  AND embedding IS NOT NULL
+			  AND 1 - (embedding <=> $1::halfvec) >= $2
+			ORDER BY embedding <=> $1::halfvec
+			LIMIT $3
+		`
+		rows, err = tx.QueryContext(ctx, fallbackQuery, pgvector.NewVector(embedding), threshold, limit)
+	}
 	if err != nil {
 		return nil, err
 	}

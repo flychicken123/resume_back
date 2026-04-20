@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lib/pq"
@@ -100,6 +101,75 @@ func (m *ResumeJobMatchModel) UpsertMatches(userID int, resumeHash string, match
 	return err
 }
 
+func resumeJobMatchesQueryWithEmbedding(scopeFilter string, limitPlaceholder string) string {
+	return fmt.Sprintf(`
+        WITH dismiss_centroid AS (
+            SELECT AVG(jp.embedding) AS centroid
+            FROM dismissed_job_matches djm
+            JOIN job_postings jp ON jp.id = djm.job_posting_id
+            WHERE djm.user_id = $1 AND jp.embedding IS NOT NULL
+            HAVING COUNT(*) >= 3
+        )
+        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
+               CASE WHEN dc.centroid IS NOT NULL AND p.embedding IS NOT NULL
+                    THEN GREATEST(0, m.match_score - GREATEST(0,
+                        (1 - (p.embedding <=> dc.centroid) - 0.70) * 15))
+                    ELSE m.match_score
+               END AS match_score,
+               m.matched_at,
+               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
+        FROM resume_job_matches m
+        JOIN job_postings p ON p.id = m.job_posting_id
+        LEFT JOIN job_companies c ON c.id = p.company_id
+        LEFT JOIN dismiss_centroid dc ON TRUE
+        WHERE %s
+          AND m.job_posting_id NOT IN (
+              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
+        ORDER BY match_score DESC, m.matched_at DESC
+        LIMIT %s
+    `, scopeFilter, limitPlaceholder)
+}
+
+func resumeJobMatchesQueryWithoutEmbedding(scopeFilter string, limitPlaceholder string) string {
+	return fmt.Sprintf(`
+        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
+               m.match_score,
+               m.matched_at,
+               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
+               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
+               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
+        FROM resume_job_matches m
+        JOIN job_postings p ON p.id = m.job_posting_id
+        LEFT JOIN job_companies c ON c.id = p.company_id
+        WHERE %s
+          AND m.job_posting_id NOT IN (
+              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
+        ORDER BY match_score DESC, m.matched_at DESC
+        LIMIT %s
+    `, scopeFilter, limitPlaceholder)
+}
+
+func shouldRetryResumeMatchesWithoutEmbedding(err error) bool {
+	if err == nil {
+		return false
+	}
+	if isUndefinedColumnError(err) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "embedding") && strings.Contains(msg, "does not exist")
+}
+
+func (m *ResumeJobMatchModel) queryMatchRows(primaryQuery string, fallbackQuery string, args ...interface{}) (*sql.Rows, error) {
+	rows, err := m.db.Query(primaryQuery, args...)
+	if err != nil && fallbackQuery != "" && shouldRetryResumeMatchesWithoutEmbedding(err) {
+		return m.db.Query(fallbackQuery, args...)
+	}
+	return rows, err
+}
+
 // DeleteOlderThan removes matches with matched_at before the threshold.
 func (m *ResumeJobMatchModel) DeleteOlderThan(threshold time.Time) (int64, error) {
 	if m == nil || m.db == nil {
@@ -123,36 +193,10 @@ func (m *ResumeJobMatchModel) ListByUserAndResume(userID int, resumeHash string,
 		fetchLimit = limit
 	}
 
-	query := `
-        WITH dismiss_centroid AS (
-            SELECT AVG(jp.embedding) AS centroid
-            FROM dismissed_job_matches djm
-            JOIN job_postings jp ON jp.id = djm.job_posting_id
-            WHERE djm.user_id = $1 AND jp.embedding IS NOT NULL
-            HAVING COUNT(*) >= 3
-        )
-        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
-               CASE WHEN dc.centroid IS NOT NULL AND p.embedding IS NOT NULL
-                    THEN GREATEST(0, m.match_score - GREATEST(0,
-                        (1 - (p.embedding <=> dc.centroid) - 0.70) * 15))
-                    ELSE m.match_score
-               END AS match_score,
-               m.matched_at,
-               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
-               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
-        FROM resume_job_matches m
-        JOIN job_postings p ON p.id = m.job_posting_id
-        LEFT JOIN job_companies c ON c.id = p.company_id
-        LEFT JOIN dismiss_centroid dc ON TRUE
-        WHERE m.user_id = $1 AND m.resume_hash = $2
-          AND m.job_posting_id NOT IN (
-              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
-        ORDER BY match_score DESC, m.matched_at DESC
-        LIMIT $3
-    `
+	query := resumeJobMatchesQueryWithEmbedding("m.user_id = $1 AND m.resume_hash = $2", "$3")
+	fallbackQuery := resumeJobMatchesQueryWithoutEmbedding("m.user_id = $1 AND m.resume_hash = $2", "$3")
 
-	rows, err := m.db.Query(query, userID, resumeHash, fetchLimit)
+	rows, err := m.queryMatchRows(query, fallbackQuery, userID, resumeHash, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
@@ -253,36 +297,10 @@ func (m *ResumeJobMatchModel) ListTopMatchesForUser(userID int, limit int) ([]*R
 		fetchLimit = limit
 	}
 
-	query := `
-        WITH dismiss_centroid AS (
-            SELECT AVG(jp.embedding) AS centroid
-            FROM dismissed_job_matches djm
-            JOIN job_postings jp ON jp.id = djm.job_posting_id
-            WHERE djm.user_id = $1 AND jp.embedding IS NOT NULL
-            HAVING COUNT(*) >= 3
-        )
-        SELECT m.id, m.user_id, m.resume_hash, m.job_posting_id,
-               CASE WHEN dc.centroid IS NOT NULL AND p.embedding IS NOT NULL
-                    THEN GREATEST(0, m.match_score - GREATEST(0,
-                        (1 - (p.embedding <=> dc.centroid) - 0.70) * 15))
-                    ELSE m.match_score
-               END AS match_score,
-               m.matched_at,
-               COALESCE(p.title, ''), COALESCE(p.location, ''), COALESCE(p.remote_type, ''),
-               COALESCE(p.department, ''), COALESCE(p.employment_type, ''), p.job_url,
-               COALESCE(p.description, ''), p.company_id, c.name, p.posted_at, m.fit_reasons
-        FROM resume_job_matches m
-        JOIN job_postings p ON p.id = m.job_posting_id
-        LEFT JOIN job_companies c ON c.id = p.company_id
-        LEFT JOIN dismiss_centroid dc ON TRUE
-        WHERE m.user_id = $1
-          AND m.job_posting_id NOT IN (
-              SELECT job_posting_id FROM dismissed_job_matches WHERE user_id = $1)
-        ORDER BY match_score DESC, m.matched_at DESC
-        LIMIT $2
-    `
+	query := resumeJobMatchesQueryWithEmbedding("m.user_id = $1", "$2")
+	fallbackQuery := resumeJobMatchesQueryWithoutEmbedding("m.user_id = $1", "$2")
 
-	rows, err := m.db.Query(query, userID, fetchLimit)
+	rows, err := m.queryMatchRows(query, fallbackQuery, userID, fetchLimit)
 	if err != nil {
 		return nil, err
 	}
