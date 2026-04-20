@@ -145,7 +145,12 @@ Message: "%s"
 
 Reply with one word only: ACTION or QUESTION`, userMessage)
 
-	result, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	result, err := CallWithRateLimitRetry(context.Background(), DefaultRetryConfig(),
+		func(ctx context.Context) (string, error) {
+			return CallGeminiFlashWithTemperature(prompt, 0.0)
+		},
+		RetryOpts{Endpoint: "classify_intent"},
+	)
 	if err != nil {
 		return false
 	}

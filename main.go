@@ -140,7 +140,10 @@ func main() {
 	stripeService := services.NewStripeService(db)
 	adService := services.NewAdService(db)
 	emailService := services.NewEmailService(logger)
-	jobsService := services.NewJobIngestionService(db, logger, embeddingSvc, ctx)
+	jobsService := services.NewJobIngestionService(db, logger, embeddingSvc, ctx, services.ClassifyThrottleConfig{
+		PerJobDelayMS: appConfig.ClassifyPerJobDelayMS,
+		BatchSize:     appConfig.ClassifyBatchSize,
+	})
 	experimentService := services.NewExperimentService(experimentModel)
 
 	// Initialize the LangChain-backed copilot agent once and share it between
@@ -707,6 +710,11 @@ func main() {
 			admin.POST("/jobs/classify/backfill", jobClassifyCtrl.StartBackfill)
 			admin.GET("/jobs/classify/backfill/status", jobClassifyCtrl.GetStatus)
 			admin.DELETE("/jobs/classify/backfill", jobClassifyCtrl.StopBackfill)
+
+			admin.POST("/classify/stop", handlers.ClassifyStopHandler(&classifyStopperAdapter{
+				backfill:  jobClassifyBackfill,
+				ingestion: jobsService,
+			}))
 
 			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
 			admin.GET("/benchmark/status", benchmarkCtrl.GetStatus)

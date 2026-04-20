@@ -87,6 +87,29 @@ func (s *JobClassifyBackfillService) Stop() {
 	}
 }
 
+// Cancel stops the running backfill and reports whether a run was active.
+// Returns false if no run was in progress, true if a run was cancelled.
+// Safe to call multiple times; only the first call after a Trigger returns true.
+func (s *JobClassifyBackfillService) Cancel() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cancel == nil {
+		return false
+	}
+	s.cancel()
+	s.cancel = nil
+	return true
+}
+
+// setRunningForTest seeds run state for unit tests without spawning a goroutine.
+func (s *JobClassifyBackfillService) setRunningForTest(ctx context.Context, cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cancel = cancel
+	s.status.Running = true
+	_ = ctx
+}
+
 // Status returns a snapshot of the current backfill status.
 func (s *JobClassifyBackfillService) Status() JobClassifyBackfillStatus {
 	s.mu.Lock()

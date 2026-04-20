@@ -720,12 +720,20 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 
 	// First call always runs as blocking (no streaming) so we can decide
 	// whether to show the response or silently retry before the user sees anything.
-	reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
+	// Retries only 429-class errors when no tool has fired yet — avoids double-invoking
+	// tools on a post-tool rate-limit error. See services/retry.go.
+	reply, toolMeta, err = chatCallWithRetry(func() (string, *services.ToolCallMetadata, error) {
+		return services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
+	})
 	if err != nil {
+		msg := "Sorry, something went wrong. Please try again."
+		if services.IsRateLimitErr(err) {
+			msg = "I'm getting a lot of traffic right now, give me a few seconds and try again."
+		}
 		if isStream {
-			sse.WriteError("Sorry, something went wrong. Please try again.")
+			sse.WriteError(msg)
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": msg})
 		}
 		return
 	}

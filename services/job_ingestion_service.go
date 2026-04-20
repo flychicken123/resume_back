@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/api/googleapi"
@@ -98,22 +99,31 @@ type ATSProvider interface {
 	FetchJobs(ctx context.Context, company *models.JobCompany) ([]*models.JobPosting, error)
 }
 
+type ClassifyThrottleConfig struct {
+	PerJobDelayMS int
+	BatchSize     int
+}
+
 type JobIngestionService struct {
-	companyModel *models.JobCompanyModel
-	postingModel *models.JobPostingModel
-	syncRunModel *models.JobSyncRunModel
-	providers    map[string]ATSProvider
-	logger       *utils.Logger
-	clock        func() time.Time
-	embeddingSvc *EmbeddingService
-	ctx          context.Context
-	embedMu      sync.Mutex
-	embedRunning bool
+	companyModel  *models.JobCompanyModel
+	postingModel  *models.JobPostingModel
+	syncRunModel  *models.JobSyncRunModel
+	providers     map[string]ATSProvider
+	logger        *utils.Logger
+	clock         func() time.Time
+	embeddingSvc  *EmbeddingService
+	ctx           context.Context
+	embedMu       sync.Mutex
+	embedRunning  bool
+	throttle      ClassifyThrottleConfig
+	classifyPaused atomic.Bool
+	classifyOneFn func(ctx context.Context, id int64) error
+	testLogger    retryLogger
 }
 
 const dailySyncInterval = 24 * time.Hour
 
-func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *EmbeddingService, ctx context.Context) *JobIngestionService {
+func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *EmbeddingService, ctx context.Context, throttle ClassifyThrottleConfig) *JobIngestionService {
 	if logger == nil {
 		logger = utils.NewLogger()
 	}
@@ -130,6 +140,7 @@ func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *Embe
 		clock:        time.Now,
 		embeddingSvc: embeddingSvc,
 		ctx:          ctx,
+		throttle:     throttle,
 	}
 
 	httpClient := &http.Client{Timeout: 20 * time.Second}
@@ -258,71 +269,102 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	return result, nil
 }
 
+// PauseClassifier stops the classify loop from starting new work. Existing
+// in-flight classifications complete normally.
+func (s *JobIngestionService) PauseClassifier() {
+	s.classifyPaused.Store(true)
+}
+
+// ResumeClassifier re-enables classification after a PauseClassifier call.
+func (s *JobIngestionService) ResumeClassifier() {
+	s.classifyPaused.Store(false)
+}
+
+// IsClassifierPaused reports whether the classify loop is currently paused.
+func (s *JobIngestionService) IsClassifierPaused() bool {
+	return s.classifyPaused.Load()
+}
+
+// classifyOne runs a single classification round-trip. Separated out so tests can
+// swap it via classifyOneFn without exercising the real Gemini call.
+func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
+	if s.classifyOneFn != nil {
+		return s.classifyOneFn(ctx, id)
+	}
+
+	job, err := s.postingModel.GetByIDForEmbedding(ctx, id)
+	if err != nil || job == nil {
+		return err
+	}
+	if job.CareerField != "" && len(job.ExtractedSkills) > 0 && job.Seniority != "" {
+		return nil
+	}
+
+	prompt := BuildJobClassificationPrompt(job.Title, job.Description)
+
+	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+		func(ctx context.Context) (string, error) {
+			return CallGeminiFlashWithTemperature(prompt, 0.0)
+		},
+		RetryOpts{Endpoint: "classify_job", Logger: s.logger},
+	)
+	if err != nil {
+		return err
+	}
+
+	field, skills, seniority := ParseJobClassificationResponse(raw)
+	return s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority)
+}
+
 // classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority for newly inserted jobs.
+// Throttle defaults (500ms per job, batch size 5) are applied by config.GetAppConfig;
+// the service trusts its caller to pass sensible values and respects 0 as "no sleep".
 func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {
+	delayMS := s.throttle.PerJobDelayMS
+	batchSize := s.throttle.BatchSize
+
+	s.emitClassifyTick(batchSize, delayMS, len(ids))
+
 	for _, id := range ids {
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			return
-		default:
+		}
+		if s.classifyPaused.Load() {
+			return
 		}
 
-		job, err := s.postingModel.GetByIDForEmbedding(ctx, id)
-		if err != nil || job == nil {
-			continue
-		}
-		if job.CareerField != "" && len(job.ExtractedSkills) > 0 && job.Seniority != "" {
-			continue
-		}
-
-		prompt := BuildJobClassificationPrompt(job.Title, job.Description)
-
-		// Retry with backoff on rate limit
-		var raw string
-		var callErr error
-		for attempt := 0; attempt < 3; attempt++ {
-			raw, callErr = CallGeminiFlashWithTemperature(prompt, 0.0)
-			if callErr == nil {
-				break
+		if err := s.classifyOne(ctx, id); err != nil {
+			if ctx.Err() != nil {
+				return
 			}
-			errMsg := strings.ToLower(callErr.Error())
-			if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "rate") || strings.Contains(errMsg, "resource_exhausted") {
-				backoff := time.Duration(1<<uint(attempt)) * 2 * time.Second
-				s.logger.Warn("job classification rate limited, backing off", map[string]interface{}{
-					"jobID":   id,
-					"backoff": backoff.String(),
-				})
-				select {
-				case <-time.After(backoff):
-				case <-ctx.Done():
-					return
-				}
-				continue
-			}
-			break
-		}
-		if callErr != nil {
 			s.logger.Warn("job classification failed", map[string]interface{}{
-				"jobID": id,
-				"error": callErr.Error(),
-			})
-			continue
-		}
-
-		field, skills, seniority := ParseJobClassificationResponse(raw)
-		if err := s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
-			s.logger.Warn("failed to store job classification", map[string]interface{}{
 				"jobID": id,
 				"error": err.Error(),
 			})
 		}
 
-		// Rate limit: 200ms delay between jobs to avoid hammering Gemini
-		select {
-		case <-time.After(200 * time.Millisecond):
-		case <-ctx.Done():
-			return
+		if delayMS > 0 {
+			select {
+			case <-time.After(time.Duration(delayMS) * time.Millisecond):
+			case <-ctx.Done():
+				return
+			}
 		}
+	}
+}
+
+func (s *JobIngestionService) emitClassifyTick(batchSize, delayMS, remaining int) {
+	fields := map[string]interface{}{
+		"batch_size":        batchSize,
+		"delay_ms":          delayMS,
+		"remaining_backlog": remaining,
+	}
+	if s.testLogger != nil {
+		s.testLogger.Warn("classify_tick", fields)
+		return
+	}
+	if s.logger != nil {
+		s.logger.Info("classify_tick", fields)
 	}
 }
 
