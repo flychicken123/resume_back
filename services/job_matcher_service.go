@@ -166,6 +166,9 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 
 	position := strings.ToLower(strings.TrimSpace(input.Position))
 	skills := normaliseSkills(input.Skills)
+	if len(skills) == 0 {
+		skills = ExtractSkillsFromText(strings.Join([]string{input.Summary, input.Experience, input.Education, input.JobDescription}, " "))
+	}
 
 	// Attempt to generate a resume embedding for vector search
 	var vec []float32
@@ -911,9 +914,9 @@ func countTokenOverlap(a, b []string) int {
 }
 
 const (
-	aiCareerFilterBatchSize       = 75               // Number of jobs per AI call
-	aiCareerFilterTimeout         = 12 * time.Second // Timeout per AI call
-	aiCareerFieldClassifyTimeout  = 8 * time.Second  // Timeout for career field classification
+	aiCareerFilterBatchSize      = 75               // Number of jobs per AI call
+	aiCareerFilterTimeout        = 12 * time.Second // Timeout per AI call
+	aiCareerFieldClassifyTimeout = 8 * time.Second  // Timeout for career field classification
 )
 
 // batchResult holds the result of processing a single batch
@@ -1026,10 +1029,10 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	}
 
 	s.logger.Info("AI career field filter cache check", map[string]interface{}{
-		"careerField":   string(careerField),
-		"totalJobs":     len(jobs),
-		"cacheHits":     cacheHits,
-		"cacheMisses":   cacheMisses,
+		"careerField":    string(careerField),
+		"totalJobs":      len(jobs),
+		"cacheHits":      cacheHits,
+		"cacheMisses":    cacheMisses,
 		"cachedRelevant": len(cachedRelevant),
 	})
 
@@ -1164,10 +1167,10 @@ func (s *jobMatcherService) applyAICareerFieldFilter(ctx context.Context, input 
 	filterRate := float64(len(jobs)-len(filteredJobs)) / float64(len(jobs))
 	if len(jobs) > 20 && filterRate > 0.80 {
 		s.logger.Warn("AI career field filter was too aggressive, returning all jobs", map[string]interface{}{
-			"careerField":     string(careerField),
-			"originalCount":   len(jobs),
-			"filteredCount":   len(filteredJobs),
-			"filterRate":      filterRate,
+			"careerField":   string(careerField),
+			"originalCount": len(jobs),
+			"filteredCount": len(filteredJobs),
+			"filterRate":    filterRate,
 		})
 		return jobs
 	}

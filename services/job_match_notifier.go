@@ -143,15 +143,18 @@ func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.Resum
 	skills := parseSkills(resume.Skills)
 	summary := parseString(resume.Summary)
 
+	var exps []models.ExperienceRecord
 	experienceText := strings.TrimSpace(resume.Experience)
-	if experienceText == "" {
-		if exps, err := n.resumes.GetExperiencesByResumeID(resume.ID); err == nil {
+	if fetched, err := n.resumes.GetExperiencesByResumeID(resume.ID); err == nil {
+		exps = fetched
+		if experienceText == "" {
 			experienceText = summariseExperiences(exps)
 		}
 	}
+	matchPosition := deriveMatchPosition(resume.Name, exps)
 
 	hashInput := ResumeHashInput{
-		Position:       resume.Name,
+		Position:       matchPosition,
 		Name:           resume.Name,
 		Email:          resume.Email,
 		Summary:        summary,
@@ -166,7 +169,7 @@ func (n *JobMatchNotifier) processResume(ctx context.Context, item *models.Resum
 	matchInput := ResumeJobMatchInput{
 		UserID:            resume.UserID,
 		ResumeHash:        resumeHash,
-		Position:          resume.Name,
+		Position:          matchPosition,
 		Summary:           summary,
 		Experience:        experienceText,
 		Education:         resume.Education,
@@ -488,6 +491,27 @@ func normalizeSkills(skills []string) []string {
 		normalized = append(normalized, s)
 	}
 	return normalized
+}
+
+func deriveMatchPosition(name string, exps []models.ExperienceRecord) string {
+	var fallback string
+	for _, exp := range exps {
+		title := strings.TrimSpace(exp.JobTitle)
+		if title == "" {
+			continue
+		}
+		if fallback == "" {
+			fallback = title
+		}
+		lower := strings.ToLower(title)
+		if strings.Contains(lower, "engineer") || strings.Contains(lower, "developer") || strings.Contains(lower, "architect") || strings.Contains(lower, "tech lead") {
+			return title
+		}
+	}
+	if fallback != "" {
+		return fallback
+	}
+	return strings.TrimSpace(name)
 }
 
 func summariseExperiences(exps []models.ExperienceRecord) string {
