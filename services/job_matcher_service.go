@@ -191,11 +191,34 @@ func (s *jobMatcherService) MatchAndStore(ctx context.Context, input ResumeJobMa
 				s.logger.Info("job match: embedding DB cache hit, skipping API call")
 			}
 		}
-		// Cache miss — call the API
+		// Cache miss — call the API with retry on 429/quota errors
 		if len(vec) == 0 {
-			embCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
-			defer cancel()
-			v, err := s.embeddingSvc.EmbedResumeContent(embCtx, input)
+			var v []float32
+			var err error
+			for attempt := 0; attempt < 3; attempt++ {
+				embCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+				v, err = s.embeddingSvc.EmbedResumeContent(embCtx, input)
+				cancel()
+				if err == nil && len(v) > 0 {
+					break
+				}
+				if err != nil {
+					errMsg := strings.ToLower(err.Error())
+					if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "resource_exhausted") || strings.Contains(errMsg, "rate") {
+						backoff := time.Duration(1<<uint(attempt)) * time.Second
+						s.logger.Warn("job match: resume embedding rate limited, retrying", map[string]interface{}{
+							"attempt": attempt + 1,
+							"backoff": backoff.String(),
+						})
+						select {
+						case <-time.After(backoff):
+						case <-ctx.Done():
+						}
+						continue
+					}
+				}
+				break // non-retryable error
+			}
 			if err != nil || len(v) == 0 {
 				s.logger.Warn("job match: resume embedding failed, falling back to keyword search", map[string]interface{}{"error": func() string {
 					if err != nil {

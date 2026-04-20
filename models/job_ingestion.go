@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lib/pq"
@@ -534,6 +535,10 @@ func (m *JobCompanyModel) SetCompanyActive(companyID int, active bool) error {
 // JobPostingModel manages job_postings records
 type JobPostingModel struct {
 	db *sql.DB
+
+	hasEmbeddingColumnOnce sync.Once
+	hasEmbeddingColumn     bool
+	hasEmbeddingColumnErr  error
 }
 
 func (m *JobCompanyModel) UpdateCareersURL(companyID int, careersURL string) error {
@@ -556,6 +561,32 @@ func (m *JobCompanyModel) ResetFailures(companyID int) error {
 
 func NewJobPostingModel(db *sql.DB) *JobPostingModel {
 	return &JobPostingModel{db: db}
+}
+
+func (m *JobPostingModel) checkHasEmbeddingColumn(ctx context.Context) (bool, error) {
+	m.hasEmbeddingColumnOnce.Do(func() {
+		m.hasEmbeddingColumnErr = m.db.QueryRowContext(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				FROM information_schema.columns
+				WHERE table_schema = 'public' AND table_name = 'job_postings' AND column_name = 'embedding'
+			)
+		`).Scan(&m.hasEmbeddingColumn)
+	})
+	return m.hasEmbeddingColumn, m.hasEmbeddingColumnErr
+}
+
+func isRecoverableJobRowError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "compressed") ||
+		strings.Contains(msg, "corrupt") ||
+		strings.Contains(msg, "corrupted") ||
+		strings.Contains(msg, "unexpected eof") ||
+		strings.Contains(msg, "invalid compressed") ||
+		strings.Contains(msg, "toast")
 }
 
 // DB returns the underlying database connection for direct queries.
@@ -780,6 +811,9 @@ func (m *JobPostingModel) ListActive(companyID *int, limit int) ([]*JobPosting, 
 			(*pq.StringArray)(&posting.ExtractedSkills),
 			&posting.Seniority,
 		); err != nil {
+			if isRecoverableJobRowError(err) {
+				continue
+			}
 			return nil, err
 		}
 
@@ -858,7 +892,8 @@ func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string
 		       COALESCE(department, ''), COALESCE(employment_type, ''),
 		       job_url, COALESCE(application_url, ''),
 		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
-		       posted_at, first_seen_at, last_seen_at, closed_at, is_active
+		       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
+		       COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, '')
 		FROM job_postings
 		WHERE is_active = TRUE
 		  AND (%s)
@@ -909,6 +944,9 @@ func (m *JobPostingModel) ListActiveByRelevance(skills []string, position string
 			(*pq.StringArray)(&posting.ExtractedSkills),
 			&posting.Seniority,
 		); err != nil {
+			if isRecoverableJobRowError(err) {
+				continue
+			}
 			return nil, err
 		}
 
@@ -1018,6 +1056,14 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 		limit = 500
 	}
 
+	hasEmbeddingColumn, err := m.checkHasEmbeddingColumn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !hasEmbeddingColumn {
+		return nil, fmt.Errorf("job_postings.embedding column unavailable")
+	}
+
 	tx, err := m.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
@@ -1035,7 +1081,7 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 		       job_url, COALESCE(application_url, ''),
 		       COALESCE(description, ''), salary_min, salary_max, COALESCE(salary_currency, ''),
 		       posted_at, first_seen_at, last_seen_at, closed_at, is_active,
-		       COALESCE(career_field, ''), extracted_skills,
+		       COALESCE(career_field, ''), extracted_skills, COALESCE(seniority, ''),
 		       1 - (embedding <=> $1::halfvec) AS similarity
 		FROM job_postings
 		WHERE is_active = TRUE
@@ -1089,6 +1135,9 @@ func (m *JobPostingModel) ListActiveByVectorSimilarity(ctx context.Context, embe
 			&posting.Seniority,
 			&posting.EmbeddingSimilarity,
 		); err != nil {
+			if isRecoverableJobRowError(err) {
+				continue
+			}
 			return nil, err
 		}
 
