@@ -14,6 +14,7 @@ import (
 	"resumeai/models"
 	"resumeai/services"
 	"resumeai/utils"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -270,7 +271,13 @@ func main() {
 
 	autofillController := controllers.NewAutofillController(userModel, resumeModel)
 
-	jobsService.StartScheduler(ctx, 24*time.Hour)
+	aiBackgroundDisabled := strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_AI_BACKGROUND_JOBS")), "true")
+	if aiBackgroundDisabled {
+		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; scheduler, benchmark, and notifier loops will NOT start", nil)
+		jobsService.PauseClassifier()
+	} else {
+		jobsService.StartScheduler(ctx, 24*time.Hour)
+	}
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
@@ -280,8 +287,10 @@ func main() {
 	benchmarkModel := models.NewAiBenchmarkModel(db)
 	benchmarkSvc := services.NewBenchmarkService(jobPostingModel, jobMatchModel, benchmarkModel, logger)
 	benchmarkCtrl := controllers.NewBenchmarkController(benchmarkSvc, ctx)
-	benchmarkSvc.StartScheduler(ctx)
-	jobMatchNotifier.Start(ctx, 100*time.Hour)
+	if !aiBackgroundDisabled {
+		benchmarkSvc.StartScheduler(ctx)
+		jobMatchNotifier.Start(ctx, 100*time.Hour)
+	}
 
 	r := gin.New()
 	r.Use(gin.Logger())

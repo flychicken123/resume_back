@@ -320,6 +320,9 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 // Throttle defaults (500ms per job, batch size 5) are applied by config.GetAppConfig;
 // the service trusts its caller to pass sensible values and respects 0 as "no sleep".
 func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {
+	if aiBackgroundJobsDisabled() {
+		return
+	}
 	delayMS := s.throttle.PerJobDelayMS
 	batchSize := s.throttle.BatchSize
 
@@ -372,6 +375,9 @@ func (s *JobIngestionService) emitClassifyTick(batchSize, delayMS, remaining int
 // Only one batch runs at a time; concurrent calls are silently skipped (jobs will be
 // picked up by the next backfill run).
 func (s *JobIngestionService) embedJobPostingsBatch(ctx context.Context, ids []int64) {
+	if aiBackgroundJobsDisabled() {
+		return
+	}
 	s.embedMu.Lock()
 	if s.embedRunning {
 		s.embedMu.Unlock()
