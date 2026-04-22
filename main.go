@@ -725,6 +725,8 @@ func main() {
 				ingestion: jobsService,
 			}))
 
+			admin.GET("/gemini/diag", handlers.GeminiDiagHandler())
+
 			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
 			admin.GET("/benchmark/status", benchmarkCtrl.GetStatus)
 			admin.GET("/benchmark/results", benchmarkCtrl.GetResults)
