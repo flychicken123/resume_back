@@ -726,6 +726,9 @@ func main() {
 			}))
 
 			admin.GET("/gemini/diag", handlers.GeminiDiagHandler())
+			admin.GET("/gemini/raw", handlers.GeminiRawDiagHandler())
+			admin.GET("/gemini/burst", handlers.GeminiBurstDiagHandler())
+			admin.GET("/gemini/multi", handlers.GeminiMultiModelDiagHandler())
 
 			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
 			admin.GET("/benchmark/status", benchmarkCtrl.GetStatus)
