@@ -78,6 +78,10 @@ func getLangChainModel() (llms.Model, error) {
 }
 
 func CallGeminiWithAPIKey(prompt string) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainModel()
 	if err != nil {
 		return "", err
@@ -114,6 +118,10 @@ func getLangChainFlashModel() (llms.Model, error) {
 
 // CallGeminiFlash calls Gemini Flash model which is 5-10x faster than Pro.
 func CallGeminiFlash(prompt string) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainFlashModel()
 	if err != nil {
 		return "", err
@@ -124,6 +132,10 @@ func CallGeminiFlash(prompt string) (string, error) {
 
 // CallGeminiFlashWithTemperature calls Gemini Flash with a specific temperature.
 func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainFlashModel()
 	if err != nil {
 		return "", err
@@ -159,6 +171,10 @@ Reply with one word only: ACTION or QUESTION`, userMessage)
 
 // CallGeminiStreaming streams tokens via callback and returns the full text.
 func CallGeminiStreaming(prompt string, onChunk func(chunk string)) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainModel()
 	if err != nil {
 		return "", err
@@ -177,6 +193,10 @@ func CallGeminiStreaming(prompt string, onChunk func(chunk string)) (string, err
 
 // CallGeminiStreamingWithTemperature streams tokens with temperature control.
 func CallGeminiStreamingWithTemperature(prompt string, temperature float64, onChunk func(chunk string)) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainModel()
 	if err != nil {
 		return "", err
@@ -199,6 +219,10 @@ func CallGeminiStreamingWithTemperature(prompt string, temperature float64, onCh
 // Higher temperature (0.7-1.0) = more creative, varied output
 // For resume optimization, use low temperature (0.2-0.3) to reduce hallucinations.
 func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {
+	if err := geminiGate.acquire(context.Background()); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
 	llm, err := getLangChainModel()
 	if err != nil {
 		return "", err
