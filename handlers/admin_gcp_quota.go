@@ -218,16 +218,11 @@ func interpretGCPStatus(r gin.H) string {
 	billingEnabled, _ := r["billing_enabled"].(bool)
 	billingAccount, _ := r["billing_account"].(string)
 	computeIndicatesDisabled, _ := r["compute_indicates_billing_disabled"].(bool)
-	computeBody, _ := r["compute_response_snippet"].(string)
 
 	// Compute API gives us a very direct signal.
 	if computeIndicatesDisabled {
 		return "CONFIRMED: the Compute API rejected our call with BILLING_DISABLED. This means NO billing account is linked to the project. This is the root cause. Link billing at https://console.cloud.google.com/billing/linkedaccount?project=" + projectID
 	}
-	if strings.Contains(computeBody, "accessNotConfigured") || strings.Contains(computeBody, "SERVICE_DISABLED") {
-		// Compute API not enabled is normal. Skip this signal.
-	}
-
 	if billingStatus == 403 {
 		return "Cloud Billing API is not enabled on this project (PERMISSION_DENIED / SERVICE_DISABLED). If billing were set up, this API would typically have been enabled too. Strong indicator that billing was never linked. Inspect compute_response_snippet for a second opinion."
 	}
