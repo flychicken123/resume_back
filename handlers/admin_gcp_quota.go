@@ -88,9 +88,9 @@ func GCPQuotaHandler() gin.HandlerFunc {
 			}
 		}
 
-		// --- Check 2: Service Usage API – list Gemini quota metrics ---
+		// --- Check 2a: Service Usage API v1beta1 – list Gemini quota metrics ---
 		quotaURL := fmt.Sprintf(
-			"https://serviceusage.googleapis.com/v1/projects/%s/services/generativelanguage.googleapis.com/consumerQuotaMetrics?pageSize=50",
+			"https://serviceusage.googleapis.com/v1beta1/projects/%s/services/generativelanguage.googleapis.com/consumerQuotaMetrics?pageSize=50",
 			projectID,
 		)
 		_, quotaBody, quotaStatus, quotaErr := doAuthedGET(ctx, httpClient, quotaURL, tok.AccessToken)
@@ -98,12 +98,46 @@ func GCPQuotaHandler() gin.HandlerFunc {
 		if quotaErr != nil {
 			result["quota_error"] = quotaErr.Error()
 		} else {
-			// Only include quota body on success — the failure responses
-			// are usually a single-line permission error we already capture via status.
 			if quotaStatus == 200 {
 				result["quota_response"] = quotaBody
 			} else {
 				result["quota_response_snippet"] = truncateJSON(quotaBody, 2000)
+			}
+		}
+
+		// --- Check 2b: Cloud Quotas API (newer) ---
+		cqURL := fmt.Sprintf(
+			"https://cloudquotas.googleapis.com/v1/projects/%s/locations/global/services/generativelanguage.googleapis.com/quotaInfos?pageSize=50",
+			projectID,
+		)
+		_, cqBody, cqStatus, cqErr := doAuthedGET(ctx, httpClient, cqURL, tok.AccessToken)
+		result["cloudquotas_http_status"] = cqStatus
+		if cqErr != nil {
+			result["cloudquotas_error"] = cqErr.Error()
+		} else if cqStatus == 200 {
+			result["cloudquotas_response"] = cqBody
+		} else {
+			result["cloudquotas_response_snippet"] = truncateJSON(cqBody, 2000)
+		}
+
+		// --- Check 3b: Compute API billing check (non-invasive) ---
+		// compute.googleapis.com returns a distinctive "BILLING_DISABLED" error
+		// if billing isn't linked. We don't actually use Compute, but the error
+		// signal is reliable and doesn't require billing.resourceAssociations.list.
+		computeURL := fmt.Sprintf("https://compute.googleapis.com/compute/v1/projects/%s", projectID)
+		_, computeBody, computeStatus, computeErr := doAuthedGET(ctx, httpClient, computeURL, tok.AccessToken)
+		result["compute_http_status"] = computeStatus
+		if computeErr != nil {
+			result["compute_error"] = computeErr.Error()
+		} else {
+			snippet := truncateJSON(computeBody, 1500)
+			result["compute_response_snippet"] = snippet
+			// Check for the characteristic billing-disabled error.
+			if strings.Contains(computeBody, "BILLING_DISABLED") || strings.Contains(computeBody, "billing-enabled") {
+				result["compute_indicates_billing_disabled"] = true
+			}
+			if strings.Contains(computeBody, "accessNotConfigured") {
+				result["compute_api_not_enabled"] = true
 			}
 		}
 
@@ -179,34 +213,31 @@ func doAuthedGET(ctx context.Context, client *http.Client, url, accessToken stri
 }
 
 func interpretGCPStatus(r gin.H) string {
+	projectID, _ := r["project_id"].(string)
 	billingStatus, _ := r["billing_http_status"].(int)
-	quotaStatus, _ := r["quota_http_status"].(int)
-	serviceStatus, _ := r["service_http_status"].(int)
 	billingEnabled, _ := r["billing_enabled"].(bool)
 	billingAccount, _ := r["billing_account"].(string)
+	computeIndicatesDisabled, _ := r["compute_indicates_billing_disabled"].(bool)
+	computeBody, _ := r["compute_response_snippet"].(string)
 
-	switch {
-	case billingStatus == 403:
-		return "The service account lacks billing.resourceAssociations.list permission. Grant it 'Billing Account Viewer' role or ask partner to check billing manually."
-	case billingStatus == 200 && !billingEnabled:
-		return "CONFIRMED: the project has NO billing account linked. This IS free tier. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=" + r["project_id"].(string) + " to fix permanently."
-	case billingStatus == 200 && billingEnabled:
-		if billingAccount != "" && billingAccount != "(none - project has no billing account linked)" {
-			base := "Billing IS enabled and linked to " + billingAccount + ". So this is not a free-tier issue."
-			if quotaStatus == 200 {
-				return base + " Quota response returned -- inspect quota_response to see the actual limits."
-			}
-			if quotaStatus == 403 {
-				return base + " But we can't read quotas (SA lacks cloudquotas.quotas.get). Ask partner to check quotas at https://console.cloud.google.com/apis/api/generativelanguage.googleapis.com/quotas?project=" + r["project_id"].(string)
-			}
-			return base + " Service Usage call returned " + fmt.Sprintf("%d", quotaStatus) + " -- check snippet for details."
-		}
-		return "Billing enabled but account name empty. Unusual state."
-	case serviceStatus == 404:
-		return "Generative Language API appears not enabled on this project. Enable it at https://console.cloud.google.com/apis/library/generativelanguage.googleapis.com?project=" + r["project_id"].(string)
-	default:
-		return "Unexpected state. Inspect raw fields."
+	// Compute API gives us a very direct signal.
+	if computeIndicatesDisabled {
+		return "CONFIRMED: the Compute API rejected our call with BILLING_DISABLED. This means NO billing account is linked to the project. This is the root cause. Link billing at https://console.cloud.google.com/billing/linkedaccount?project=" + projectID
 	}
+	if strings.Contains(computeBody, "accessNotConfigured") || strings.Contains(computeBody, "SERVICE_DISABLED") {
+		// Compute API not enabled is normal. Skip this signal.
+	}
+
+	if billingStatus == 403 {
+		return "Cloud Billing API is not enabled on this project (PERMISSION_DENIED / SERVICE_DISABLED). If billing were set up, this API would typically have been enabled too. Strong indicator that billing was never linked. Inspect compute_response_snippet for a second opinion."
+	}
+	if billingStatus == 200 && !billingEnabled {
+		return "CONFIRMED: the project has NO billing account linked. This IS free tier. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=" + projectID + " to fix permanently."
+	}
+	if billingStatus == 200 && billingEnabled && billingAccount != "" {
+		return "Billing IS enabled and linked to " + billingAccount + ". Check quota_response / cloudquotas_response for the actual per-minute limits."
+	}
+	return "Mixed signals -- inspect each field. Likely: project is free-tier (no billing). See https://console.cloud.google.com/billing/linkedaccount?project=" + projectID
 }
 
 func truncateJSON(s string, n int) string {
