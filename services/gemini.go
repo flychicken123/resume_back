@@ -63,7 +63,10 @@ func getLangChainModel() (llms.Model, error) {
 			return
 		}
 
-		opts := []googleai.Option{googleai.WithAPIKey(apiKey)}
+		opts := []googleai.Option{
+			googleai.WithAPIKey(apiKey),
+			googleai.WithDefaultModel("gemini-2.5-flash"),
+		}
 
 		llm, err := googleai.New(context.Background(), opts...)
 		if err != nil {
@@ -97,7 +100,7 @@ func getLangChainFlashModel() (llms.Model, error) {
 
 		opts := []googleai.Option{
 			googleai.WithAPIKey(apiKey),
-			googleai.WithDefaultModel("gemini-2.0-flash"),
+			googleai.WithDefaultModel("gemini-2.5-flash"),
 		}
 
 		llm, err := googleai.New(context.Background(), opts...)
