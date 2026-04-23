@@ -20,19 +20,37 @@ import (
 	"resumeai/services"
 )
 
+// geminiKeySuffix returns the last 6 chars of the deployed GEMINI_API_KEY,
+// or "(unset)"/"(too short)" diagnostics. Used to verify which key is deployed
+// without leaking the full key value.
+func geminiKeySuffix() string {
+	k := os.Getenv("GEMINI_API_KEY")
+	if k == "" {
+		return "(unset)"
+	}
+	if len(k) < 6 {
+		return "(too short: " + k + ")"
+	}
+	return "..." + k[len(k)-6:]
+}
+
 // GeminiDiagHandler makes a single trivial Gemini Flash call via the SDK and
 // returns the full error payload.
 func GeminiDiagHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		keySuffix := geminiKeySuffix()
+
 		start := time.Now()
 		reply, err := services.CallGeminiFlashWithTemperature("Reply with exactly the word OK.", 0.0)
 		elapsedMs := time.Since(start).Milliseconds()
 
 		if err == nil {
 			c.JSON(http.StatusOK, gin.H{
-				"ok":         true,
-				"reply":      reply,
-				"latency_ms": elapsedMs,
+				"ok":              true,
+				"reply":           reply,
+				"latency_ms":      elapsedMs,
+				"key_suffix":      keySuffix,
+				"key_suffix_note": "last 6 chars of deployed GEMINI_API_KEY - compare to AI Studio to verify which key is actually deployed",
 			})
 			return
 		}
@@ -42,6 +60,7 @@ func GeminiDiagHandler() gin.HandlerFunc {
 			"latency_ms":    elapsedMs,
 			"error":         err.Error(),
 			"is_rate_limit": services.IsRateLimitErr(err),
+			"key_suffix":    keySuffix,
 		}
 
 		var apiErr *googleapi.Error
