@@ -130,6 +130,97 @@ func GeminiRawDiagHandler() gin.HandlerFunc {
 	}
 }
 
+// GeminiTierProbeHandler tries to request paid tier via various request
+// headers and returns what Google does with each. If any header successfully
+// upgrades the tier for a free-tier project, we'll see a 200 response on
+// that attempt while the baseline still 429s.
+func GeminiTierProbeHandler() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		apiKey := os.Getenv("GEMINI_API_KEY")
+		if apiKey == "" {
+			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "GEMINI_API_KEY not set"})
+			return
+		}
+
+		type probe struct {
+			Label      string            `json:"label"`
+			Headers    map[string]string `json:"headers"`
+			HTTPStatus int               `json:"http"`
+			RespTier   string            `json:"response_tier"`
+			Snippet    string            `json:"snippet"`
+			LatencyMS  int64             `json:"ms"`
+		}
+
+		url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=%s", apiKey)
+		body := `{"contents":[{"parts":[{"text":"ok"}]}],"generationConfig":{"maxOutputTokens":5,"temperature":0}}`
+
+		probes := []probe{
+			{Label: "baseline (no tier header)", Headers: map[string]string{"Content-Type": "application/json"}},
+			{Label: "X-Gemini-Service-Tier: paid", Headers: map[string]string{"Content-Type": "application/json", "X-Gemini-Service-Tier": "paid"}},
+			{Label: "X-Gemini-Service-Tier: paid_tier_1", Headers: map[string]string{"Content-Type": "application/json", "X-Gemini-Service-Tier": "paid_tier_1"}},
+			{Label: "X-Gemini-Service-Tier: paid-tier-1", Headers: map[string]string{"Content-Type": "application/json", "X-Gemini-Service-Tier": "paid-tier-1"}},
+			{Label: "X-Gemini-Service-Tier: standard", Headers: map[string]string{"Content-Type": "application/json", "X-Gemini-Service-Tier": "standard"}},
+			{Label: "X-Gemini-Service-Tier: premium", Headers: map[string]string{"Content-Type": "application/json", "X-Gemini-Service-Tier": "premium"}},
+			{Label: "x-goog-user-project (same)", Headers: map[string]string{"Content-Type": "application/json", "x-goog-user-project": os.Getenv("GCP_PROJECT_ID")}},
+		}
+
+		results := make([]probe, len(probes))
+		client := &http.Client{Timeout: 8 * time.Second}
+		for i, p := range probes {
+			start := time.Now()
+			req, _ := http.NewRequestWithContext(c.Request.Context(), "POST", url, nil)
+			req.Body = io.NopCloser(newByteReader([]byte(body)))
+			req.ContentLength = int64(len(body))
+			for k, v := range p.Headers {
+				req.Header.Set(k, v)
+			}
+			resp, err := client.Do(req)
+			p.LatencyMS = time.Since(start).Milliseconds()
+			if err != nil {
+				p.Snippet = err.Error()
+				results[i] = p
+				continue
+			}
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			p.HTTPStatus = resp.StatusCode
+			p.RespTier = resp.Header.Get("X-Gemini-Service-Tier")
+			p.Snippet = truncate(string(respBody), 250)
+			results[i] = p
+
+			// Small delay between calls to avoid accidentally hitting our own per-minute bucket
+			time.Sleep(250 * time.Millisecond)
+		}
+
+		// Summary: did any probe succeed where baseline failed?
+		baselineOK := len(results) > 0 && results[0].HTTPStatus == 200
+		anyUpgraded := false
+		upgraded := []string{}
+		for i, r := range results {
+			if i == 0 {
+				continue
+			}
+			if r.HTTPStatus == 200 && !baselineOK {
+				anyUpgraded = true
+				upgraded = append(upgraded, r.Label)
+			}
+		}
+
+		summary := "All probes behaved the same as baseline -- no request-header tier override exists (at least not via these names)."
+		if anyUpgraded {
+			summary = fmt.Sprintf("TIER OVERRIDE WORKS via: %v. Use that header in production Gemini calls.", upgraded)
+		} else if baselineOK {
+			summary = "Baseline succeeded (this minute has quota headroom). Run again when chat is failing to get a more informative answer."
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"baseline_ok": baselineOK,
+			"summary":     summary,
+			"probes":      results,
+		})
+	}
+}
+
 // GeminiBurstDiagHandler fires N concurrent Gemini calls (default 15, max 30)
 // and reports how many succeeded. Helps infer the actual RPM ceiling without
 // having to read a quota dashboard.
