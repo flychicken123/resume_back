@@ -729,7 +729,6 @@ func main() {
 			admin.GET("/gemini/raw", handlers.GeminiRawDiagHandler())
 			admin.GET("/gemini/burst", handlers.GeminiBurstDiagHandler())
 			admin.GET("/gemini/multi", handlers.GeminiMultiModelDiagHandler())
-			admin.GET("/gemini/tier-probe", handlers.GeminiTierProbeHandler())
 			admin.GET("/gcp/quota", handlers.GCPQuotaHandler())
 
 			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
