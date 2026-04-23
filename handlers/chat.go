@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"resumeai/models"
@@ -722,10 +723,11 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	// whether to show the response or silently retry before the user sees anything.
 	reply, toolMeta, err = services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
 	if err != nil {
+		fallbackReply := fallbackChatReply(userMessage, err)
 		if isStream {
-			sse.WriteError("Sorry, something went wrong. Please try again.")
+			sse.WriteDone(&chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions})
 		} else {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			c.JSON(http.StatusOK, &chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions})
 		}
 		return
 	}
@@ -827,6 +829,39 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	} else {
 		c.JSON(http.StatusOK, resp)
 	}
+}
+
+func fallbackChatReply(userMessage string, llmErr error) string {
+	msg := strings.TrimSpace(strings.ToLower(userMessage))
+	isQuestion := strings.Contains(msg, "?") || strings.HasPrefix(msg, "how") || strings.HasPrefix(msg, "what") || strings.HasPrefix(msg, "why") || strings.HasPrefix(msg, "can ") || strings.HasPrefix(msg, "should ")
+	mentionsResume := strings.Contains(msg, "resume") || strings.Contains(msg, "cv")
+	mentionsCoverLetter := strings.Contains(msg, "cover letter")
+	mentionsInterview := strings.Contains(msg, "interview")
+	mentionsSalary := strings.Contains(msg, "salary") || strings.Contains(msg, "offer") || strings.Contains(msg, "compensation")
+	mentionsJob := strings.Contains(msg, "job") || strings.Contains(msg, "application") || strings.Contains(msg, "apply")
+
+	if mentionsCoverLetter {
+		return "The AI assistant is temporarily busy, but I can still help. If you paste the job description and your current resume details, I can draft a short cover letter outline for you, or you can retry in a moment."
+	}
+	if mentionsResume {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment. If you're editing your resume, a good next step is to focus each bullet on action + impact + metric, for example: Improved X by Y% by doing Z."
+	}
+	if mentionsInterview {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment. For interviews, start with 3 stories ready in STAR format: one win, one challenge, and one teamwork example."
+	}
+	if mentionsSalary {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment. For salary talks, lead with your target range, market context, and the impact you can deliver in the role."
+	}
+	if mentionsJob {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment. In the meantime, tailor your resume summary and top 3 bullets to the exact job title and keywords in the posting."
+	}
+	if isQuestion {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment, and if you want, ask a more specific resume, job search, or interview question so I can help faster."
+	}
+	if llmErr != nil && utf8.RuneCountInString(llmErr.Error()) > 0 {
+		return "The AI assistant is temporarily busy right now. Please retry in a moment. Your message was received, but the AI model did not finish the request."
+	}
+	return "The AI assistant is temporarily busy right now. Please retry in a moment."
 }
 
 // tryHandlePolishRequest checks if the message is a polish request and handles it.
