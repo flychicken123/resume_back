@@ -658,7 +658,10 @@ Projects: %s
 
 Return JSON array only: ["skill1", "skill2", ...]`, experience, education, projects)
 
-	raw, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+		func(ctx context.Context) (string, error) { return CallGeminiFlashWithTemperature(prompt, 0.0) },
+		RetryOpts{Endpoint: "tool_auto_generate_skills"},
+	)
 	if err != nil {
 		return map[string]any{"error": "skill generation failed"}, nil
 	}
@@ -695,7 +698,10 @@ Skills: %s
 
 Return the categorized text only:`, skillsText)
 
-	raw, err := CallGeminiFlashWithTemperature(prompt, 0.0)
+	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+		func(ctx context.Context) (string, error) { return CallGeminiFlashWithTemperature(prompt, 0.0) },
+		RetryOpts{Endpoint: "tool_categorize_skills"},
+	)
 	if err != nil {
 		return map[string]any{"error": "categorization failed"}, nil
 	}

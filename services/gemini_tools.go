@@ -166,5 +166,9 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 // CallGeminiWithToolsBlocking is the non-streaming version.
 func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
+	if err := geminiGate.acquire(ctx); err != nil {
+		return "", nil, err
+	}
+	defer geminiGate.release()
 	return CallGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil, opts...)
 }

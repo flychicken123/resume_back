@@ -14,6 +14,7 @@ import (
 	"resumeai/models"
 	"resumeai/services"
 	"resumeai/utils"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -140,7 +141,10 @@ func main() {
 	stripeService := services.NewStripeService(db)
 	adService := services.NewAdService(db)
 	emailService := services.NewEmailService(logger)
-	jobsService := services.NewJobIngestionService(db, logger, embeddingSvc, ctx)
+	jobsService := services.NewJobIngestionService(db, logger, embeddingSvc, ctx, services.ClassifyThrottleConfig{
+		PerJobDelayMS: appConfig.ClassifyPerJobDelayMS,
+		BatchSize:     appConfig.ClassifyBatchSize,
+	})
 	experimentService := services.NewExperimentService(experimentModel)
 
 	// Initialize the LangChain-backed copilot agent once and share it between
@@ -267,7 +271,13 @@ func main() {
 
 	autofillController := controllers.NewAutofillController(userModel, resumeModel)
 
-	jobsService.StartScheduler(ctx, 24*time.Hour)
+	aiBackgroundDisabled := strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_AI_BACKGROUND_JOBS")), "true")
+	if aiBackgroundDisabled {
+		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; scheduler, benchmark, and notifier loops will NOT start", nil)
+		jobsService.PauseClassifier()
+	} else {
+		jobsService.StartScheduler(ctx, 24*time.Hour)
+	}
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, userModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
@@ -277,8 +287,10 @@ func main() {
 	benchmarkModel := models.NewAiBenchmarkModel(db)
 	benchmarkSvc := services.NewBenchmarkService(jobPostingModel, jobMatchModel, benchmarkModel, logger)
 	benchmarkCtrl := controllers.NewBenchmarkController(benchmarkSvc, ctx)
-	benchmarkSvc.StartScheduler(ctx)
-	jobMatchNotifier.Start(ctx, 100*time.Hour)
+	if !aiBackgroundDisabled {
+		benchmarkSvc.StartScheduler(ctx)
+		jobMatchNotifier.Start(ctx, 100*time.Hour)
+	}
 
 	r := gin.New()
 	r.Use(gin.Logger())
@@ -708,6 +720,17 @@ func main() {
 			admin.GET("/jobs/classify/backfill/status", jobClassifyCtrl.GetStatus)
 			admin.DELETE("/jobs/classify/backfill", jobClassifyCtrl.StopBackfill)
 
+			admin.POST("/classify/stop", handlers.ClassifyStopHandler(&classifyStopperAdapter{
+				backfill:  jobClassifyBackfill,
+				ingestion: jobsService,
+			}))
+
+			admin.GET("/gemini/diag", handlers.GeminiDiagHandler())
+			admin.GET("/gemini/raw", handlers.GeminiRawDiagHandler())
+			admin.GET("/gemini/burst", handlers.GeminiBurstDiagHandler())
+			admin.GET("/gemini/multi", handlers.GeminiMultiModelDiagHandler())
+			admin.GET("/gcp/quota", handlers.GCPQuotaHandler())
+
 			admin.POST("/benchmark/run", benchmarkCtrl.RunBenchmark)
 			admin.GET("/benchmark/status", benchmarkCtrl.GetStatus)
 			admin.GET("/benchmark/results", benchmarkCtrl.GetResults)
@@ -749,4 +772,34 @@ func main() {
 	if err := r.Run(":8081"); err != nil {
 		log.Fatal("Failed to start server:", err)
 	}
+}
+
+// classifyStopperAdapter bridges the two classifier services so a single admin
+// endpoint can halt both paths. Lives in main.go (not a sibling file) because
+// the EC2 deploy script builds with `go build -o main main.go`, which only
+// compiles a single file.
+type classifyStopperAdapter struct {
+	backfill  *services.JobClassifyBackfillService
+	ingestion *services.JobIngestionService
+}
+
+func (a *classifyStopperAdapter) CancelBackfill() bool {
+	if a.backfill == nil {
+		return false
+	}
+	return a.backfill.Cancel()
+}
+
+func (a *classifyStopperAdapter) PauseIngestionClassifier() {
+	if a.ingestion == nil {
+		return
+	}
+	a.ingestion.PauseClassifier()
+}
+
+func (a *classifyStopperAdapter) IsIngestionClassifierRunning() bool {
+	if a.ingestion == nil {
+		return false
+	}
+	return !a.ingestion.IsClassifierPaused()
 }

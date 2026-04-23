@@ -194,6 +194,11 @@ jobs:
           SMTP_PASSWORD=${{ secrets.SMTP_PASSWORD }}
           SMTP_SSL=${SMTP_SSL}
           JOB_MATCH_NOTIFIER_TRIGGER_TOKEN=${{ secrets.JOB_MATCH_NOTIFIER_TRIGGER_TOKEN }}
+          GEMINI_RETRY_ENABLED=${{ vars.GEMINI_RETRY_ENABLED || 'false' }}
+          CLASSIFY_PER_JOB_DELAY_MS=${{ vars.CLASSIFY_PER_JOB_DELAY_MS || '500' }}
+          CLASSIFY_BATCH_SIZE=${{ vars.CLASSIFY_BATCH_SIZE || '5' }}
+          DISABLE_AI_BACKGROUND_JOBS=${{ vars.DISABLE_AI_BACKGROUND_JOBS || 'true' }}
+          GEMINI_CONCURRENCY=${{ vars.GEMINI_CONCURRENCY || '4' }}
           EOF
 
           # Remove indentation in the here-doc so docker-compose can parse it.
