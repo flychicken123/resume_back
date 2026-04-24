@@ -67,11 +67,6 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		planPreference = "free"
 	}
 
-	user := &User{}
-	var marketingOptedAt sql.NullTime
-	var marketingSourceNS sql.NullString
-	var planPreferenceNS sql.NullString
-
 	query := `
 		INSERT INTO users (
 			email, name, password, auth_provider, google_id, profile_picture,
@@ -79,13 +74,10 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 			created_at, updated_at
 		)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULLIF($10, ''), $11, $11)
-		RETURNING id, email, name, auth_provider, google_id, profile_picture, is_admin,
-		          marketing_opt_in, marketing_opted_at, marketing_opt_in_source, signup_plan_preference,
-		          COALESCE(followup_reminders_enabled, true),
-		          last_job_alert_sent_at, COALESCE(last_job_alert_resume_hash, ''),
-		          created_at, updated_at
+		RETURNING id
 	`
 
+	var userID int
 	err := m.DB.QueryRow(query,
 		email,
 		name,
@@ -98,35 +90,11 @@ func (m *UserModel) createInternal(email, name, password, authProvider, googleID
 		marketingSource,
 		planPreference,
 		now,
-	).Scan(
-		&user.ID,
-		&user.Email,
-		&user.Name,
-		&user.AuthProvider,
-		&user.GoogleID,
-		&user.ProfilePicture,
-		&user.IsAdmin,
-		&user.MarketingOptIn,
-		&marketingOptedAt,
-		&marketingSourceNS,
-		&planPreferenceNS,
-		&user.FollowupRemindersEnabled,
-		&user.LastJobAlertSentAt,
-		&user.LastJobAlertResumeHash,
-		&user.CreatedAt,
-		&user.UpdatedAt,
-	)
+	).Scan(&userID)
 	if err != nil {
 		return nil, err
 	}
-	user.MarketingOptedAt = nullTimeToPtr(marketingOptedAt)
-	if marketingSourceNS.Valid {
-		user.MarketingOptInSource = marketingSourceNS.String
-	}
-	if planPreferenceNS.Valid {
-		user.SignupPlanPreference = planPreferenceNS.String
-	}
-	return user, nil
+	return m.GetByID(userID)
 }
 
 func (m *UserModel) GetByEmail(email string) (*User, error) {
@@ -141,15 +109,12 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		       google_id,
 		       profile_picture,
 		       is_admin,
-		       marketing_opt_in,
+		       COALESCE(marketing_opt_in, false),
 		       marketing_opted_at,
 		       marketing_opt_in_source,
 		       signup_plan_preference,
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
-		       COALESCE(followup_reminders_enabled, true),
-		       last_job_alert_sent_at,
-		       COALESCE(last_job_alert_resume_hash, ''),
 		       created_at, updated_at
 		FROM users WHERE email = $1
 	`
@@ -168,12 +133,14 @@ func (m *UserModel) GetByEmail(email string) (*User, error) {
 		&planPreference,
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
-		&user.FollowupRemindersEnabled,
-		&user.LastJobAlertSentAt,
-		&user.LastJobAlertResumeHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	user.FollowupRemindersEnabled = true
+	user.LastJobAlertResumeHash = ""
 	if err != nil {
 		return nil, err
 	}
@@ -196,15 +163,12 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 	var emailUnsubscribedAt sql.NullTime
 	query := `
 		SELECT id, email, name, is_admin,
-		       marketing_opt_in,
+		       COALESCE(marketing_opt_in, false),
 		       marketing_opted_at,
 		       marketing_opt_in_source,
 		       signup_plan_preference,
 		       COALESCE(email_unsubscribed, false),
 		       email_unsubscribed_at,
-		       COALESCE(followup_reminders_enabled, true),
-		       last_job_alert_sent_at,
-		       COALESCE(last_job_alert_resume_hash, ''),
 		       created_at, updated_at
 		FROM users WHERE id = $1
 	`
@@ -219,12 +183,14 @@ func (m *UserModel) GetByID(id int) (*User, error) {
 		&planPreference,
 		&user.EmailUnsubscribed,
 		&emailUnsubscribedAt,
-		&user.FollowupRemindersEnabled,
-		&user.LastJobAlertSentAt,
-		&user.LastJobAlertResumeHash,
 		&user.CreatedAt,
 		&user.UpdatedAt,
 	)
+	if err != nil {
+		return nil, err
+	}
+	user.FollowupRemindersEnabled = true
+	user.LastJobAlertResumeHash = ""
 	if err != nil {
 		return nil, err
 	}
