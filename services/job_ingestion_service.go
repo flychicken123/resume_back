@@ -473,67 +473,133 @@ func (s *JobIngestionService) SyncAllCompanies(ctx context.Context) error {
 	return err
 }
 
-// SyncAllCompaniesWithSummary runs a sync for every active company and returns aggregate metrics
+// SyncAllCompaniesWithSummary runs a sync for every active company in
+// parallel and returns aggregate metrics. Concurrency is bounded by
+// SYNC_WORKER_CONCURRENCY (default 8). Workers process companies sorted by
+// stalest LastSyncedAt first so an interrupted run still refreshes the most
+// stale companies before the freshest ones.
+//
+// At 2400+ companies × 5-30s each, sequential execution took 3-10 hours per
+// pass and never completed before the next deploy. Concurrency 8 brings a
+// full pass to 5-15 minutes.
 func (s *JobIngestionService) SyncAllCompaniesWithSummary(ctx context.Context) (*JobSyncBatchResult, error) {
 	companies, err := s.companyModel.ListActive()
 	if err != nil {
 		return nil, err
 	}
 
+	// Sort stalest-first so an interrupted run refreshes the worst-off companies first.
+	sort.Slice(companies, func(i, j int) bool {
+		iNever := companies[i].LastSyncedAt == nil
+		jNever := companies[j].LastSyncedAt == nil
+		if iNever != jNever {
+			return iNever
+		}
+		if iNever {
+			return false
+		}
+		return companies[i].LastSyncedAt.Before(*companies[j].LastSyncedAt)
+	})
+
 	batch := &JobSyncBatchResult{
 		TotalCompanies: len(companies),
 		CompanyResults: make([]JobSyncCompanyResult, 0, len(companies)),
 	}
 
-	for _, company := range companies {
-		result := JobSyncCompanyResult{
-			CompanyID:   company.ID,
-			CompanyName: company.Name,
-		}
-
-		select {
-		case <-ctx.Done():
-			result.Status = "cancelled"
-			if ctx.Err() != nil {
-				result.Error = ctx.Err().Error()
-			}
-			batch.Failed++
-			batch.CompanyResults = append(batch.CompanyResults, result)
-			return batch, ctx.Err()
-		default:
-		}
-
-		batch.Ran++
-		syncResult, syncErr := s.SyncCompany(ctx, company.ID)
-		if syncErr != nil {
-			var unsupported *UnsupportedATSProviderError
-			if errors.As(syncErr, &unsupported) {
-				result.Status = "unsupported_provider"
-				result.Error = syncErr.Error()
-				batch.Failed++
-				batch.CompanyResults = append(batch.CompanyResults, result)
-				continue
-			}
-			result.Status = "failed"
-			result.Error = syncErr.Error()
-			batch.Failed++
-			batch.CompanyResults = append(batch.CompanyResults, result)
-			continue
-		}
-
-		result.Status = "success"
-		result.JobsFound = syncResult.JobsFound
-		result.JobsCreated = syncResult.JobsCreated
-		result.JobsUpdated = syncResult.JobsUpdated
-		result.JobsClosed = syncResult.JobsClosed
-
-		batch.Succeeded++
-		batch.TotalJobsFound += syncResult.JobsFound
-		batch.TotalJobsCreated += syncResult.JobsCreated
-		batch.TotalJobsUpdated += syncResult.JobsUpdated
-		batch.TotalJobsClosed += syncResult.JobsClosed
-		batch.CompanyResults = append(batch.CompanyResults, result)
+	if len(companies) == 0 {
+		return batch, nil
 	}
+
+	concurrency := syncWorkerConcurrencyFromEnv()
+	s.logger.Info("sync-all starting", map[string]interface{}{
+		"total_companies": len(companies),
+		"concurrency":     concurrency,
+	})
+
+	type pending struct {
+		company *models.JobCompany
+	}
+	jobs := make(chan pending, len(companies))
+	for i := range companies {
+		jobs <- pending{company: companies[i]}
+	}
+	close(jobs)
+
+	results := make(chan JobSyncCompanyResult, len(companies))
+	var ran, succeeded, failed atomic.Int64
+	var totalFound, totalCreated, totalUpdated, totalClosed atomic.Int64
+	var processed atomic.Int64
+
+	var wg sync.WaitGroup
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for p := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				company := p.company
+				result := JobSyncCompanyResult{
+					CompanyID:   company.ID,
+					CompanyName: company.Name,
+				}
+
+				ran.Add(1)
+				syncResult, syncErr := s.SyncCompany(ctx, company.ID)
+				if syncErr != nil {
+					var unsupported *UnsupportedATSProviderError
+					if errors.As(syncErr, &unsupported) {
+						result.Status = "unsupported_provider"
+					} else {
+						result.Status = "failed"
+					}
+					result.Error = syncErr.Error()
+					failed.Add(1)
+				} else {
+					result.Status = "success"
+					result.JobsFound = syncResult.JobsFound
+					result.JobsCreated = syncResult.JobsCreated
+					result.JobsUpdated = syncResult.JobsUpdated
+					result.JobsClosed = syncResult.JobsClosed
+					succeeded.Add(1)
+					totalFound.Add(int64(syncResult.JobsFound))
+					totalCreated.Add(int64(syncResult.JobsCreated))
+					totalUpdated.Add(int64(syncResult.JobsUpdated))
+					totalClosed.Add(int64(syncResult.JobsClosed))
+				}
+				results <- result
+
+				if n := processed.Add(1); n%50 == 0 {
+					s.logger.Info("sync-all progress", map[string]interface{}{
+						"processed": n,
+						"total":     len(companies),
+						"succeeded": succeeded.Load(),
+						"failed":    failed.Load(),
+					})
+				}
+			}
+		}()
+	}
+
+	go func() { wg.Wait(); close(results) }()
+	for r := range results {
+		batch.CompanyResults = append(batch.CompanyResults, r)
+	}
+
+	batch.Ran = int(ran.Load())
+	batch.Succeeded = int(succeeded.Load())
+	batch.Failed = int(failed.Load())
+	batch.TotalJobsFound = int(totalFound.Load())
+	batch.TotalJobsCreated = int(totalCreated.Load())
+	batch.TotalJobsUpdated = int(totalUpdated.Load())
+	batch.TotalJobsClosed = int(totalClosed.Load())
+
+	s.logger.Info("sync-all finished", map[string]interface{}{
+		"total":     len(companies),
+		"succeeded": batch.Succeeded,
+		"failed":    batch.Failed,
+	})
 
 	return batch, nil
 }
