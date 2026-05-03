@@ -199,6 +199,7 @@ jobs:
           CLASSIFY_BATCH_SIZE=${{ vars.CLASSIFY_BATCH_SIZE || '5' }}
           DISABLE_AI_BACKGROUND_JOBS=${{ vars.DISABLE_AI_BACKGROUND_JOBS || 'true' }}
           GEMINI_CONCURRENCY=${{ vars.GEMINI_CONCURRENCY || '4' }}
+          SYNC_WORKER_CONCURRENCY=${{ vars.SYNC_WORKER_CONCURRENCY || '8' }}
           EOF
 
           # Remove indentation in the here-doc so docker-compose can parse it.

@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -667,13 +670,33 @@ func (s *JobIngestionService) purgeOldJobPostings(ctx context.Context) error {
 	return nil
 }
 
+// syncDueCompanies finds active companies whose sync interval has elapsed and
+// syncs them through a worker pool. Prior to parallelization this loop ran
+// sequentially over 2400+ companies — a single pass took 3-10h, so any
+// container restart interrupted it before completion and stale companies
+// at the back of the iteration order never got synced.
+//
+// Companies are sorted by oldest-LastSyncedAt-first so that if the loop is
+// interrupted, the most stale companies have already been refreshed and the
+// freshest ones are the ones skipped — graceful degradation under interrupt.
+//
+// Concurrency is bounded by SYNC_WORKER_CONCURRENCY env var (default 8).
+// Each worker calls SyncCompany in its own goroutine. A typical full pass at
+// concurrency 8 takes 5-15 min instead of 3-10h.
 func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 	companies, err := s.companyModel.ListActive()
 	if err != nil {
 		return err
 	}
 
+	// Build the due-list, sorted by oldest LastSyncedAt first (nil = never synced = highest priority).
+	type dueEntry struct {
+		id           int
+		lastSyncedAt time.Time
+		neverSynced  bool
+	}
 	now := s.clock()
+	due := make([]dueEntry, 0, len(companies))
 	for _, company := range companies {
 		interval := time.Duration(company.SyncIntervalMinutes) * time.Minute
 		if interval <= 0 {
@@ -682,25 +705,90 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 			interval = dailySyncInterval
 		}
 
+		entry := dueEntry{id: company.ID, neverSynced: company.LastSyncedAt == nil}
 		if company.LastSyncedAt != nil {
 			next := company.LastSyncedAt.Add(interval)
 			if now.Before(next) {
 				continue
 			}
+			entry.lastSyncedAt = *company.LastSyncedAt
 		}
-
-		if _, err := s.SyncCompany(ctx, company.ID); err != nil {
-			var unsupported *UnsupportedATSProviderError
-			if errors.As(err, &unsupported) {
-				continue
-			}
-			if shouldLogSyncFailureAsError(err) {
-				s.logger.Error("scheduled company sync failed", err, map[string]interface{}{"company_id": company.ID})
-			}
-		}
+		due = append(due, entry)
 	}
 
+	sort.Slice(due, func(i, j int) bool {
+		if due[i].neverSynced != due[j].neverSynced {
+			return due[i].neverSynced // never-synced first
+		}
+		return due[i].lastSyncedAt.Before(due[j].lastSyncedAt) // oldest first
+	})
+
+	if len(due) == 0 {
+		return nil
+	}
+
+	concurrency := syncWorkerConcurrencyFromEnv()
+	s.logger.Info("scheduled sync starting", map[string]interface{}{
+		"due_companies": len(due),
+		"concurrency":   concurrency,
+	})
+
+	jobs := make(chan int, len(due))
+	for _, e := range due {
+		jobs <- e.id
+	}
+	close(jobs)
+
+	var wg sync.WaitGroup
+	var processed atomic.Int64
+	var failed atomic.Int64
+	for w := 0; w < concurrency; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for companyID := range jobs {
+				if ctx.Err() != nil {
+					return
+				}
+				if _, err := s.SyncCompany(ctx, companyID); err != nil {
+					var unsupported *UnsupportedATSProviderError
+					if errors.As(err, &unsupported) {
+						continue
+					}
+					failed.Add(1)
+					if shouldLogSyncFailureAsError(err) {
+						s.logger.Error("scheduled company sync failed", err, map[string]interface{}{"company_id": companyID})
+					}
+				}
+				if n := processed.Add(1); n%100 == 0 {
+					s.logger.Info("scheduled sync progress", map[string]interface{}{
+						"processed": n,
+						"total":     len(due),
+						"failed":    failed.Load(),
+					})
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	s.logger.Info("scheduled sync finished", map[string]interface{}{
+		"processed": processed.Load(),
+		"total":     len(due),
+		"failed":    failed.Load(),
+	})
+
 	return nil
+}
+
+func syncWorkerConcurrencyFromEnv() int {
+	const def = 8
+	if v := strings.TrimSpace(os.Getenv("SYNC_WORKER_CONCURRENCY")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 64 {
+			return n
+		}
+	}
+	return def
 }
 
 func truncateErrorMessage(value string, limit int) string {
