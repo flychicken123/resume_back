@@ -119,6 +119,19 @@ type JobIngestionService struct {
 	classifyPaused atomic.Bool
 	classifyOneFn func(ctx context.Context, id int64) error
 	testLogger    retryLogger
+
+	syncAllMu     sync.Mutex
+	syncAllStatus SyncAllStatus
+	syncAllCancel context.CancelFunc
+}
+
+// SyncAllStatus is the snapshot of an async sync-all run.
+type SyncAllStatus struct {
+	Running    bool                 `json:"running"`
+	StartedAt  *time.Time           `json:"started_at,omitempty"`
+	FinishedAt *time.Time           `json:"finished_at,omitempty"`
+	LastError  string               `json:"last_error,omitempty"`
+	LastResult *JobSyncBatchResult  `json:"last_result,omitempty"`
 }
 
 const dailySyncInterval = 24 * time.Hour
@@ -520,6 +533,77 @@ func (s *JobIngestionService) SyncAllCompaniesWithSummary(ctx context.Context) (
 	}
 
 	return batch, nil
+}
+
+// TriggerSyncAll starts a sync of every active company in a background goroutine
+// and returns immediately with the current status. Subsequent calls while a run
+// is in flight return the in-flight status with an error rather than starting a
+// second concurrent run. Use SyncAllStatus to poll for progress, CancelSyncAll
+// to abort.
+//
+// Built because synchronous sync-all on a single HTTP request times out for any
+// non-trivial company count (we have 2473), and the upstream nginx + browser
+// kill the request long before the work finishes.
+func (s *JobIngestionService) TriggerSyncAll() (SyncAllStatus, error) {
+	s.syncAllMu.Lock()
+	defer s.syncAllMu.Unlock()
+
+	if s.syncAllStatus.Running {
+		return s.syncAllStatus, errors.New("sync-all already in progress")
+	}
+
+	started := time.Now()
+	s.syncAllStatus = SyncAllStatus{
+		Running:    true,
+		StartedAt:  &started,
+		FinishedAt: nil,
+		LastError:  "",
+		LastResult: nil,
+	}
+
+	runCtx, cancel := context.WithCancel(context.Background())
+	s.syncAllCancel = cancel
+
+	go func() {
+		result, err := s.SyncAllCompaniesWithSummary(runCtx)
+		finished := time.Now()
+
+		s.syncAllMu.Lock()
+		defer s.syncAllMu.Unlock()
+
+		s.syncAllStatus.Running = false
+		s.syncAllStatus.FinishedAt = &finished
+		s.syncAllCancel = nil
+		if err != nil {
+			s.syncAllStatus.LastError = err.Error()
+			s.syncAllStatus.LastResult = result // partial result on error is still useful
+			return
+		}
+		s.syncAllStatus.LastError = ""
+		s.syncAllStatus.LastResult = result
+	}()
+
+	return s.syncAllStatus, nil
+}
+
+// SyncAllStatus returns a snapshot of the current/last sync-all run.
+func (s *JobIngestionService) SyncAllStatus() SyncAllStatus {
+	s.syncAllMu.Lock()
+	defer s.syncAllMu.Unlock()
+	return s.syncAllStatus
+}
+
+// CancelSyncAll aborts an in-flight sync-all. Returns true if a run was
+// active and is now cancelled, false if no run was in progress.
+func (s *JobIngestionService) CancelSyncAll() bool {
+	s.syncAllMu.Lock()
+	defer s.syncAllMu.Unlock()
+	if s.syncAllCancel == nil {
+		return false
+	}
+	s.syncAllCancel()
+	s.syncAllCancel = nil
+	return true
 }
 
 func (s *JobIngestionService) StartScheduler(ctx context.Context, interval time.Duration) {

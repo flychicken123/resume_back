@@ -694,6 +694,8 @@ func main() {
 			admin.POST("/jobs/companies", jobsController.CreateCompany)
 			admin.POST("/jobs/companies/import", jobsController.ImportCompanies)
 			admin.POST("/jobs/companies/sync-all", jobsController.TriggerSyncAll)
+			admin.GET("/jobs/companies/sync-all/status", jobsController.SyncAllStatus)
+			admin.POST("/jobs/companies/sync-all/cancel", jobsController.CancelSyncAll)
 			admin.POST("/jobs/companies/:id/sync", jobsController.TriggerSync)
 			admin.PATCH("/jobs/companies/:id/status", jobsController.UpdateCompanyStatus)
 			admin.PUT("/jobs/companies/:id", jobsController.UpdateCompany)

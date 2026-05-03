@@ -411,14 +411,34 @@ func (jc *JobsController) TriggerSync(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"message": "sync started", "result": result})
 }
 
+// TriggerSyncAll kicks off a background sync of every active company and
+// returns immediately. With 2400+ companies a synchronous sync would take
+// hours and would always time out on the HTTP request. Use SyncAllStatus to
+// poll for progress.
 func (jc *JobsController) TriggerSyncAll(c *gin.Context) {
-	result, err := jc.ingest.SyncAllCompaniesWithSummary(c.Request.Context())
+	status, err := jc.ingest.TriggerSyncAll()
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		// Already-in-progress is the common error — return 409 so the UI
+		// can show "already running" rather than treating it as a failure.
+		c.JSON(http.StatusConflict, gin.H{"error": err.Error(), "status": status})
 		return
 	}
+	c.JSON(http.StatusAccepted, gin.H{"message": "sync started", "status": status})
+}
 
-	c.JSON(http.StatusOK, gin.H{"message": "sync completed", "result": result})
+// SyncAllStatus returns a snapshot of the latest TriggerSyncAll run.
+func (jc *JobsController) SyncAllStatus(c *gin.Context) {
+	c.JSON(http.StatusOK, jc.ingest.SyncAllStatus())
+}
+
+// CancelSyncAll stops an in-flight TriggerSyncAll run.
+func (jc *JobsController) CancelSyncAll(c *gin.Context) {
+	cancelled := jc.ingest.CancelSyncAll()
+	if !cancelled {
+		c.JSON(http.StatusConflict, gin.H{"cancelled": false, "reason": "no sync-all in progress"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"cancelled": true})
 }
 
 func (jc *JobsController) ComputeMatches(c *gin.Context) {
