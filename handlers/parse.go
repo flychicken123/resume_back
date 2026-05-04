@@ -175,7 +175,7 @@ Return exactly this JSON schema:
       "location": "",
       "startDate": "",
       "endDate": "",
-      "bullets": ["", ""]
+      "bullets": [""]
     }
   ],
   "education": [
@@ -193,10 +193,11 @@ Return exactly this JSON schema:
 }
 
 Hard rules:
-- Keep at most 4 experience entries, most recent first.
-- Keep at most 2 bullets per experience.
-- Each bullet must be concise.
-- Keep at most 6 skills.
+- Keep all work experience entries you can clearly identify.
+- For each experience entry, include up to 4 bullet points if present in the resume.
+- Preserve important metrics, technologies, and impact in bullets when present.
+- Keep all education entries you can clearly identify.
+- Keep up to 12 skills.
 - If there is no explicit summary, use null.
 - If there is no explicit projects section, use [].
 - Use these exact keys only.
