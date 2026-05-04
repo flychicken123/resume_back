@@ -85,6 +85,7 @@ jobs:
         host: ${{ secrets.BACKEND_EC2_HOST }}
         username: ec2-user
         key: ${{ secrets.BACKEND_EC2_SSH_KEY }}
+        command_timeout: 30m
         script: |
           set -Eeuo pipefail
           trap 'echo "❌ Error on line $LINENO"; exit 1' ERR
