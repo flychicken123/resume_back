@@ -273,10 +273,14 @@ func main() {
 
 	aiBackgroundDisabled := strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_AI_BACKGROUND_JOBS")), "true")
 	if aiBackgroundDisabled {
-		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; scheduler, benchmark, and notifier loops will NOT start", nil)
+		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; benchmark, notifier, classification, and embedding loops will NOT start", nil)
 		jobsService.PauseClassifier()
+	}
+
+	if services.JobSyncSchedulerDisabled() {
+		logger.Warn("job ingestion scheduler disabled via DISABLE_JOB_SYNC_SCHEDULER", nil)
 	} else {
-		jobsService.StartScheduler(ctx, 24*time.Hour)
+		jobsService.StartScheduler(ctx, services.JobSyncSchedulerIntervalFromEnv())
 	}
 	jobMatchNotifier := services.NewJobMatchNotifier(resumeModel, userModel, jobMatcherService, emailService, logger)
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)

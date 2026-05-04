@@ -718,10 +718,16 @@ func (s *JobIngestionService) CancelSyncAll() bool {
 
 func (s *JobIngestionService) StartScheduler(ctx context.Context, interval time.Duration) {
 	if interval <= 0 {
-		interval = dailySyncInterval
-	} else if interval < dailySyncInterval {
-		interval = dailySyncInterval
+		interval = JobSyncSchedulerIntervalFromEnv()
 	}
+	s.logger.Info("job ingestion scheduler starting", map[string]interface{}{
+		"tick_interval":                 interval.String(),
+		"minimum_company_sync_interval": MinimumJobSyncIntervalFromEnv().String(),
+		"worker_concurrency":            syncWorkerConcurrencyFromEnv(),
+		"scheduler_interval_env":        JobSyncSchedulerIntervalMinutesEnv,
+		"minimum_sync_interval_env":     MinJobSyncIntervalMinutesEnv,
+		"disable_scheduler_env":         JobSyncSchedulerDisabledEnv,
+	})
 	go s.schedulerLoop(ctx, interval)
 }
 
@@ -803,19 +809,20 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 		neverSynced  bool
 	}
 	now := s.clock()
+	minimumInterval := MinimumJobSyncIntervalFromEnv()
 	due := make([]dueEntry, 0, len(companies))
+	var nextDueAt *time.Time
 	for _, company := range companies {
-		interval := time.Duration(company.SyncIntervalMinutes) * time.Minute
-		if interval <= 0 {
-			interval = dailySyncInterval
-		} else if interval < dailySyncInterval {
-			interval = dailySyncInterval
-		}
+		interval := effectiveCompanySyncInterval(company.SyncIntervalMinutes, minimumInterval)
 
 		entry := dueEntry{id: company.ID, neverSynced: company.LastSyncedAt == nil}
 		if company.LastSyncedAt != nil {
 			next := company.LastSyncedAt.Add(interval)
 			if now.Before(next) {
+				if nextDueAt == nil || next.Before(*nextDueAt) {
+					nextCopy := next
+					nextDueAt = &nextCopy
+				}
 				continue
 			}
 			entry.lastSyncedAt = *company.LastSyncedAt
@@ -831,13 +838,24 @@ func (s *JobIngestionService) syncDueCompanies(ctx context.Context) error {
 	})
 
 	if len(due) == 0 {
+		fields := map[string]interface{}{
+			"active_companies":              len(companies),
+			"due_companies":                 0,
+			"minimum_company_sync_interval": minimumInterval.String(),
+		}
+		if nextDueAt != nil {
+			fields["next_due_at"] = nextDueAt.UTC().Format(time.RFC3339)
+		}
+		s.logger.Info("scheduled sync skipped", fields)
 		return nil
 	}
 
 	concurrency := syncWorkerConcurrencyFromEnv()
 	s.logger.Info("scheduled sync starting", map[string]interface{}{
-		"due_companies": len(due),
-		"concurrency":   concurrency,
+		"active_companies":              len(companies),
+		"due_companies":                 len(due),
+		"concurrency":                   concurrency,
+		"minimum_company_sync_interval": minimumInterval.String(),
 	})
 
 	jobs := make(chan int, len(due))
