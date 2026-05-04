@@ -236,6 +236,8 @@ func CallGeminiWithTemperature(prompt string, temperature float64) (string, erro
 		llm,
 		prompt,
 		llms.WithTemperature(temperature),
+		llms.WithMaxTokens(4096),
+		llms.WithJSONMode(),
 	)
 }
 

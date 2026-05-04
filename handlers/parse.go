@@ -25,24 +25,6 @@ func sanitizeAIJSON(value string) string {
 	return strings.TrimSpace(trimmed)
 }
 
-func buildStructuredFallbackFromRaw(rawText, email, phone string) map[string]interface{} {
-	structured := parseResumeSimple(rawText, email, phone)
-	if structured == nil {
-		return map[string]interface{}{}
-	}
-	return map[string]interface{}{
-		"name":        structured.Name,
-		"email":       structured.Email,
-		"phone":       structured.Phone,
-		"summary":     nil,
-		"experience":  []map[string]interface{}{},
-		"education":   []map[string]interface{}{},
-		"projects":    []map[string]interface{}{},
-		"skills":      []string{},
-		"conversions": []map[string]interface{}{},
-	}
-}
-
 type ParsedResume struct {
 	Name       string `json:"name"`
 	Email      string `json:"email"`
@@ -173,85 +155,59 @@ func ParseResume(c *gin.Context) {
 	if match := phoneRegex.FindString(rawText); match != "" {
 		phone = match
 	}
-	schema := `{
-      "name": string | null,
-      "email": string | null,
-      "phone": string | null,
-      "summary": string | null,
-      "experience": [
-        {
-          "company": string | null,
-          "role": string | null,
-          "location": string | null,
-          "startDate": string | null,
-          "endDate": string | null,
-          "bullets": string[] | null
-        }
-      ],
-      "education": [
-        {"school": string | null, "degree": string | null, "field": string | null, "startDate": string | null, "endDate": string | null}
-      ],
-      "projects": [
-        {"projectName": string | null, "description": string | null, "technologies": string | null, "projectUrl": string | null, "bullets": string[] | null}
-      ],
-      "skills": string[],
-      "conversions": [
-        {"original": "section: content", "action": "what was done with it"}
-      ]
-    }`
+	prompt := fmt.Sprintf(`Read this resume and return ONE valid JSON object only.
+Do not use markdown.
+Do not wrap in code fences.
+Do not add commentary.
+Do not leave trailing commas.
+If unsure, use null.
 
-	prompt := fmt.Sprintf(`Extract resume information from the following text and return ONLY valid JSON matching this schema. No markdown formatting, no code blocks, no explanations - just the JSON object.
+Return exactly this JSON schema:
+{
+  "name": "",
+  "email": "",
+  "phone": "",
+  "summary": null,
+  "experience": [
+    {
+      "company": "",
+      "role": "",
+      "location": "",
+      "startDate": "",
+      "endDate": "",
+      "bullets": ["", ""]
+    }
+  ],
+  "education": [
+    {
+      "school": "",
+      "degree": "",
+      "field": "",
+      "startDate": "",
+      "endDate": ""
+    }
+  ],
+  "projects": [],
+  "skills": [""],
+  "conversions": []
+}
 
-Schema:
-%s
-
-Important extraction rules:
-1. For experience entries:
-   - company: The company name (e.g., "TikTok", "eBay, Inc", "T-Mobile, Inc")
-   - role: The job title (e.g., "Software Engineering Tech Lead", "Senior Software Engineer")
-   - location: The city and state (e.g., "Seattle, WA", "Austin, TX")
-   - startDate: Start date in original format (e.g., "Nov 2022", "May 2022")
-   - endDate: End date or "Present" if current (e.g., "Dec 2024", "Present")
-   - bullets: ALL bullet points and descriptions for this role, including any project-specific bullets. Include every detail under this role as bullet points.
-
-2. For education entries:
-   - school: University/college name (e.g., "Texas Tech University")
-   - degree: Degree type (e.g., "B.S", "Bachelor of Science", "M.S")
-   - field: Field of study (e.g., "Electronic Engineering", "Computer Science")
-   - startDate: Start year or date (e.g., "Aug 2011", "2011")
-   - endDate: Graduation year or date (e.g., "May 2014", "2014")
-
-3. For projects (standalone projects in a dedicated "Projects" section):
-   - projectName: Name of the project
-   - description: Brief description of what the project does
-   - technologies: Technologies/tools used (as a single string, e.g., "React, Node.js, MongoDB")
-   - projectUrl: URL/link to the project if provided (GitHub, website, etc.)
-   - bullets: Array of bullet points describing project details
-   - Only extract projects from sections explicitly titled "Projects", "Personal Projects", "Academic Projects", "Portfolio", etc.
-   - Do NOT extract sub-items from work experience as standalone projects
-
-4. For skills: Extract as array of individual skills
-
-5. For summary: ONLY extract if explicitly present in the resume. Do NOT generate or create a summary. If no summary section exists, use null
-
-6. If a field is not found, use null, not empty string
-
-7. NON-STANDARD SECTIONS: If the resume contains sections that don't fit the schema above, DO NOT discard them. Convert them into the closest matching field:
-   - Certifications → add to "skills" array with "(Certified)" suffix (e.g., "AWS Solutions Architect (Certified)")
-   - Languages → add to "skills" array with proficiency level (e.g., "Mandarin (Fluent)")
-   - Awards/Honors → add as a bullet point in the most relevant experience entry, or mention in summary
-   - Volunteer work → add as an experience entry with appropriate role and description
-   - Publications/Patents → add as a project entry with title and description
-   - Portfolio/GitHub/LinkedIn links → include in summary
-   For each conversion, add an entry to the "conversions" array documenting what was converted and where it was placed.
-   If no conversions were needed, return an empty array: "conversions": []
+Hard rules:
+- Keep at most 4 experience entries, most recent first.
+- Keep at most 2 bullets per experience.
+- Each bullet must be concise.
+- Keep at most 6 skills.
+- If there is no explicit summary, use null.
+- If there is no explicit projects section, use [].
+- Use these exact keys only.
+- Output must be complete valid JSON.
 
 Resume text:
 %s
 
-Known contact info - use these if found:
+Known contact info:
 Email: %s
-Phone: %s`, schema, rawText, email, phone)
+Phone: %s`, rawText, email, phone)
 
 	fmt.Printf("[parse] BUILD=2026-02-14-v2 Calling Gemini AI with temperature=0...\n")
 	aiResp, err := services.CallGeminiWithTemperature(prompt, 0.0)
@@ -287,13 +243,7 @@ Phone: %s`, schema, rawText, email, phone)
 		// Clean up temp file
 		_ = os.Remove(tempFile)
 
-		c.JSON(200, gin.H{
-			"structured": buildStructuredFallbackFromRaw(rawText, email, phone),
-			"extracted":  extracted,
-			"method":     "simple_fallback",
-			"aiError":    "AI output was not valid JSON",
-			"aiRaw":      aiResp,
-		})
+		c.JSON(500, gin.H{"error": "AI output was not valid JSON", "raw": aiResp})
 		return
 	}
 
