@@ -4,13 +4,19 @@ FROM ubuntu:20.04
 ENV DEBIAN_FRONTEND=noninteractive
 ENV WKHTML_VERSION=0.12.6-1
 
-# Install system dependencies and fonts
-RUN apt-get update && \
+# Install system dependencies and fonts. EC2 Docker builds occasionally hit
+# transient Ubuntu mirror failures, so keep apt retry settings in the image
+# build itself instead of relying on a manual rerun.
+RUN set -eux; \
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries; \
+    echo 'Acquire::http::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries; \
+    echo 'Acquire::https::Timeout "30";' >> /etc/apt/apt.conf.d/80-retries; \
+    apt-get update; \
     apt-get install -y --no-install-recommends \
     ca-certificates curl fontconfig xz-utils \
     libjpeg-turbo8 libpng16-16 libxrender1 libxtst6 \
     fonts-dejavu fonts-liberation fonts-noto fonts-noto-cjk \
-    python3 python3-pip poppler-utils tesseract-ocr tesseract-ocr-eng && \
+    python3 python3-pip poppler-utils tesseract-ocr tesseract-ocr-eng; \
     rm -rf /var/lib/apt/lists/*
 
 # Install wkhtmltopdf 0.12.6-1 with patched Qt
@@ -25,7 +31,8 @@ RUN set -eux; \
     echo "Downloading $DEB_URL"; \
     curl -fSL --retry 5 --retry-connrefused -o /tmp/wkhtmltox.deb "$DEB_URL"; \
     dpkg -i /tmp/wkhtmltox.deb || true; \
-    apt-get update && apt-get install -f -y; \
+    apt-get update; \
+    apt-get install -f -y; \
     rm -f /tmp/wkhtmltox.deb
 
 # Install Python packages
