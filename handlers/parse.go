@@ -162,6 +162,10 @@ Do not add commentary.
 Do not leave trailing commas.
 If unsure, use null.
 
+Goal: structure the resume for importing into our own template.
+Do NOT rewrite, summarize, shorten, improve, or optimize the resume.
+Preserve the original wording as much as possible.
+
 Return exactly this JSON schema:
 {
   "name": "",
@@ -187,19 +191,28 @@ Return exactly this JSON schema:
       "endDate": ""
     }
   ],
-  "projects": [],
+  "projects": [
+    {
+      "projectName": "",
+      "description": "",
+      "technologies": "",
+      "projectUrl": "",
+      "bullets": [""]
+    }
+  ],
   "skills": [""],
   "conversions": []
 }
 
 Hard rules:
 - Keep all work experience entries you can clearly identify.
-- For each experience entry, include up to 4 bullet points if present in the resume.
-- Preserve important metrics, technologies, and impact in bullets when present.
+- For each experience entry, include all bullet points you can clearly identify from the resume.
+- Preserve bullet text as closely as possible. Do not summarize bullet points.
+- Preserve metrics, technologies, proper nouns, and impact statements.
 - Keep all education entries you can clearly identify.
-- Keep up to 12 skills.
+- Keep all clearly listed skills you can identify.
+- Extract projects only if there is an explicit projects/portfolio section.
 - If there is no explicit summary, use null.
-- If there is no explicit projects section, use [].
 - Use these exact keys only.
 - Output must be complete valid JSON.
 
