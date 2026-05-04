@@ -29,7 +29,7 @@ RUN set -eux; \
     rm -f /tmp/wkhtmltox.deb
 
 # Install Python packages
-RUN pip3 install --no-cache-dir python-docx pymupdf pdfminer.six playwright && \
+RUN pip3 install --no-cache-dir python-docx pymupdf pdfminer.six pytesseract playwright && \
     python3 -m playwright install --with-deps chromium && \
     ln -sf /usr/bin/python3 /usr/bin/python && \
     wkhtmltopdf --version && \

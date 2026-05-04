@@ -4,6 +4,13 @@ import os
 import json
 import re
 import subprocess
+import tempfile
+
+try:
+    import pytesseract
+except Exception as e:
+    print(f"pytesseract import failed: {e}", file=sys.stderr)
+    pytesseract = None
 
 # Optional imports guarded; we won't crash if a format lib is missing
 try:
@@ -53,6 +60,33 @@ try:
 except ImportError:
     fitz_extract_text = None
 
+
+def ocr_pdf_with_tesseract(path):
+    if fitz_extract_text is None or pytesseract is None:
+        return ""
+    try:
+        doc = fitz.open(path)
+        chunks = []
+        for page in doc:
+            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
+                tmp_path = tmp.name
+            try:
+                pix.save(tmp_path)
+                text = pytesseract.image_to_string(tmp_path, lang='eng')
+                if text and text.strip():
+                    chunks.append(text)
+            finally:
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+        doc.close()
+        return "\n".join(chunks)
+    except Exception as e:
+        print(f"Tesseract OCR extraction failed: {e}", file=sys.stderr)
+        return ""
+
 # Try poppler-utils as a system command fallback
 def poppler_extract_text(path):
     try:
@@ -96,7 +130,9 @@ def read_pdf(path: str) -> str:
     if fitz_extract_text is not None:
         methods.append(("PyMuPDF", fitz_extract_text))
     methods.append(("poppler", poppler_extract_text))
-    
+    if fitz_extract_text is not None and pytesseract is not None:
+        methods.append(("tesseract-ocr", ocr_pdf_with_tesseract))
+
     for method_name, method_func in methods:
         try:
             print(f"Trying {method_name} extraction...", file=sys.stderr)

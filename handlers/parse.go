@@ -115,6 +115,13 @@ func ParseResume(c *gin.Context) {
 			return
 		}
 		rawText, _ = extracted["raw_text"].(string)
+		if strings.TrimSpace(rawText) == "" {
+			c.JSON(422, gin.H{
+				"error":   "Could not extract text from this resume file. It may be image-based, scanned, encrypted, or use an unsupported PDF encoding.",
+				"go_error": fmt.Sprint(extractErr),
+			})
+			return
+		}
 	} else {
 		fmt.Printf("[parse] Go extraction successful, extracted %d characters\n", len(rawText))
 		// Create extracted structure for compatibility
@@ -236,7 +243,7 @@ Phone: %s`, schema, rawText, email, phone)
 			"structured": structured,
 			"extracted":  extracted,
 			"method":     "simple_fallback",
-			"aiError":    "AI quota exceeded - using simple parser",
+			"aiError":    err.Error(),
 		})
 		return
 	}
