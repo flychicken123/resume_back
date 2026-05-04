@@ -17,6 +17,32 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func sanitizeAIJSON(value string) string {
+	trimmed := strings.TrimSpace(value)
+	trimmed = strings.TrimPrefix(trimmed, "```json")
+	trimmed = strings.TrimPrefix(trimmed, "```")
+	trimmed = strings.TrimSuffix(trimmed, "```")
+	return strings.TrimSpace(trimmed)
+}
+
+func buildStructuredFallbackFromRaw(rawText, email, phone string) map[string]interface{} {
+	structured := parseResumeSimple(rawText, email, phone)
+	if structured == nil {
+		return map[string]interface{}{}
+	}
+	return map[string]interface{}{
+		"name":        structured.Name,
+		"email":       structured.Email,
+		"phone":       structured.Phone,
+		"summary":     nil,
+		"experience":  []map[string]interface{}{},
+		"education":   []map[string]interface{}{},
+		"projects":    []map[string]interface{}{},
+		"skills":      []string{},
+		"conversions": []map[string]interface{}{},
+	}
+}
+
 type ParsedResume struct {
 	Name       string `json:"name"`
 	Email      string `json:"email"`
@@ -250,17 +276,24 @@ Phone: %s`, schema, rawText, email, phone)
 
 	fmt.Printf("[parse] AI extraction successful, response length: %d\n", len(aiResp))
 
-	cleaned := strings.TrimSpace(aiResp)
-	cleaned = strings.TrimPrefix(cleaned, "```json")
-	cleaned = strings.TrimPrefix(cleaned, "```")
-	cleaned = strings.TrimSuffix(cleaned, "```")
-	cleaned = strings.TrimSpace(cleaned)
+	cleaned := sanitizeAIJSON(aiResp)
 
 	var structured map[string]interface{}
 	if err := json.Unmarshal([]byte(cleaned), &structured); err != nil {
 		fmt.Printf("[parse] Failed to parse AI JSON response: %v\n", err)
 		fmt.Printf("[parse] Raw AI response: %s\n", aiResp)
-		c.JSON(500, gin.H{"error": "AI output was not valid JSON", "raw": aiResp})
+		fmt.Printf("[parse] Falling back to simple parser after invalid/truncated AI JSON\n")
+
+		// Clean up temp file
+		_ = os.Remove(tempFile)
+
+		c.JSON(200, gin.H{
+			"structured": buildStructuredFallbackFromRaw(rawText, email, phone),
+			"extracted":  extracted,
+			"method":     "simple_fallback",
+			"aiError":    "AI output was not valid JSON",
+			"aiRaw":      aiResp,
+		})
 		return
 	}
 
