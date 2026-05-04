@@ -214,33 +214,29 @@ jobs:
           # Ensure network exists
           docker network inspect ai-resume-network >/dev/null 2>&1 || docker network create ai-resume-network
            
-          # Build new image. Prefer the normal Docker path, but if an upstream
-          # base image/apt mirror flakes and a healthy backend container already
-          # exists, keep deployment inside this Action by hot-swapping the freshly
-          # built Go binary into the existing container and restarting it.
-          # Disable Buildx to avoid "file already closed" bug.
-          export DOCKER_BUILDKIT=0
-          echo "🔨 Building new backend image..."
-          DOCKER_BUILD_OK=1
-          if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml build backend; then
-            DOCKER_BUILD_OK=0
-            echo "⚠️ Docker image build failed; checking Action-managed binary fallback..."
-          fi
+          # Deploy via the automated Action pipeline. For existing production
+          # containers, use an Action-managed binary deploy so app-code releases
+          # are not blocked by upstream Ubuntu apt/Docker rebuild instability.
+          # A full Docker image build is still used for first-time recovery when
+          # no backend container exists.
+          if docker ps -a --format '{{.Names}}' | grep -qx 'ai-resume-backend-backend-1'; then
+            echo "🚀 Deploying backend binary through GitHub Actions..."
+            docker cp main ai-resume-backend-backend-1:/root/main
+            docker restart ai-resume-backend-backend-1
+          else
+            # Build new image - only needed when no existing container is present.
+            # Disable Buildx to avoid "file already closed" bug.
+            export DOCKER_BUILDKIT=0
+            echo "🔨 No existing backend container; building new backend image..."
+            if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml build backend; then
+              echo "❌ Failed to build Docker image"
+              exit 1
+            fi
 
-          if [ "$DOCKER_BUILD_OK" = "1" ]; then
             # Deploy with compose - FAIL on error
             echo "🚀 Deploying backend..."
             if ! docker-compose -p ai-resume-backend -f docker-compose.backend.yml up -d --remove-orphans; then
               echo "❌ Failed to deploy with docker-compose"
-              exit 1
-            fi
-          else
-            if docker ps -a --format '{{.Names}}' | grep -qx 'ai-resume-backend-backend-1'; then
-              echo "🚑 Using Action-managed Go binary fallback deployment..."
-              docker cp main ai-resume-backend-backend-1:/root/main
-              docker restart ai-resume-backend-backend-1
-            else
-              echo "❌ Docker build failed and no existing backend container is available for fallback"
               exit 1
             fi
           fi
