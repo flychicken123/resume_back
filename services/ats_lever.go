@@ -3,7 +3,9 @@ package services
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,10 +28,10 @@ type leverJob struct {
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
 	Categories struct {
-		Location    string `json:"location"`
-		Team        string `json:"team"`
-		Department  string `json:"department"`
-		Commitment  string `json:"commitment"`
+		Location   string `json:"location"`
+		Team       string `json:"team"`
+		Department string `json:"department"`
+		Commitment string `json:"commitment"`
 	} `json:"categories"`
 	Description          string `json:"description"`
 	DescriptionPlain     string `json:"descriptionPlain"`
@@ -53,12 +55,7 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 	}
 
 	endpoint := fmt.Sprintf("https://api.lever.co/v0/postings/%s?mode=json&limit=500", url.PathEscape(slug))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	resp, err := p.client.Do(req)
+	resp, err := p.doFetchWithRetry(ctx, endpoint, slug, company.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -88,6 +85,64 @@ func (p *LeverProvider) FetchJobs(ctx context.Context, company *models.JobCompan
 	}
 
 	return results, nil
+}
+
+func (p *LeverProvider) doFetchWithRetry(ctx context.Context, endpoint, slug string, companyID int) (*http.Response, error) {
+	var lastErr error
+	for attempt := 1; attempt <= 3; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Accept", "application/json")
+		req.Header.Set("User-Agent", "HiHiredJobSync/1.0 (+https://hihired.org)")
+
+		resp, err := p.client.Do(req)
+		if err == nil && resp != nil && !isRetryableLeverStatus(resp.StatusCode) {
+			return resp, nil
+		}
+
+		if resp != nil {
+			lastErr = fmt.Errorf("lever returned status %d for slug %s", resp.StatusCode, slug)
+			resp.Body.Close()
+		} else {
+			lastErr = err
+		}
+
+		if !isRetryableLeverError(lastErr) && (resp == nil || !isRetryableLeverStatus(resp.StatusCode)) {
+			return nil, lastErr
+		}
+		if attempt == 3 {
+			break
+		}
+
+		p.logger.Warn("lever fetch retry", map[string]interface{}{"slug": slug, "company_id": companyID, "attempt": attempt, "error": lastErr.Error()})
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(attempt) * 1500 * time.Millisecond):
+		}
+	}
+	return nil, lastErr
+}
+
+func isRetryableLeverStatus(status int) bool {
+	return status == http.StatusTooManyRequests || status == http.StatusInternalServerError || status == http.StatusBadGateway || status == http.StatusServiceUnavailable || status == http.StatusGatewayTimeout
+}
+
+func isRetryableLeverError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "timeout") || strings.Contains(msg, "context deadline exceeded") || strings.Contains(msg, "connection reset")
 }
 
 func (p *LeverProvider) resolveCompanySlug(company *models.JobCompany) (string, error) {

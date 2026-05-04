@@ -38,24 +38,24 @@ type JobCompany struct {
 
 // JobPosting represents a single job fetched from an ATS
 type JobPosting struct {
-	ID             int64           `json:"id"`
-	CompanyID      int             `json:"company_id"`
-	ExternalJobID  string          `json:"external_job_id"`
-	Title          string          `json:"title"`
-	Location       string          `json:"location"`
-	RemoteType     string          `json:"remote_type"`
-	Department     string          `json:"department"`
-	EmploymentType string          `json:"employment_type"`
-	JobURL         string          `json:"job_url"`
-	ApplicationURL string          `json:"application_url"`
-	Description    string          `json:"description"`
-	SalaryMin      *float64        `json:"salary_min"`
-	SalaryMax      *float64        `json:"salary_max"`
-	SalaryCurrency string          `json:"salary_currency"`
-	PostedAt       *time.Time      `json:"posted_at"`
-	FirstSeenAt    time.Time       `json:"first_seen_at"`
-	LastSeenAt     time.Time       `json:"last_seen_at"`
-	ClosedAt       *time.Time      `json:"closed_at"`
+	ID                  int64           `json:"id"`
+	CompanyID           int             `json:"company_id"`
+	ExternalJobID       string          `json:"external_job_id"`
+	Title               string          `json:"title"`
+	Location            string          `json:"location"`
+	RemoteType          string          `json:"remote_type"`
+	Department          string          `json:"department"`
+	EmploymentType      string          `json:"employment_type"`
+	JobURL              string          `json:"job_url"`
+	ApplicationURL      string          `json:"application_url"`
+	Description         string          `json:"description"`
+	SalaryMin           *float64        `json:"salary_min"`
+	SalaryMax           *float64        `json:"salary_max"`
+	SalaryCurrency      string          `json:"salary_currency"`
+	PostedAt            *time.Time      `json:"posted_at"`
+	FirstSeenAt         time.Time       `json:"first_seen_at"`
+	LastSeenAt          time.Time       `json:"last_seen_at"`
+	ClosedAt            *time.Time      `json:"closed_at"`
 	IsActive            bool            `json:"is_active"`
 	RawPayload          json.RawMessage `json:"raw_payload"`
 	CareerField         string          `json:"career_field,omitempty"`
@@ -490,6 +490,51 @@ func (m *JobCompanyModel) RecordSyncFailure(companyID int, syncedAt time.Time, s
         SET last_synced_at = $2,
             last_sync_status = $3,
             is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	_, err := m.db.Exec(legacyMinimalQuery, companyID, syncedAt, status)
+	return err
+}
+
+func (m *JobCompanyModel) RecordTransientSyncFailure(companyID int, syncedAt time.Time, status, errorMessage string) error {
+	trimmed := strings.TrimSpace(errorMessage)
+	const query = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            last_sync_error = NULLIF($4, ''),
+            sync_failure_count = sync_failure_count + 1,
+            is_active = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	if _, err := m.db.Exec(query, companyID, syncedAt, status, trimmed); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyErrorQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            last_sync_error = NULLIF($4, ''),
+            is_active = TRUE,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+    `
+	if _, err := m.db.Exec(legacyErrorQuery, companyID, syncedAt, status, trimmed); err == nil {
+		return nil
+	} else if !isUndefinedColumnError(err) {
+		return err
+	}
+
+	const legacyMinimalQuery = `
+        UPDATE job_companies
+        SET last_synced_at = $2,
+            last_sync_status = $3,
+            is_active = TRUE,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = $1
     `
@@ -1484,14 +1529,14 @@ type JobSyncRunWithCompany struct {
 
 // JobStatistics holds aggregate counts for the admin dashboard.
 type JobStatistics struct {
-	TotalPostings    int                    `json:"total_postings"`
-	ActivePostings   int                    `json:"active_postings"`
-	InactivePostings int                    `json:"inactive_postings"`
-	ByCompany        []CompanyJobCount      `json:"by_company"`
-	BySeniority      []SeniorityJobCount    `json:"by_seniority"`
-	ByRemoteType     []RemoteTypeJobCount   `json:"by_remote_type"`
+	TotalPostings    int                      `json:"total_postings"`
+	ActivePostings   int                      `json:"active_postings"`
+	InactivePostings int                      `json:"inactive_postings"`
+	ByCompany        []CompanyJobCount        `json:"by_company"`
+	BySeniority      []SeniorityJobCount      `json:"by_seniority"`
+	ByRemoteType     []RemoteTypeJobCount     `json:"by_remote_type"`
 	ByEmploymentType []EmploymentTypeJobCount `json:"by_employment_type"`
-	RecentTrend      []DailyJobCount        `json:"recent_trend"`
+	RecentTrend      []DailyJobCount          `json:"recent_trend"`
 }
 
 type CompanyJobCount struct {
@@ -1522,13 +1567,13 @@ type DailyJobCount struct {
 }
 
 var allowedSortColumns = map[string]string{
-	"id":            "p.id",
-	"title":         "p.title",
-	"company_name":  "c.name",
-	"location":      "p.location",
-	"posted_at":     "p.posted_at",
-	"first_seen_at": "p.first_seen_at",
-	"last_seen_at":  "p.last_seen_at",
+	"id":              "p.id",
+	"title":           "p.title",
+	"company_name":    "c.name",
+	"location":        "p.location",
+	"posted_at":       "p.posted_at",
+	"first_seen_at":   "p.first_seen_at",
+	"last_seen_at":    "p.last_seen_at",
 	"seniority_level": "p.seniority_level",
 }
 

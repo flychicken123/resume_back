@@ -38,12 +38,42 @@ func (e *UnsupportedATSProviderError) Error() string {
 	return fmt.Sprintf("unsupported ATS provider: %s", strings.TrimSpace(e.Provider))
 }
 
+func shouldKeepCompanyActiveAfterSyncFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	transientMarkers := []string{
+		"context deadline exceeded",
+		"client.timeout exceeded",
+		"timeout exceeded",
+		"temporary failure",
+		"connection reset",
+		"connection refused",
+		"tls handshake timeout",
+		" returned status 429",
+		" returned status 500",
+		" returned status 502",
+		" returned status 503",
+		" returned status 504",
+	}
+	for _, marker := range transientMarkers {
+		if strings.Contains(msg, marker) {
+			return true
+		}
+	}
+	return false
+}
+
 func shouldLogSyncFailureAsError(err error) bool {
 	if err == nil {
 		return false
 	}
 	var unsupported *UnsupportedATSProviderError
 	if errors.As(err, &unsupported) {
+		return false
+	}
+	if shouldKeepCompanyActiveAfterSyncFailure(err) {
 		return false
 	}
 
@@ -55,6 +85,10 @@ func shouldLogSyncFailureAsError(err error) bool {
 		" returned status 405",
 		" returned status 422",
 		" returned status 429",
+		" returned status 500",
+		" returned status 502",
+		" returned status 503",
+		" returned status 504",
 		" could not determine ",
 		" could not derive ",
 		" board token is required",
@@ -108,20 +142,20 @@ type ClassifyThrottleConfig struct {
 }
 
 type JobIngestionService struct {
-	companyModel  *models.JobCompanyModel
-	postingModel  *models.JobPostingModel
-	syncRunModel  *models.JobSyncRunModel
-	providers     map[string]ATSProvider
-	logger        *utils.Logger
-	clock         func() time.Time
-	embeddingSvc  *EmbeddingService
-	ctx           context.Context
-	embedMu       sync.Mutex
-	embedRunning  bool
-	throttle      ClassifyThrottleConfig
+	companyModel   *models.JobCompanyModel
+	postingModel   *models.JobPostingModel
+	syncRunModel   *models.JobSyncRunModel
+	providers      map[string]ATSProvider
+	logger         *utils.Logger
+	clock          func() time.Time
+	embeddingSvc   *EmbeddingService
+	ctx            context.Context
+	embedMu        sync.Mutex
+	embedRunning   bool
+	throttle       ClassifyThrottleConfig
 	classifyPaused atomic.Bool
-	classifyOneFn func(ctx context.Context, id int64) error
-	testLogger    retryLogger
+	classifyOneFn  func(ctx context.Context, id int64) error
+	testLogger     retryLogger
 
 	syncAllMu     sync.Mutex
 	syncAllStatus SyncAllStatus
@@ -130,11 +164,11 @@ type JobIngestionService struct {
 
 // SyncAllStatus is the snapshot of an async sync-all run.
 type SyncAllStatus struct {
-	Running    bool                 `json:"running"`
-	StartedAt  *time.Time           `json:"started_at,omitempty"`
-	FinishedAt *time.Time           `json:"finished_at,omitempty"`
-	LastError  string               `json:"last_error,omitempty"`
-	LastResult *JobSyncBatchResult  `json:"last_result,omitempty"`
+	Running    bool                `json:"running"`
+	StartedAt  *time.Time          `json:"started_at,omitempty"`
+	FinishedAt *time.Time          `json:"finished_at,omitempty"`
+	LastError  string              `json:"last_error,omitempty"`
+	LastResult *JobSyncBatchResult `json:"last_result,omitempty"`
 }
 
 const dailySyncInterval = 24 * time.Hour
@@ -160,10 +194,11 @@ func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *Embe
 	}
 
 	httpClient := &http.Client{Timeout: 20 * time.Second}
+	leverHTTPClient := &http.Client{Timeout: 60 * time.Second}
 	service.RegisterProvider("greenhouse", NewGreenhouseProvider(httpClient, logger))
 	service.RegisterProvider("workday", NewWorkdayProvider(httpClient, logger))
 	service.RegisterProvider("smartrecruiters", NewSmartRecruitersProvider(httpClient, logger))
-	service.RegisterProvider("lever", NewLeverProvider(httpClient, logger))
+	service.RegisterProvider("lever", NewLeverProvider(leverHTTPClient, logger))
 	service.RegisterProvider("workable", NewWorkableProvider(httpClient, logger))
 	service.RegisterProvider("ashby", NewAshbyProvider(httpClient, logger))
 	service.RegisterProvider("bamboohr", NewBambooHRProvider(httpClient, logger))
@@ -220,7 +255,13 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 			} else {
 				s.logger.Warn("job sync run failed", map[string]interface{}{"company_id": company.ID, "provider": company.ATSProvider, "error": finishErr.Error()})
 			}
-			if err := s.companyModel.RecordSyncFailure(company.ID, syncedAt, status, truncated); err != nil {
+			var err error
+			if shouldKeepCompanyActiveAfterSyncFailure(finishErr) {
+				err = s.companyModel.RecordTransientSyncFailure(company.ID, syncedAt, status, truncated)
+			} else {
+				err = s.companyModel.RecordSyncFailure(company.ID, syncedAt, status, truncated)
+			}
+			if err != nil {
 				s.logger.Warn("failed recording sync failure", map[string]interface{}{"company_id": company.ID, "error": err.Error()})
 			}
 		} else {
