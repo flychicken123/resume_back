@@ -80,8 +80,11 @@ func getLangChainModel() (llms.Model, error) {
 	return langChainModel, langChainErr
 }
 
-func CallGeminiWithAPIKey(prompt string) (string, error) {
-	if err := geminiGate.acquire(context.Background()); err != nil {
+func CallGeminiWithAPIKeyContext(ctx context.Context, prompt string) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := geminiGate.acquire(ctx); err != nil {
 		return "", err
 	}
 	defer geminiGate.release()
@@ -90,7 +93,11 @@ func CallGeminiWithAPIKey(prompt string) (string, error) {
 		return "", err
 	}
 
-	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
+	return llms.GenerateFromSinglePrompt(ctx, llm, prompt)
+}
+
+func CallGeminiWithAPIKey(prompt string) (string, error) {
+	return CallGeminiWithAPIKeyContext(context.Background(), prompt)
 }
 
 // getLangChainFlashModel returns a Gemini Flash model optimized for speed.
@@ -134,8 +141,11 @@ func CallGeminiFlash(prompt string) (string, error) {
 }
 
 // CallGeminiFlashWithTemperature calls Gemini Flash with a specific temperature.
-func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string, error) {
-	if err := geminiGate.acquire(context.Background()); err != nil {
+func CallGeminiFlashWithTemperatureContext(ctx context.Context, prompt string, temperature float64) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := geminiGate.acquire(ctx); err != nil {
 		return "", err
 	}
 	defer geminiGate.release()
@@ -143,13 +153,20 @@ func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string,
 	if err != nil {
 		return "", err
 	}
-	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt,
+	return llms.GenerateFromSinglePrompt(ctx, llm, prompt,
 		llms.WithTemperature(temperature))
+}
+
+func CallGeminiFlashWithTemperature(prompt string, temperature float64) (string, error) {
+	return CallGeminiFlashWithTemperatureContext(context.Background(), prompt, temperature)
 }
 
 // ClassifyWriteIntent uses a cheap Flash call to determine if a user message
 // requests a data mutation that should trigger a tool call.
-func ClassifyWriteIntent(userMessage string) bool {
+func ClassifyWriteIntentWithContext(ctx context.Context, userMessage string) bool {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	prompt := fmt.Sprintf(`Classify this user message as ACTION or QUESTION.
 ACTION = user wants to change, update, move, create, delete, track, or modify data
   Examples: "move X to rejected", "track my application at Google", "update my skills", "delete that entry"
@@ -160,9 +177,9 @@ Message: "%s"
 
 Reply with one word only: ACTION or QUESTION`, userMessage)
 
-	result, err := CallWithRateLimitRetry(context.Background(), DefaultRetryConfig(),
+	result, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
 		func(ctx context.Context) (string, error) {
-			return CallGeminiFlashWithTemperature(prompt, 0.0)
+			return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
 		},
 		RetryOpts{Endpoint: "classify_intent"},
 	)
@@ -170,6 +187,10 @@ Reply with one word only: ACTION or QUESTION`, userMessage)
 		return false
 	}
 	return strings.Contains(strings.ToUpper(strings.TrimSpace(result)), "ACTION")
+}
+
+func ClassifyWriteIntent(userMessage string) bool {
+	return ClassifyWriteIntentWithContext(context.Background(), userMessage)
 }
 
 // CallGeminiStreaming streams tokens via callback and returns the full text.
@@ -221,8 +242,11 @@ func CallGeminiStreamingWithTemperature(prompt string, temperature float64, onCh
 // Lower temperature (0.0-0.3) = more focused, consistent, factual output
 // Higher temperature (0.7-1.0) = more creative, varied output
 // For resume optimization, use low temperature (0.2-0.3) to reduce hallucinations.
-func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {
-	if err := geminiGate.acquire(context.Background()); err != nil {
+func CallGeminiWithTemperatureContext(ctx context.Context, prompt string, temperature float64) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := geminiGate.acquire(ctx); err != nil {
 		return "", err
 	}
 	defer geminiGate.release()
@@ -232,7 +256,7 @@ func CallGeminiWithTemperature(prompt string, temperature float64) (string, erro
 	}
 
 	return llms.GenerateFromSinglePrompt(
-		context.Background(),
+		ctx,
 		llm,
 		prompt,
 		llms.WithTemperature(temperature),
@@ -241,11 +265,19 @@ func CallGeminiWithTemperature(prompt string, temperature float64) (string, erro
 	)
 }
 
+func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {
+	return CallGeminiWithTemperatureContext(context.Background(), prompt, temperature)
+}
+
 // CallGeminiStrict calls Gemini with very low temperature (0.1) for factual tasks
 // where we want to minimize hallucination and maximize adherence to source material.
 // Use this for resume optimization, polishing, and any task where inventing content is bad.
 func CallGeminiStrict(prompt string) (string, error) {
 	return CallGeminiWithTemperature(prompt, 0.1)
+}
+
+func CallGeminiStrictContext(ctx context.Context, prompt string) (string, error) {
+	return CallGeminiWithTemperatureContext(ctx, prompt, 0.1)
 }
 
 // ValidateOutputWithAI performs a two-pass validation by asking the AI to check
@@ -1762,10 +1794,10 @@ IMPORTANT: Return ONLY the professional summary text. No headers or explanations
 // Returns the validated text (potentially with warnings) and any detected issues.
 func ValidateNoHallucinations(original, optimized string) (string, []string) {
 	var issues []string
-	
+
 	originalLower := strings.ToLower(original)
 	optimizedLower := strings.ToLower(optimized)
-	
+
 	// Check for specific percentage patterns that weren't in original
 	percentagePatterns := []string{
 		"100%", "95%", "90%", "85%", "80%", "75%", "70%", "60%", "50%", "40%", "30%", "20%",
@@ -1779,16 +1811,16 @@ func ValidateNoHallucinations(original, optimized string) (string, []string) {
 			}
 		}
 	}
-	
+
 	// Check for dollar amounts that weren't in original
-	if (strings.Contains(optimizedLower, "$") || strings.Contains(optimizedLower, "million") || 
-		strings.Contains(optimizedLower, "billion")) && 
-		!strings.Contains(originalLower, "$") && 
+	if (strings.Contains(optimizedLower, "$") || strings.Contains(optimizedLower, "million") ||
+		strings.Contains(optimizedLower, "billion")) &&
+		!strings.Contains(originalLower, "$") &&
 		!strings.Contains(originalLower, "million") &&
 		!strings.Contains(originalLower, "billion") {
 		issues = append(issues, "Added dollar amounts or revenue figures not in original")
 	}
-	
+
 	// Check for specific large numbers that weren't in original
 	largeNumberPatterns := []string{
 		"10,000", "50,000", "100,000", "1 million", "10 million", "100 million",
@@ -1799,7 +1831,7 @@ func ValidateNoHallucinations(original, optimized string) (string, []string) {
 			issues = append(issues, fmt.Sprintf("Added large number '%s' not in original", num))
 		}
 	}
-	
+
 	// If issues detected, we still return the text but log the concerns
 	// The frontend can decide whether to show warnings to the user
 	return optimized, issues
@@ -1828,8 +1860,8 @@ type JobRelevanceCandidate struct {
 
 // JobRelevanceFilterResult contains the AI filtering results
 type JobRelevanceFilterResult struct {
-	RelevantIndices []int             // Indices of jobs that are relevant
-	FilteredCount   int               // Number of jobs filtered out
+	RelevantIndices []int // Indices of jobs that are relevant
+	FilteredCount   int   // Number of jobs filtered out
 }
 
 // BuildJobRelevanceFilterPrompt builds a prompt for AI to filter jobs by career relevance

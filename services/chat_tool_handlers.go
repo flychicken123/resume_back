@@ -19,28 +19,39 @@ type ToolRegistry struct {
 	JobMatchModel    *models.ResumeJobMatchModel
 	ChatProfileModel *models.UserChatProfileModel
 	DB               *sql.DB
-
-	// Per-request context (set before each tool call, not persistent)
-	requestResumeData map[string]any
-	requestJobDesc    string
-	requestHistory    string
 }
 
 var toolRegistry *ToolRegistry
+
+type chatToolRequestContextKey struct{}
+
+// ChatToolRequestContext carries per-request data needed by tool handlers.
+type ChatToolRequestContext struct {
+	ResumeData          map[string]any
+	JobDescription      string
+	ConversationHistory string
+}
+
+func WithChatToolRequestContext(ctx context.Context, value ChatToolRequestContext) context.Context {
+	return context.WithValue(ctx, chatToolRequestContextKey{}, value)
+}
+
+func chatToolRequestContext(ctx context.Context) ChatToolRequestContext {
+	if ctx == nil {
+		return ChatToolRequestContext{}
+	}
+	value, _ := ctx.Value(chatToolRequestContextKey{}).(ChatToolRequestContext)
+	return value
+}
 
 // SetToolRegistry injects model dependencies for tool handlers.
 func SetToolRegistry(r *ToolRegistry) {
 	toolRegistry = r
 }
 
-// SetRequestContext sets per-request resume data for tool handlers.
+// SetRequestContext is kept for older callers. New chat requests pass this data
+// through context with WithChatToolRequestContext to avoid cross-request races.
 func SetRequestContext(resumeData map[string]any, jobDesc, conversationHistory string) {
-	if toolRegistry == nil {
-		return
-	}
-	toolRegistry.requestResumeData = resumeData
-	toolRegistry.requestJobDesc = jobDesc
-	toolRegistry.requestHistory = conversationHistory
 }
 
 func getStringArg(args map[string]any, key, fallback string) string {
@@ -278,8 +289,8 @@ func handleUpdateApplicationStatus(ctx context.Context, userID int, args map[str
 		}
 		log.Printf("[TOOL:update_status] FAIL: no match for company=%q title=%q. Available: %v", company, jobTitle, available)
 		return map[string]any{
-			"error":              fmt.Sprintf("No application found matching '%s'. Track it first.", hint),
-			"available_apps":     available,
+			"error":          fmt.Sprintf("No application found matching '%s'. Track it first.", hint),
+			"available_apps": available,
 		}, nil
 	}
 
@@ -438,26 +449,28 @@ func handleUpdateResumeField(ctx context.Context, userID int, args map[string]an
 
 // --- Resume feature tool handlers (migrated from intent router) ---
 
-func getResumeString(key string) string {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+func getResumeString(ctx context.Context, key string) string {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return ""
 	}
-	v, _ := toolRegistry.requestResumeData[key].(string)
+	v, _ := requestCtx.ResumeData[key].(string)
 	return strings.TrimSpace(v)
 }
 
-func getResumeSlice(key string) []any {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+func getResumeSlice(ctx context.Context, key string) []any {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return nil
 	}
-	v, _ := toolRegistry.requestResumeData[key].([]any)
+	v, _ := requestCtx.ResumeData[key].([]any)
 	return v
 }
 
-func extractExperience() string {
-	exps := getResumeSlice("experiences")
+func extractExperience(ctx context.Context) string {
+	exps := getResumeSlice(ctx, "experiences")
 	if len(exps) == 0 {
-		return getResumeString("experience")
+		return getResumeString(ctx, "experience")
 	}
 	var sb strings.Builder
 	for _, e := range exps {
@@ -473,10 +486,10 @@ func extractExperience() string {
 	return sb.String()
 }
 
-func extractEducation() string {
-	edus := getResumeSlice("education")
+func extractEducation(ctx context.Context) string {
+	edus := getResumeSlice(ctx, "education")
 	if len(edus) == 0 {
-		return getResumeString("education")
+		return getResumeString(ctx, "education")
 	}
 	var sb strings.Builder
 	for _, e := range edus {
@@ -490,8 +503,8 @@ func extractEducation() string {
 	return sb.String()
 }
 
-func extractSkills() []string {
-	s := getResumeString("skills")
+func extractSkills(ctx context.Context) []string {
+	s := getResumeString(ctx, "skills")
 	if s == "" {
 		return nil
 	}
@@ -505,8 +518,8 @@ func extractSkills() []string {
 	return skills
 }
 
-func extractProjects() string {
-	projs := getResumeSlice("projects")
+func extractProjects(ctx context.Context) string {
+	projs := getResumeSlice(ctx, "projects")
 	if len(projs) == 0 {
 		return ""
 	}
@@ -522,11 +535,12 @@ func extractProjects() string {
 }
 
 func handleAnalyzeResume(ctx context.Context, userID int, args map[string]any) (any, error) {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return map[string]any{"error": "no resume data available"}, nil
 	}
-	prompt := BuildResumeAdvicePrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildResumeAdvicePrompt(requestCtx.ResumeData, requestCtx.JobDescription)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "analysis failed"}, nil
 	}
@@ -534,12 +548,13 @@ func handleAnalyzeResume(ctx context.Context, userID int, args map[string]any) (
 }
 
 func handleGenerateCoverLetter(ctx context.Context, userID int, args map[string]any) (any, error) {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return map[string]any{"error": "no resume data available"}, nil
 	}
 	company := getStringArg(args, "company_name", "")
-	prompt := BuildCoverLetterPrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc, company)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildCoverLetterPrompt(requestCtx.ResumeData, requestCtx.JobDescription, company)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "cover letter generation failed"}, nil
 	}
@@ -547,13 +562,14 @@ func handleGenerateCoverLetter(ctx context.Context, userID int, args map[string]
 }
 
 func handleGenerateRecommendationLetter(ctx context.Context, userID int, args map[string]any) (any, error) {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return map[string]any{"error": "no resume data available"}, nil
 	}
 	company := getStringArg(args, "company_name", "")
 	position := getStringArg(args, "position", "")
-	prompt := BuildRecommendationLetterPrompt(toolRegistry.requestResumeData, toolRegistry.requestJobDesc, company, position)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildRecommendationLetterPrompt(requestCtx.ResumeData, requestCtx.JobDescription, company, position)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "letter generation failed"}, nil
 	}
@@ -561,13 +577,14 @@ func handleGenerateRecommendationLetter(ctx context.Context, userID int, args ma
 }
 
 func handleGenerateSummary(ctx context.Context, userID int, args map[string]any) (any, error) {
-	experience := extractExperience()
-	education := extractEducation()
-	skills := extractSkills()
-	existingSummary := getResumeString("summary")
+	requestCtx := chatToolRequestContext(ctx)
+	experience := extractExperience(ctx)
+	education := extractEducation(ctx)
+	skills := extractSkills(ctx)
+	existingSummary := getResumeString(ctx, "summary")
 
-	prompt := BuildSummaryOptimizationPromptWithSkills(experience, education, skills, existingSummary, toolRegistry.requestJobDesc, nil, nil)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildSummaryOptimizationPromptWithSkills(experience, education, skills, existingSummary, requestCtx.JobDescription, nil, nil)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "summary generation failed"}, nil
 	}
@@ -582,12 +599,13 @@ func handleGenerateSummary(ctx context.Context, userID int, args map[string]any)
 }
 
 func handleOptimizeExperience(ctx context.Context, userID int, args map[string]any) (any, error) {
-	experience := extractExperience()
+	requestCtx := chatToolRequestContext(ctx)
+	experience := extractExperience(ctx)
 	if experience == "" {
 		return map[string]any{"error": "no experience data to optimize"}, nil
 	}
-	prompt := BuildExperienceOptimizationPromptWithSkills(toolRegistry.requestJobDesc, experience, nil, nil)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildExperienceOptimizationPromptWithSkills(requestCtx.JobDescription, experience, nil, nil)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "optimization failed"}, nil
 	}
@@ -596,12 +614,13 @@ func handleOptimizeExperience(ctx context.Context, userID int, args map[string]a
 }
 
 func handleOptimizeProject(ctx context.Context, userID int, args map[string]any) (any, error) {
-	projects := extractProjects()
+	requestCtx := chatToolRequestContext(ctx)
+	projects := extractProjects(ctx)
 	if projects == "" {
 		return map[string]any{"error": "no project data to optimize"}, nil
 	}
-	prompt := BuildProjectOptimizationPromptWithSkills(toolRegistry.requestJobDesc, projects, "", nil, nil)
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	prompt := BuildProjectOptimizationPromptWithSkills(requestCtx.JobDescription, projects, "", nil, nil)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "optimization failed"}, nil
 	}
@@ -614,19 +633,19 @@ func handleImproveGrammar(ctx context.Context, userID int, args map[string]any) 
 	var prompt string
 	switch section {
 	case "summary":
-		summary := getResumeString("summary")
+		summary := getResumeString(ctx, "summary")
 		if summary == "" {
 			return map[string]any{"error": "no summary to improve"}, nil
 		}
 		prompt = BuildSummaryGrammarPrompt(summary)
 	default:
-		experience := extractExperience()
+		experience := extractExperience(ctx)
 		if experience == "" {
 			return map[string]any{"error": "no experience to improve"}, nil
 		}
 		prompt = BuildExperienceGrammarPrompt(experience)
 	}
-	result, err := CallGeminiWithTemperature(prompt, 0.3)
+	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
 	if err != nil {
 		return map[string]any{"error": "grammar improvement failed"}, nil
 	}
@@ -644,12 +663,13 @@ func handleImproveGrammar(ctx context.Context, userID int, args map[string]any) 
 }
 
 func handleGenerateSkills(ctx context.Context, userID int, args map[string]any) (any, error) {
-	if toolRegistry == nil || toolRegistry.requestResumeData == nil {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
 		return map[string]any{"error": "no resume data"}, nil
 	}
-	experience := extractExperience()
-	education := extractEducation()
-	projects := extractProjects()
+	experience := extractExperience(ctx)
+	education := extractEducation(ctx)
+	projects := extractProjects(ctx)
 	prompt := fmt.Sprintf(`Extract relevant professional skills from this resume content. Return a JSON array of skill strings.
 
 Experience: %s
@@ -659,7 +679,9 @@ Projects: %s
 Return JSON array only: ["skill1", "skill2", ...]`, experience, education, projects)
 
 	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
-		func(ctx context.Context) (string, error) { return CallGeminiFlashWithTemperature(prompt, 0.0) },
+		func(ctx context.Context) (string, error) {
+			return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
+		},
 		RetryOpts{Endpoint: "tool_auto_generate_skills"},
 	)
 	if err != nil {
@@ -687,7 +709,7 @@ Return JSON array only: ["skill1", "skill2", ...]`, experience, education, proje
 }
 
 func handleCategorizeSkills(ctx context.Context, userID int, args map[string]any) (any, error) {
-	skillsText := getResumeString("skills")
+	skillsText := getResumeString(ctx, "skills")
 	if skillsText == "" {
 		return map[string]any{"error": "no skills to categorize"}, nil
 	}
@@ -699,7 +721,9 @@ Skills: %s
 Return the categorized text only:`, skillsText)
 
 	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
-		func(ctx context.Context) (string, error) { return CallGeminiFlashWithTemperature(prompt, 0.0) },
+		func(ctx context.Context) (string, error) {
+			return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
+		},
 		RetryOpts{Endpoint: "tool_categorize_skills"},
 	)
 	if err != nil {

@@ -12,6 +12,8 @@ import (
 
 const maxToolCallRounds = 3
 
+var getToolLLM = getLangChainModel
+
 // ToolCallMetadata holds side effects from tool execution (e.g., resume field updates).
 type ToolCallMetadata struct {
 	ResumeUpdates []map[string]any
@@ -26,11 +28,61 @@ type ToolCallOption struct {
 	ForceToolCall bool // If true, append a strong system instruction forcing tool usage
 }
 
+// ToolStreamCallbacks streams model progress to the chat transport.
+type ToolStreamCallbacks struct {
+	OnToken  func(string) error
+	OnReset  func() error
+	OnStatus func(string) error
+}
+
+func (c ToolStreamCallbacks) token(s string) error {
+	if c.OnToken == nil || s == "" {
+		return nil
+	}
+	return c.OnToken(s)
+}
+
+func (c ToolStreamCallbacks) reset() error {
+	if c.OnReset == nil {
+		return nil
+	}
+	return c.OnReset()
+}
+
+func (c ToolStreamCallbacks) status(s string) error {
+	if c.OnStatus == nil || s == "" {
+		return nil
+	}
+	return c.OnStatus(s)
+}
+
+// CallGeminiWithToolsStreaming sends a prompt to Gemini with tool definitions,
+// streaming user-visible tokens and tool status through callbacks.
+func CallGeminiWithToolsStreaming(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, callbacks ToolStreamCallbacks, opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
+	return callGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, &callbacks, opts...)
+}
+
 // CallGeminiWithTools sends a prompt to Gemini with tool definitions.
 // If the model requests a tool call, it executes the handler and feeds the result back.
 // Streams text tokens via onChunk. Returns the final text response and any metadata.
 func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, onChunk func(string), opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
-	llm, err := getLangChainModel()
+	var callbacks *ToolStreamCallbacks
+	if onChunk != nil {
+		callbacks = &ToolStreamCallbacks{
+			OnToken: func(s string) error {
+				onChunk(s)
+				return nil
+			},
+		}
+	}
+	return callGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, callbacks, opts...)
+}
+
+func callGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, callbacks *ToolStreamCallbacks, opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	llm, err := getToolLLM()
 	if err != nil {
 		return "", nil, err
 	}
@@ -55,16 +107,19 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 		}
 
 		// Add streaming callback — tokens flow to client as they arrive
-		if onChunk != nil {
+		if callbacks != nil && callbacks.OnToken != nil {
 			opts = append(opts, llms.WithStreamingFunc(func(ctx context.Context, chunk []byte) error {
 				s := string(chunk)
 				streamedText.WriteString(s)
-				onChunk(s)
-				return nil
+				return callbacks.token(s)
 			}))
 		}
 
+		if err := geminiGate.acquire(ctx); err != nil {
+			return streamedText.String(), meta, err
+		}
 		resp, err := llm.GenerateContent(ctx, messages, opts...)
+		geminiGate.release()
 		if err != nil {
 			return streamedText.String(), meta, fmt.Errorf("gemini tool call failed: %w", err)
 		}
@@ -86,6 +141,11 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 		// Tool calls detected — any streamed text was tool call metadata, not user text
 		// Reset for next round (tool results will be fed back, then LLM generates final text)
+		if streamedText.Len() > 0 && callbacks != nil {
+			if err := callbacks.reset(); err != nil {
+				return "", meta, err
+			}
+		}
 		streamedText.Reset()
 
 		// Process tool calls
@@ -106,8 +166,10 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 			}
 
 			// Notify client that a tool is being called
-			if onChunk != nil {
-				onChunk(fmt.Sprintf("[Searching: %s...]\n", tc.FunctionCall.Name))
+			if callbacks != nil {
+				if err := callbacks.status(fmt.Sprintf("Working with %s...", tc.FunctionCall.Name)); err != nil {
+					return streamedText.String(), meta, err
+				}
 			}
 
 			// Parse arguments
@@ -166,9 +228,5 @@ func CallGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 // CallGeminiWithToolsBlocking is the non-streaming version.
 func CallGeminiWithToolsBlocking(ctx context.Context, systemPrompt, userPrompt string, tools []ChatTool, userID int, opts ...ToolCallOption) (string, *ToolCallMetadata, error) {
-	if err := geminiGate.acquire(ctx); err != nil {
-		return "", nil, err
-	}
-	defer geminiGate.release()
-	return CallGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil, opts...)
+	return callGeminiWithTools(ctx, systemPrompt, userPrompt, tools, userID, nil, opts...)
 }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -60,6 +61,12 @@ type ProactiveSuggestion struct {
 	Action  string `json:"action"`
 	Label   string `json:"label"`
 }
+
+var (
+	callGeminiToolsBlocking  = services.CallGeminiWithToolsBlocking
+	callGeminiToolsStreaming = services.CallGeminiWithToolsStreaming
+	classifyWriteIntent      = services.ClassifyWriteIntentWithContext
+)
 
 type knowledgeEntry struct {
 	Title    string
@@ -490,58 +497,110 @@ func buildResumeContext(resumeData map[string]interface{}) string {
 type sseWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
+	mu      sync.Mutex
 }
 
 func newSSEWriter(w http.ResponseWriter) *sseWriter {
 	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no") // disables buffering in Cloudflare and nginx
 	flusher, _ := w.(http.Flusher)
 	return &sseWriter{w: w, flusher: flusher}
 }
 
-func (s *sseWriter) WriteToken(token string) {
-	data, _ := json.Marshal(map[string]string{"token": token})
-	fmt.Fprintf(s.w, "data: %s\n\n", data)
+func (s *sseWriter) writePayload(payload any) error {
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	return s.writeRaw(fmt.Sprintf("data: %s\n\n", data))
+}
+
+func (s *sseWriter) writeRaw(raw string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := fmt.Fprint(s.w, raw); err != nil {
+		return err
+	}
 	if s.flusher != nil {
 		s.flusher.Flush()
 	}
+	return nil
 }
 
-func (s *sseWriter) WriteDone(resp *chatResponse) {
-	data, _ := json.Marshal(map[string]interface{}{
-		"done":             true,
-		"reply":            resp.Reply,
-		"featureAction":    resp.FeatureAction,
-		"featureResult":    resp.FeatureResult,
-		"updatedResumeData": resp.UpdatedResumeData,
-		"isPolishAction":   resp.IsPolishAction,
-		"polishedContent":  resp.PolishedContent,
+func (s *sseWriter) WriteReady() error {
+	return s.writePayload(map[string]any{"ready": true})
+}
+
+func (s *sseWriter) WriteStatus(status string) error {
+	return s.writePayload(map[string]string{"status": status})
+}
+
+func (s *sseWriter) WriteToken(token string) error {
+	return s.writePayload(map[string]string{"token": token})
+}
+
+func (s *sseWriter) WriteDone(resp *chatResponse) error {
+	return s.writePayload(map[string]interface{}{
+		"done":                 true,
+		"reply":                resp.Reply,
+		"featureAction":        resp.FeatureAction,
+		"featureResult":        resp.FeatureResult,
+		"updatedResumeData":    resp.UpdatedResumeData,
+		"isPolishAction":       resp.IsPolishAction,
+		"polishedContent":      resp.PolishedContent,
 		"section":              resp.Section,
 		"entryIndex":           resp.EntryIndex,
 		"proactiveSuggestions": resp.ProactiveSuggestions,
 		"toolDebug":            resp.ToolDebug,
 	})
-	fmt.Fprintf(s.w, "data: %s\n\n", data)
-	if s.flusher != nil {
-		s.flusher.Flush()
-	}
 }
 
-func (s *sseWriter) WriteRetryReset() {
-	data, _ := json.Marshal(map[string]interface{}{"retry_reset": true})
-	fmt.Fprintf(s.w, "data: %s\n\n", data)
-	if s.flusher != nil {
-		s.flusher.Flush()
-	}
+func (s *sseWriter) WriteRetryReset() error {
+	return s.writePayload(map[string]interface{}{"retry_reset": true})
 }
 
-func (s *sseWriter) WriteError(msg string) {
-	data, _ := json.Marshal(map[string]interface{}{"error": true, "message": msg})
-	fmt.Fprintf(s.w, "data: %s\n\n", data)
-	if s.flusher != nil {
-		s.flusher.Flush()
+func (s *sseWriter) WriteError(msg string) error {
+	return s.writePayload(map[string]interface{}{"error": true, "message": msg})
+}
+
+func (s *sseWriter) WriteComment(comment string) error {
+	if comment == "" {
+		comment = "heartbeat"
+	}
+	return s.writeRaw(fmt.Sprintf(": %s\n\n", strings.ReplaceAll(comment, "\n", " ")))
+}
+
+func (s *sseWriter) StartHeartbeat(ctx context.Context, interval time.Duration, onError func(error)) func() {
+	if interval <= 0 {
+		interval = 15 * time.Second
+	}
+	done := make(chan struct{})
+	var closeOnce sync.Once
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-done:
+				return
+			case <-ticker.C:
+				if err := s.WriteComment("heartbeat"); err != nil {
+					if onError != nil {
+						onError(err)
+					}
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		closeOnce.Do(func() {
+			close(done)
+		})
 	}
 }
 
@@ -553,10 +612,6 @@ func ChatAssistant(c *gin.Context) {
 	}
 
 	isStream := c.Query("stream") == "true"
-	var sse *sseWriter
-	if isStream {
-		sse = newSSEWriter(c.Writer)
-	}
 
 	userMessage := strings.TrimSpace(req.Message)
 	if userMessage == "" {
@@ -568,6 +623,29 @@ func ChatAssistant(c *gin.Context) {
 	pagePath := strings.TrimSpace(req.PagePath)
 	userEmail := strings.TrimSpace(req.UserEmail)
 	ctx := c.Request.Context()
+	var cancel context.CancelFunc
+	var sse *sseWriter
+	var stopHeartbeat func()
+	if isStream {
+		ctx, cancel = context.WithCancel(ctx)
+		defer cancel()
+		sse = newSSEWriter(c.Writer)
+		stopHeartbeat = sse.StartHeartbeat(ctx, 15*time.Second, func(err error) {
+			log.Printf("chat SSE heartbeat failed: %v", err)
+			cancel()
+		})
+		defer stopHeartbeat()
+		if err := sse.WriteReady(); err != nil {
+			log.Printf("chat SSE ready failed: %v", err)
+			cancel()
+			return
+		}
+		if err := sse.WriteStatus("Thinking..."); err != nil {
+			log.Printf("chat SSE status failed: %v", err)
+			cancel()
+			return
+		}
+	}
 
 	// Extract user ID from JWT if present (chat is a public endpoint, auth is optional)
 	chatUserID := c.GetInt("user_id")
@@ -711,25 +789,55 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	var reply string
 	var err error
 
-	// Set per-request context for tool handlers (resume data, job description, conversation)
 	jobDesc, _ := req.ResumeData["jobDescription"].(string)
-	services.SetRequestContext(req.ResumeData, jobDesc, historyBuilder.String())
+	ctx = services.WithChatToolRequestContext(ctx, services.ChatToolRequestContext{
+		ResumeData:          req.ResumeData,
+		JobDescription:      jobDesc,
+		ConversationHistory: historyBuilder.String(),
+	})
 
 	// Use tool-enabled call — allows the LLM to search jobs, optimize resume, generate letters, etc.
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
+	streamWriteFailed := func(err error) bool {
+		if err == nil {
+			return false
+		}
+		if cancel != nil {
+			cancel()
+		}
+		log.Printf("chat SSE write failed: %v", err)
+		return true
+	}
 
-	// First call always runs as blocking (no streaming) so we can decide
-	// whether to show the response or silently retry before the user sees anything.
+	// Non-streaming calls can retry before anything reaches the client.
+	// Streaming calls use the token callback path and reset visible text before forced retries.
 	// Retries only 429-class errors when no tool has fired yet — avoids double-invoking
-	// tools on a post-tool rate-limit error. See services/retry.go.
-	reply, toolMeta, err = chatCallWithRetry(func() (string, *services.ToolCallMetadata, error) {
-		return services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
-	})
+	if isStream {
+		callbacks := services.ToolStreamCallbacks{
+			OnToken: func(token string) error {
+				return sse.WriteToken(token)
+			},
+			OnReset: func() error {
+				return sse.WriteRetryReset()
+			},
+			OnStatus: func(status string) error {
+				return sse.WriteStatus(status)
+			},
+		}
+		reply, toolMeta, err = callGeminiToolsStreaming(ctx, systemInstructions, prompt, tools, chatUserID, callbacks)
+	} else {
+		reply, toolMeta, err = chatCallWithRetry(func() (string, *services.ToolCallMetadata, error) {
+			return callGeminiToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
+		})
+	}
 	if err != nil {
+		if isStream && ctx.Err() != nil {
+			return
+		}
 		fallbackReply := fallbackChatReply(userMessage, err)
 		if isStream {
-			sse.WriteDone(&chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions})
+			streamWriteFailed(sse.WriteDone(&chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions}))
 		} else {
 			c.JSON(http.StatusOK, &chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions})
 		}
@@ -749,14 +857,38 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		allToolsFailed := len(toolMeta.ToolsCalled) > 0 && len(toolMeta.ToolErrors) > 0 && len(toolMeta.ToolErrors) >= len(toolMeta.ToolsCalled)
 
 		if noToolsCalled || allToolsFailed {
-			userHasWriteIntent = services.ClassifyWriteIntent(userMessage)
+			userHasWriteIntent = classifyWriteIntent(ctx, userMessage)
 			if userHasWriteIntent {
 				log.Printf("[WRITE-SAFETY] AI classified write intent but no tool succeeded (called=%v errors=%v). Retrying with forced-tool option.",
 					toolMeta.ToolsCalled, toolMeta.ToolErrors)
 
 				forceOpt := services.ToolCallOption{ForceToolCall: true}
-				retryReply, retryMeta, retryErr := services.CallGeminiWithToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
+				var retryReply string
+				var retryMeta *services.ToolCallMetadata
+				var retryErr error
+				if isStream {
+					if streamWriteFailed(sse.WriteRetryReset()) {
+						return
+					}
+					callbacks := services.ToolStreamCallbacks{
+						OnToken: func(token string) error {
+							return sse.WriteToken(token)
+						},
+						OnReset: func() error {
+							return sse.WriteRetryReset()
+						},
+						OnStatus: func(status string) error {
+							return sse.WriteStatus(status)
+						},
+					}
+					retryReply, retryMeta, retryErr = callGeminiToolsStreaming(ctx, systemInstructions, prompt, tools, chatUserID, callbacks, forceOpt)
+				} else {
+					retryReply, retryMeta, retryErr = callGeminiToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID, forceOpt)
+				}
 				if retryErr != nil {
+					if isStream && ctx.Err() != nil {
+						return
+					}
 					log.Printf("[WRITE-SAFETY] Retry failed: %v", retryErr)
 				} else {
 					log.Printf("[WRITE-SAFETY] Retry done: tools=%v errors=%v",
@@ -829,7 +961,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		resp.ToolDebug = debug
 	}
 	if isStream {
-		sse.WriteDone(resp)
+		streamWriteFailed(sse.WriteDone(resp))
 	} else {
 		c.JSON(http.StatusOK, resp)
 	}
@@ -1696,4 +1828,3 @@ Return only the summary text, no JSON:`, string(mergedJSON))
 		log.Printf("[PROFILE] upsert failed: %v", err)
 	}
 }
-
