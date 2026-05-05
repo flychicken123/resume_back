@@ -66,6 +66,9 @@ var (
 	callGeminiToolsBlocking  = services.CallGeminiWithToolsBlocking
 	callGeminiToolsStreaming = services.CallGeminiWithToolsStreaming
 	classifyWriteIntent      = services.ClassifyWriteIntentWithContext
+	decideChatQualityGate    = services.DecideChatQualityGate
+	runChatQualityGate       = services.RunChatQualityGate
+	submitChatQualityAudit   = services.SubmitChatQualityAudit
 )
 
 type knowledgeEntry struct {
@@ -799,6 +802,13 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	// Use tool-enabled call — allows the LLM to search jobs, optimize resume, generate letters, etc.
 	tools := services.ChatTools()
 	var toolMeta *services.ToolCallMetadata
+	qualitySourceContext := buildChatQualitySourceContext(userProfileContext, knowledgeContext, resumeContext, liveData)
+	qualityDecision := decideChatQualityGate(services.QualityRoutingInput{
+		UserMessage:   userMessage,
+		SourceContext: qualitySourceContext,
+		ContextChars:  len(prompt),
+	})
+	visibleTextStreamed := false
 	streamWriteFailed := func(err error) bool {
 		if err == nil {
 			return false
@@ -813,9 +823,36 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	// Non-streaming calls can retry before anything reaches the client.
 	// Streaming calls use the token callback path and reset visible text before forced retries.
 	// Retries only 429-class errors when no tool has fired yet — avoids double-invoking
-	if isStream {
+	if qualityDecision.Apply && qualityDecision.Mode == services.QualityGateModeEnforce {
+		qualityResult, qualityErr := runChatQualityGate(ctx, services.QualityGateInput{
+			UserMessage:   userMessage,
+			SystemPrompt:  systemInstructions,
+			UserPrompt:    prompt,
+			SourceContext: qualitySourceContext,
+			Intent:        qualityDecision.Intent,
+			Tools:         tools,
+			UserID:        chatUserID,
+		}, chatQualityDraftGenerator{}, services.QualityGateCallbacks{
+			OnStatus: func(status string) error {
+				if !isStream {
+					return nil
+				}
+				return sse.WriteStatus(status)
+			},
+		})
+		if qualityErr != nil {
+			err = qualityErr
+		} else {
+			reply = qualityResult.FinalAnswer
+			toolMeta = qualityResult.ToolMeta
+			log.Printf("[QUALITY-GATE] mode=%s intent=%s score=%.2f revised=%t fallback=%s extra_calls=%d unsupported=%d deterministic_issues=%d",
+				qualityResult.Mode, qualityResult.Intent, qualityResult.Score, qualityResult.Revised, qualityResult.FallbackReason,
+				qualityResult.ExtraModelCalls, qualityResult.UnsupportedClaimCount, qualityResult.DeterministicIssueCount)
+		}
+	} else if isStream {
 		callbacks := services.ToolStreamCallbacks{
 			OnToken: func(token string) error {
+				visibleTextStreamed = true
 				return sse.WriteToken(token)
 			},
 			OnReset: func() error {
@@ -872,6 +909,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 					}
 					callbacks := services.ToolStreamCallbacks{
 						OnToken: func(token string) error {
+							visibleTextStreamed = true
 							return sse.WriteToken(token)
 						},
 						OnReset: func() error {
@@ -928,6 +966,21 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	}
 	if cleaned == "" {
 		cleaned = "I'm still learning. Please contact us via the Help bubble or at hihired_support@tactechs.net and our team will help you right away."
+	}
+	if isStream && qualityDecision.Apply && qualityDecision.Mode == services.QualityGateModeEnforce && !visibleTextStreamed {
+		if streamWriteFailed(streamFinalAnswerTokens(ctx, sse, cleaned)) {
+			return
+		}
+		visibleTextStreamed = true
+	}
+
+	if qualityDecision.Apply && qualityDecision.Mode == services.QualityGateModeAudit {
+		submitChatQualityAudit(services.QualityEvalInput{
+			UserMessage:   userMessage,
+			DraftReply:    cleaned,
+			SourceContext: services.AppendToolMetadataForQuality(qualitySourceContext, toolMeta),
+			Intent:        qualityDecision.Intent,
+		})
 	}
 
 	go func() {

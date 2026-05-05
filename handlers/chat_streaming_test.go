@@ -103,3 +103,57 @@ func TestChatAssistantStreamForcedRetrySendsReset(t *testing.T) {
 	require.Less(t, resetIndex, secondTokenIndex)
 	require.Less(t, secondTokenIndex, doneIndex)
 }
+
+func TestChatAssistantStreamQualityGateStreamsOnlyFinalAnswer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("AI_QUALITY_GATE_ENABLED", "true")
+	t.Setenv("AI_QUALITY_GATE_MODE", "enforce")
+
+	previousStreaming := callGeminiToolsStreaming
+	previousGate := runChatQualityGate
+	previousClassify := classifyWriteIntent
+	callGeminiToolsStreaming = func(ctx context.Context, systemPrompt, userPrompt string, tools []services.ChatTool, userID int, callbacks services.ToolStreamCallbacks, opts ...services.ToolCallOption) (string, *services.ToolCallMetadata, error) {
+		t.Fatal("direct streaming path should not run in enforce mode for high-value request")
+		return "", nil, nil
+	}
+	runChatQualityGate = func(ctx context.Context, input services.QualityGateInput, generator services.ChatDraftGenerator, callbacks services.QualityGateCallbacks) (*services.QualityGateResult, error) {
+		require.Equal(t, "resume_rewrite", input.Intent)
+		require.NoError(t, callbacks.OnStatus("Checking answer..."))
+		return &services.QualityGateResult{
+			FinalAnswer: "Final quality answer",
+			ToolMeta:    &services.ToolCallMetadata{},
+			Mode:        string(services.QualityGateModeEnforce),
+			Intent:      input.Intent,
+			Score:       0.91,
+		}, nil
+	}
+	classifyWriteIntent = func(ctx context.Context, userMessage string) bool {
+		return false
+	}
+	t.Cleanup(func() {
+		callGeminiToolsStreaming = previousStreaming
+		runChatQualityGate = previousGate
+		classifyWriteIntent = previousClassify
+	})
+
+	router := gin.New()
+	router.POST("/api/assistant/chat", ChatAssistant)
+	body, err := json.Marshal(chatRequest{Message: "rewrite my resume summary", SessionID: "test-session"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/assistant/chat?stream=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	raw := w.Body.String()
+	statusIndex := strings.Index(raw, `"status":"Checking answer..."`)
+	tokenIndex := strings.Index(raw, `"token":"Final "`)
+	doneIndex := strings.Index(raw, `"reply":"Final quality answer"`)
+	require.NotEqual(t, -1, statusIndex, raw)
+	require.NotEqual(t, -1, tokenIndex, raw)
+	require.NotEqual(t, -1, doneIndex, raw)
+	require.Less(t, statusIndex, tokenIndex)
+	require.Less(t, tokenIndex, doneIndex)
+}
