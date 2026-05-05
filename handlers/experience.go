@@ -60,8 +60,8 @@ func OptimizeExperience(c *gin.Context) {
 
 // cleanupAIResponse removes asterisks and cleans up the AI response
 func cleanupAIResponse(text string) string {
-	if arrayText := cleanupJSONArrayResponse(text); arrayText != "" {
-		text = arrayText
+	if jsonText := cleanupJSONTextResponse(text); jsonText != "" {
+		text = jsonText
 	}
 
 	// Split into lines
@@ -100,12 +100,21 @@ func cleanupAIResponse(text string) string {
 	return strings.Join(cleanedLines, "\n\n")
 }
 
-func cleanupJSONArrayResponse(text string) string {
+func cleanupJSONTextResponse(text string) string {
 	cleaned := strings.TrimSpace(text)
 	cleaned = strings.TrimPrefix(cleaned, "```json")
 	cleaned = strings.TrimPrefix(cleaned, "```")
 	cleaned = strings.TrimSuffix(cleaned, "```")
 	cleaned = strings.TrimSpace(cleaned)
+
+	if strings.HasPrefix(cleaned, `"`) && strings.HasSuffix(cleaned, `"`) {
+		var value string
+		if err := json.Unmarshal([]byte(cleaned), &value); err != nil {
+			return ""
+		}
+		return strings.TrimSpace(value)
+	}
+
 	if !strings.HasPrefix(cleaned, "[") || !strings.HasSuffix(cleaned, "]") {
 		return ""
 	}
