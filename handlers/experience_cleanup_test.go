@@ -42,3 +42,14 @@ func TestCleanupAIResponseConvertsJSONStringWithEscapedNewlines(t *testing.T) {
 	require.NotContains(t, cleaned, `"`)
 	require.Equal(t, "Architected and launched a live AI-driven resume platform.\n\nEngineered retrieval and ranking systems.\n\nDeveloped a responsive React SPA.", cleaned)
 }
+
+func TestCleanupAIResponseConvertsLooseQuotedMultilineString(t *testing.T) {
+	raw := `"Architected and launched a live AI-driven resume platform.
+Engineered retrieval and ranking systems.
+Developed a responsive React SPA."`
+
+	cleaned := cleanupAIResponse(raw)
+
+	require.NotContains(t, cleaned, `"`)
+	require.Equal(t, "Architected and launched a live AI-driven resume platform.\n\nEngineered retrieval and ranking systems.\n\nDeveloped a responsive React SPA.", cleaned)
+}

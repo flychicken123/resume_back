@@ -109,10 +109,10 @@ func cleanupJSONTextResponse(text string) string {
 
 	if strings.HasPrefix(cleaned, `"`) && strings.HasSuffix(cleaned, `"`) {
 		var value string
-		if err := json.Unmarshal([]byte(cleaned), &value); err != nil {
-			return ""
+		if err := json.Unmarshal([]byte(cleaned), &value); err == nil {
+			return strings.TrimSpace(value)
 		}
-		return strings.TrimSpace(value)
+		return decodeLooseQuotedText(cleaned)
 	}
 
 	if !strings.HasPrefix(cleaned, "[") || !strings.HasSuffix(cleaned, "]") {
@@ -132,6 +132,23 @@ func cleanupJSONTextResponse(text string) string {
 		}
 	}
 	return strings.Join(out, "\n")
+}
+
+func decodeLooseQuotedText(text string) string {
+	if len(text) < 2 || !strings.HasPrefix(text, `"`) || !strings.HasSuffix(text, `"`) {
+		return ""
+	}
+
+	inner := strings.TrimSpace(text[1 : len(text)-1])
+	inner = strings.NewReplacer(
+		`\r\n`, "\n",
+		`\n`, "\n",
+		`\r`, "\n",
+		`\t`, "\t",
+		`\"`, `"`,
+		`\\`, `\`,
+	).Replace(inner)
+	return strings.TrimSpace(inner)
 }
 
 type ExperienceGrammarRequest struct {
