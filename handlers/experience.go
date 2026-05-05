@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
@@ -30,9 +31,9 @@ func OptimizeExperience(c *gin.Context) {
 
 	// Build prompt for experience optimization with skill context
 	prompt := services.BuildExperienceOptimizationPromptWithSkills(
-		req.JobDescription, 
-		req.UserExperience, 
-		req.MatchedSkills, 
+		req.JobDescription,
+		req.UserExperience,
+		req.MatchedSkills,
 		req.MissingSkills,
 	)
 
@@ -45,7 +46,7 @@ func OptimizeExperience(c *gin.Context) {
 
 	// Validate output to catch potential hallucinations
 	validatedExperience := services.ValidateAndCleanOutput(req.UserExperience, optimizedExperience)
-	
+
 	// Clean up the AI response to remove asterisks and format properly
 	cleanedExperience := cleanupAIResponse(validatedExperience)
 
@@ -59,6 +60,10 @@ func OptimizeExperience(c *gin.Context) {
 
 // cleanupAIResponse removes asterisks and cleans up the AI response
 func cleanupAIResponse(text string) string {
+	if arrayText := cleanupJSONArrayResponse(text); arrayText != "" {
+		text = arrayText
+	}
+
 	// Split into lines
 	lines := strings.Split(text, "\n")
 	var cleanedLines []string
@@ -93,6 +98,31 @@ func cleanupAIResponse(text string) string {
 
 	// Join lines back together with double newlines for proper spacing
 	return strings.Join(cleanedLines, "\n\n")
+}
+
+func cleanupJSONArrayResponse(text string) string {
+	cleaned := strings.TrimSpace(text)
+	cleaned = strings.TrimPrefix(cleaned, "```json")
+	cleaned = strings.TrimPrefix(cleaned, "```")
+	cleaned = strings.TrimSuffix(cleaned, "```")
+	cleaned = strings.TrimSpace(cleaned)
+	if !strings.HasPrefix(cleaned, "[") || !strings.HasSuffix(cleaned, "]") {
+		return ""
+	}
+
+	var bullets []string
+	if err := json.Unmarshal([]byte(cleaned), &bullets); err != nil {
+		return ""
+	}
+
+	out := make([]string, 0, len(bullets))
+	for _, bullet := range bullets {
+		bullet = strings.TrimSpace(bullet)
+		if bullet != "" {
+			out = append(out, bullet)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 type ExperienceGrammarRequest struct {
