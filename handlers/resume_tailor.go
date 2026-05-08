@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -100,18 +101,31 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			})
 		}
 
-		// Polish each experience with AI
+		// Polish experiences with AI in parallel. This endpoint is called from the
+		// Chrome extension and must finish before browser/proxy timeouts; doing 6+
+		// Gemini calls sequentially regularly pushed responses past ~60s.
 		ctx := c.Request.Context()
-		polishedMaps := make([]map[string]interface{}, 0, len(expMaps))
-		for _, expMap := range expMaps {
-			polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
-			if err != nil {
-				fmt.Printf("[Tailor] Failed to polish experience: %v\n", err)
-				polishedMaps = append(polishedMaps, expMap)
-			} else {
-				polishedMaps = append(polishedMaps, polished)
-			}
+		polishedMaps := make([]map[string]interface{}, len(expMaps))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, 4)
+		for i, expMap := range expMaps {
+			i, expMap := i, expMap
+			polishedMaps[i] = expMap
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				polished, err := polishAgent.PolishExperience(ctx, expMap, jobDesc, "")
+				if err != nil {
+					fmt.Printf("[Tailor] Failed to polish experience: %v\n", err)
+					return
+				}
+				polishedMaps[i] = polished
+			}()
 		}
+		wg.Wait()
 		fmt.Printf("[Tailor] Tailored %d experience(s) for job description\n", len(polishedMaps))
 
 		projects, projectErr := loadProjectsForTailor(projectModel, resume.ID)
@@ -308,7 +322,7 @@ func replaceBlockForCompany(htmlContent, company, polishedDesc string) string {
 	}
 
 	// Extract the opening tag (to preserve its style attributes)
-	openingTag := htmlContent[divStart : contentStart]
+	openingTag := htmlContent[divStart:contentStart]
 
 	// Build the new bullet content from the polished description
 	// Extract the style from the first existing bullet div to reuse it
