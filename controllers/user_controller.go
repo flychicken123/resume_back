@@ -168,6 +168,36 @@ func (c *UserController) SaveUserData(ctx *gin.Context) {
 	})
 }
 
+func jsonValueOrFallback(raw json.RawMessage, fallback interface{}) interface{} {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return fallback
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return fallback
+	}
+	var value interface{}
+	if err := json.Unmarshal([]byte(trimmed), &value); err != nil {
+		return fallback
+	}
+	return value
+}
+
+func jsonValueOrString(raw json.RawMessage, fallback string) interface{} {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return fallback
+	}
+	if !json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+	var value interface{}
+	if err := json.Unmarshal([]byte(trimmed), &value); err != nil {
+		return trimmed
+	}
+	return value
+}
+
 func (c *UserController) LoadUserData(ctx *gin.Context) {
 	userID, exists := ctx.Get("user_id")
 	if !exists {
@@ -202,19 +232,19 @@ func (c *UserController) LoadUserData(ctx *gin.Context) {
 	ctx.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"name":             resume.Name,
-			"email":            resume.Email,
-			"phone":            resume.Phone,
-			"summary":          resume.Summary,
-			"skills":           resume.Skills,
+			"name":              resume.Name,
+			"email":             resume.Email,
+			"phone":             resume.Phone,
+			"summary":           jsonValueOrString(resume.Summary, ""),
+			"skills":            jsonValueOrFallback(resume.Skills, []string{}),
 			"skillsCategorized": resume.SkillsCategorized,
-			"experiences":      experiences,
-			"experience":       resume.Experience,
-			"education":        resume.Education,
-			"jobDescription":   resume.JobDescription,
-			"location":         resume.Location,
-			"selectedFormat":   resume.SelectedFormat,
-			"jobPreferences":   jobPrefs,
+			"experiences":       experiences,
+			"experience":        resume.Experience,
+			"education":         resume.Education,
+			"jobDescription":    resume.JobDescription,
+			"location":          resume.Location,
+			"selectedFormat":    resume.SelectedFormat,
+			"jobPreferences":    jsonValueOrFallback(jobPrefs, map[string]interface{}{}),
 		},
 	})
 }
