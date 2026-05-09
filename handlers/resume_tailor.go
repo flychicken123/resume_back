@@ -1,4 +1,4 @@
-package handlers
+﻿package handlers
 
 import (
 	"encoding/json"
@@ -55,7 +55,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "no rows") {
 				c.JSON(http.StatusBadRequest, gin.H{
-					"error":    "Please build your resume on HiHired first, then come back to tailor it.",
+					"error":    "Please build your resume on HiHired first, then come back to generate a job-ready version.",
 					"redirect": "https://hihired.org/build",
 				})
 			} else {
@@ -163,16 +163,16 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 		timestamp := time.Now().UnixNano()
 
 		// Write tailored HTML to disk
-		htmlFilename := fmt.Sprintf("tailored_%d.html", timestamp)
+		htmlFilename := fmt.Sprintf("resume_%d.html", timestamp)
 		htmlPath := filepath.Join(saveDir, htmlFilename)
 		if err := os.WriteFile(htmlPath, []byte(tailoredHTML), 0644); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write tailored HTML"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to write generated resume HTML"})
 			return
 		}
 
 		// Convert HTML to PDF
 		templateSlug := normalizeTemplateFormat(resume.SelectedFormat)
-		pdfFilename := fmt.Sprintf("tailored_%d.pdf", timestamp)
+		pdfFilename := fmt.Sprintf("HiHired_Resume_%s.pdf", time.Now().Format("20060102_150405"))
 		pdfPath := filepath.Join(saveDir, pdfFilename)
 		pdfData := map[string]interface{}{
 			"htmlContent": "",
@@ -201,7 +201,7 @@ func TailorResume(resumeModel *models.ResumeModel, resumeHistoryModel *models.Re
 
 		// Save to resume history
 		if resumeHistoryModel != nil {
-			resumeName := fmt.Sprintf("Tailored Resume %s", time.Now().Format("2006-01-02 15:04"))
+			resumeName := fmt.Sprintf("HiHired Resume %s", time.Now().Format("2006-01-02 15:04"))
 			if _, err := resumeHistoryModel.Create(userIDInt, resumeName, key); err != nil {
 				fmt.Printf("[Tailor] Failed to save history: %v\n", err)
 			}
@@ -772,3 +772,4 @@ func getFallbackTemplateCSS(selectedFormat string) string {
 `
 	}
 }
+
