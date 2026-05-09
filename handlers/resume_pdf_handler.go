@@ -3,6 +3,7 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -225,10 +226,14 @@ func SaveHTMLHandler(resumeModel *models.ResumeModel) gin.HandlerFunc {
 
 		if err := resumeModel.SaveLastHTML(userIDInt, string(buf)); err != nil {
 			fmt.Printf("SaveHTMLHandler: failed to save HTML for user %d: %v\n", userIDInt, err)
+			if errors.Is(err, sql.ErrNoRows) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "Save your resume profile before saving it for the Chrome extension"})
+				return
+			}
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save resume HTML"})
 			return
 		}
 
-		c.JSON(http.StatusOK, gin.H{"message": "Resume template saved for plugin"})
+		c.JSON(http.StatusOK, gin.H{"message": "Resume saved for Chrome extension"})
 	}
 }

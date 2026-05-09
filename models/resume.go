@@ -184,8 +184,14 @@ func (m *ResumeModel) SaveProfile(ctx context.Context, userID int, input ResumeP
 
 // SaveLastHTML stores the user's last rendered resume HTML for tailor reuse.
 func (m *ResumeModel) SaveLastHTML(userID int, htmlContent string) error {
-	_, err := m.DB.Exec(`UPDATE resumes SET last_resume_html = $1, updated_at = NOW() WHERE user_id = $2`, htmlContent, userID)
-	return err
+	result, err := m.DB.Exec(`UPDATE resumes SET last_resume_html = $1, updated_at = NOW() WHERE user_id = $2`, htmlContent, userID)
+	if err != nil {
+		return err
+	}
+	if rows, rowsErr := result.RowsAffected(); rowsErr == nil && rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // GetLastHTML returns the user's last rendered resume HTML.
