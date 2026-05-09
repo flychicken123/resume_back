@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -100,7 +99,7 @@ func OptimizeProject(c *gin.Context) {
 
 	// Validate output to catch potential hallucinations
 	validatedProject := services.ValidateAndCleanOutput(req.ProjectData, optimizedProject)
-	
+
 	// Clean up the AI response
 	cleanedProject := cleanupProjectResponse(validatedProject)
 
@@ -150,38 +149,5 @@ func ImproveProjectGrammar(c *gin.Context) {
 
 // cleanupProjectResponse removes asterisks and cleans up the AI response
 func cleanupProjectResponse(text string) string {
-	// Split into lines
-	lines := strings.Split(text, "\n")
-	var cleanedLines []string
-
-	for _, line := range lines {
-		// Trim whitespace
-		line = strings.TrimSpace(line)
-
-		// Skip empty lines
-		if line == "" {
-			continue
-		}
-
-		// Remove leading asterisk and any whitespace after it
-		if strings.HasPrefix(line, "*") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
-		}
-
-		// Remove bullet points if they exist
-		if strings.HasPrefix(line, "•") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "•"))
-		}
-		if strings.HasPrefix(line, "-") {
-			line = strings.TrimSpace(strings.TrimPrefix(line, "-"))
-		}
-
-		// Add the cleaned line
-		if line != "" {
-			cleanedLines = append(cleanedLines, line)
-		}
-	}
-
-	// Join lines back together with double newlines for proper spacing
-	return strings.Join(cleanedLines, "\n\n")
+	return cleanupAIResponse(text)
 }

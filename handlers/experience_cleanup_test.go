@@ -53,3 +53,48 @@ Developed a responsive React SPA."`
 	require.NotContains(t, cleaned, `"`)
 	require.Equal(t, "Architected and launched a live AI-driven resume platform.\n\nEngineered retrieval and ranking systems.\n\nDeveloped a responsive React SPA.", cleaned)
 }
+
+func TestCleanupAIResponseHandlesCommonWrappers(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "plain text trims blank lines",
+			raw:  "  Built backend services\n\n\nImproved job matching quality  ",
+			want: "Built backend services\n\nImproved job matching quality",
+		},
+		{
+			name: "plain fenced json array",
+			raw:  "```\n[\n  \"Built backend services\",\n  \"Improved job matching quality\"\n]\n```",
+			want: "Built backend services\n\nImproved job matching quality",
+		},
+		{
+			name: "json array drops blank entries",
+			raw:  `["Built backend services", "", "  ", "Improved job matching quality"]`,
+			want: "Built backend services\n\nImproved job matching quality",
+		},
+		{
+			name: "bullet prefixes are removed",
+			raw:  "- Built backend services\n* Improved job matching quality\n\u2022 Deployed AWS automation",
+			want: "Built backend services\n\nImproved job matching quality\n\nDeployed AWS automation",
+		},
+		{
+			name: "quoted json string decodes escaped quote and tab",
+			raw:  `"Built \"AI\" services.\nImproved\tjob matching quality."`,
+			want: "Built \"AI\" services.\n\nImproved\tjob matching quality.",
+		},
+		{
+			name: "loose quoted text decodes escaped newline",
+			raw:  `"Built backend services.\nImproved job matching quality."`,
+			want: "Built backend services.\n\nImproved job matching quality.",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, cleanupAIResponse(tt.raw))
+		})
+	}
+}
