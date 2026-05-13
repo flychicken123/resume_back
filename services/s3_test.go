@@ -7,6 +7,11 @@ import (
 )
 
 func TestNewS3Service(t *testing.T) {
+	t.Setenv("AWS_ACCESS_KEY_ID", "")
+	t.Setenv("AWS_SECRET_ACCESS_KEY", "")
+	t.Setenv("AWS_REGION", "")
+	t.Setenv("AWS_S3_BUCKET", "")
+
 	// Test with missing AWS credentials
 	service, err := NewS3Service()
 

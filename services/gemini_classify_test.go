@@ -6,6 +6,9 @@ import (
 )
 
 func TestClassifyWriteIntent(t *testing.T) {
+	if os.Getenv("GEMINI_LIVE_TESTS") != "1" {
+		t.Skip("GEMINI_LIVE_TESTS=1 not set, skipping live API test")
+	}
 	if os.Getenv("GEMINI_API_KEY") == "" {
 		t.Skip("GEMINI_API_KEY not set, skipping live API test")
 	}
