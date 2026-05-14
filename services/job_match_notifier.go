@@ -587,10 +587,10 @@ func formatMatchEmailBody(userName, recipientEmail string, matches []*models.Res
       <a href="%s" style="display:inline-block; padding:12px 18px; background:#0b66c3; color:#fff; text-decoration:none; border-radius:10px; font-weight:700; box-shadow:0 10px 20px rgba(11,102,195,0.25);">See all matches</a>
       <a href="%s" style="display:inline-block; padding:12px 18px; background:#e5e7eb; color:#0f172a; text-decoration:none; border-radius:10px; font-weight:700;">Update my resume</a>
     </div>
-    <div style="padding:12px 24px 18px 24px; font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb;">
+    <div style="padding:14px 24px 20px 24px; font-size:12px; color:#6b7280; border-top:1px solid #e5e7eb;">
       <div style="margin-bottom:6px;">You received this because you saved a resume on %s.</div>
       <div style="margin-bottom:6px;">Need help? Contact <a href="mailto:%s" style="color:#0b66c3; text-decoration:none;">%s</a>.</div>
-      <div><a href="%s" style="color:#9ca3af; text-decoration:underline;">Unsubscribe</a> from these emails.</div>
+      <div style="margin-top:12px;"><a href="%s" style="display:inline-block; border:1px solid #d1d5db; color:#374151; background:#ffffff; text-decoration:none; padding:9px 14px; border-radius:8px; font-weight:700;">Unsubscribe from emails</a></div>
     </div>
   </div>
 </body>

@@ -115,7 +115,7 @@ func unsubscribeSuccessHTML(email string) string {
         <div class="icon">&#10003;</div>
         <h1>You've Been Unsubscribed</h1>
         <div class="email">` + safeEmail + `</div>
-        <p>You will no longer receive job match notification emails from HiHired. You can still use HiHired to build resumes anytime.</p>
+        <p>You will no longer receive marketing or notification emails from HiHired. You can still use HiHired to build resumes anytime.</p>
         <a href="https://hihired.org" class="btn">Go to HiHired</a>
     </div>
 </body>
