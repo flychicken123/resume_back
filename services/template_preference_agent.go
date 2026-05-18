@@ -53,8 +53,6 @@ You MUST pick from these allowed values:
   - "attorney-template"     (also called "attorney", "legal", "law", "lawyer")
   - "harvard-ats"           (also called "Harvard", "ATS", "finance", "consulting", "early career")
   - "tech-minimal"          (also called "tech", "engineering", "developer", "software")
-  - "creative-portfolio"    (also called "creative", "marketing", "design", "portfolio")
-  - "academic-cv"           (also called "academic", "research", "professor", "PhD", "education")
 
 - font_size_id (exact slug, lowercase):
   - "small"         (also: "compact", "tight", "smaller text")
@@ -120,10 +118,6 @@ func normalizeTemplateSlug(value string) string {
 		return "harvard-ats"
 	case "tech-minimal", "tech", "engineering", "developer", "software":
 		return "tech-minimal"
-	case "creative-portfolio", "creative", "marketing", "design", "portfolio":
-		return "creative-portfolio"
-	case "academic-cv", "academic", "research", "professor", "phd", "education":
-		return "academic-cv"
 	default:
 		return value
 	}

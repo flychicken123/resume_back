@@ -18,8 +18,6 @@ var (
 		"attorney-template":  {},
 		"harvard-ats":        {},
 		"tech-minimal":       {},
-		"creative-portfolio": {},
-		"academic-cv":        {},
 	}
 )
 

@@ -780,26 +780,6 @@ func getFallbackTemplateCSS(selectedFormat string) string {
         .job-header { font-size: 10.5pt; font-weight: 700; color: #0f172a; margin-bottom: 3px; }
         .bullet { margin-left: 14px; margin-bottom: 1px; font-size: 10pt; line-height: 1.4; color: #334155; }
 `
-	case "creative-portfolio":
-		return base + `
-        body { font-family: 'Segoe UI', Arial, sans-serif; line-height: 1.4; padding: 0.5in 0.6in; background: white; border-left: 14px solid #ede9fe; font-size: 10.5pt; color: #1e1b4b; }
-        .header { text-align: left; padding-bottom: 8px; margin-bottom: 10px; }
-        .name { font-size: 20pt; font-weight: 800; color: #5b21b6; margin-bottom: 3px; }
-        .contact { color: #6d28d9; font-size: 9.5pt; }
-        .section-title { font-size: 11pt; font-weight: 700; color: #7c3aed; border-bottom: 2px solid #ddd6fe; padding-bottom: 2px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
-        .job-header { font-size: 10.5pt; font-weight: 700; color: #312e81; margin-bottom: 3px; }
-        .bullet { margin-left: 14px; margin-bottom: 1px; font-size: 10pt; line-height: 1.4; color: #3f3f46; }
-`
-	case "academic-cv":
-		return base + `
-        body { font-family: Georgia, 'Times New Roman', serif; line-height: 1.4; padding: 0.5in 0.6in; background: #fffdf8; border-top: 7px solid #9a3412; font-size: 10.5pt; color: #292524; }
-        .header { text-align: left; padding-bottom: 8px; margin-bottom: 10px; border-bottom: 1px solid #d6d3d1; }
-        .name { font-size: 20pt; font-weight: 700; color: #7c2d12; margin-bottom: 3px; }
-        .contact { color: #57534e; font-size: 9.5pt; }
-        .section-title { font-size: 11pt; font-weight: 700; color: #7c2d12; border-bottom: 1px solid #d6d3d1; padding-bottom: 2px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.8px; }
-        .job-header { font-size: 10.5pt; font-weight: 700; color: #292524; margin-bottom: 3px; }
-        .bullet { margin-left: 14px; margin-bottom: 1px; font-size: 10pt; line-height: 1.4; color: #44403c; }
-`
 	default: // classic-professional
 		return base + `
         body { font-family: 'Calibri', 'Segoe UI', Arial, sans-serif; line-height: 1.4; padding: 0.5in 0.6in; background: white; font-size: 10.5pt; color: #1a1a1a; }
