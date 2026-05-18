@@ -21,6 +21,11 @@ func GenerateWordFileFromTemplate(templateName string, userData map[string]strin
 		"classic-professional":   "classic-professional.docx",
 		"modern-clean":           "classic-professional.docx",
 		"executive-serif":        "executive-serif.docx",
+		"attorney-template":      "executive-serif.docx",
+		"harvard-ats":            "classic-professional.docx",
+		"tech-minimal":           "classic-professional.docx",
+		"creative-portfolio":     "classic-professional.docx",
+		"academic-cv":            "executive-serif.docx",
 		"color-block":            "Color block resume.docx",
 		"social-media-marketing": "Social media marketing resume.docx",
 	}

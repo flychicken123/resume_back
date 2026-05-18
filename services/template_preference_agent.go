@@ -51,6 +51,10 @@ You MUST pick from these allowed values:
   - "modern-clean"          (also called "modern", "clean", "tech", "startup")
   - "executive-serif"       (also called "executive", "serif", "leadership", "manager")
   - "attorney-template"     (also called "attorney", "legal", "law", "lawyer")
+  - "harvard-ats"           (also called "Harvard", "ATS", "finance", "consulting", "early career")
+  - "tech-minimal"          (also called "tech", "engineering", "developer", "software")
+  - "creative-portfolio"    (also called "creative", "marketing", "design", "portfolio")
+  - "academic-cv"           (also called "academic", "research", "professor", "PhD", "education")
 
 - font_size_id (exact slug, lowercase):
   - "small"         (also: "compact", "tight", "smaller text")
@@ -59,7 +63,7 @@ You MUST pick from these allowed values:
   - "extra-large"   (also: "very big", "huge", "xl", "extra big")
 
 If the user names a specific template like "Modern Clean", map it to the correct slug "modern-clean".
-If they describe style (e.g., "tech, clean, modern"), choose "modern-clean".
+If they describe style (e.g., "tech, clean, modern"), choose "modern-clean" or "tech-minimal" depending on whether they emphasize engineering/projects.
 If they do not clearly specify, default to:
 - template_id: "classic-professional"
 - font_size_id: "medium"
@@ -106,12 +110,20 @@ func normalizeTemplateSlug(value string) string {
 	switch value {
 	case "classic-professional", "classic", "traditional":
 		return "classic-professional"
-	case "modern-clean", "modern", "clean", "tech", "startup":
+	case "modern-clean", "modern", "clean", "startup":
 		return "modern-clean"
 	case "executive-serif", "executive", "serif", "leadership", "manager":
 		return "executive-serif"
 	case "attorney-template", "attorney", "legal", "law", "lawyer":
 		return "attorney-template"
+	case "harvard-ats", "harvard", "ats", "finance", "consulting", "early-career", "early career":
+		return "harvard-ats"
+	case "tech-minimal", "tech", "engineering", "developer", "software":
+		return "tech-minimal"
+	case "creative-portfolio", "creative", "marketing", "design", "portfolio":
+		return "creative-portfolio"
+	case "academic-cv", "academic", "research", "professor", "phd", "education":
+		return "academic-cv"
 	default:
 		return value
 	}

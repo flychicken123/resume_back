@@ -12,9 +12,14 @@ var (
 	}
 
 	validTemplateSlugs = map[string]struct{}{
-		defaultTemplateSlug: {},
-		"modern-clean":      {},
-		"executive-serif":   {},
+		defaultTemplateSlug:   {},
+		"modern-clean":       {},
+		"executive-serif":    {},
+		"attorney-template":  {},
+		"harvard-ats":        {},
+		"tech-minimal":       {},
+		"creative-portfolio": {},
+		"academic-cv":        {},
 	}
 )
 
