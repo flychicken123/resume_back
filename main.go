@@ -518,6 +518,7 @@ func main() {
 		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
 		public.POST("/resume/progress-hint", handlers.ProgressHint)
 		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
+		public.POST("/application-answer/generate", handlers.GenerateApplicationAnswer)
 		public.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
 		public.POST("/skills/categorize", handlers.CategorizeSkills)
 

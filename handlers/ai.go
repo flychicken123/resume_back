@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"resumeai/services"
@@ -72,9 +73,9 @@ func OptimizeSummary(c *gin.Context) {
 
 	// Build prompt for summary optimization with skill context
 	prompt := services.BuildSummaryOptimizationPromptWithSkills(
-		req.Experience, 
-		req.Education, 
-		req.Skills, 
+		req.Experience,
+		req.Education,
+		req.Skills,
 		req.ExistingSummary,
 		req.JobDescription,
 		req.MatchedSkills,
@@ -91,7 +92,7 @@ func OptimizeSummary(c *gin.Context) {
 	// Validate output to catch potential hallucinations
 	originalContext := req.Experience + " " + req.Education + " " + strings.Join(req.Skills, " ")
 	validatedSummary := services.ValidateAndCleanOutput(originalContext, optimizedSummary)
-	
+
 	// Clean up the AI response
 	cleanedSummary := cleanupAIResponse(validatedSummary)
 
@@ -173,6 +174,65 @@ func AnalyzeResumeAdvice(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+type ApplicationAnswerRequest struct {
+	ResumeData     map[string]interface{} `json:"resumeData" binding:"required"`
+	Question       string                 `json:"question" binding:"required"`
+	JobDescription string                 `json:"jobDescription"`
+	PageURL        string                 `json:"pageUrl"`
+}
+
+type ApplicationAnswerResponse struct {
+	Answer  string `json:"answer"`
+	Message string `json:"message"`
+}
+
+func GenerateApplicationAnswer(c *gin.Context) {
+	var req ApplicationAnswerRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	question := strings.TrimSpace(req.Question)
+	if len(question) < 12 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "question is too short"})
+		return
+	}
+
+	resumeJSON, _ := json.MarshalIndent(req.ResumeData, "", "  ")
+	prompt := fmt.Sprintf(`You are helping a job applicant answer an application form question.
+
+Write a truthful, first-person answer that can be pasted directly into the form.
+
+Rules:
+- Use only evidence from the resume/profile data. Do not invent employers, degrees, dates, or metrics.
+- If exact metrics are unavailable, describe impact qualitatively instead of making up numbers.
+- Match the question directly and answer every part of it.
+- Keep it concise: 120-180 words unless the question clearly asks for less.
+- Professional, specific, natural tone. No markdown, no bullet points, no greeting.
+
+Application question:
+%s
+
+Job description / posting context:
+%s
+
+Resume/profile data:
+%s`, question, strings.TrimSpace(req.JobDescription), string(resumeJSON))
+
+	answer, err := services.CallGeminiFlashWithTemperature(prompt, 0.3)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	answer = cleanupAIResponse(answer)
+	c.JSON(http.StatusOK, ApplicationAnswerResponse{
+		Answer:  answer,
+		Message: "Application answer generated successfully.",
+	})
 }
 
 type CoverLetterRequest struct {
