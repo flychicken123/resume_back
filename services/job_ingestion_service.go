@@ -288,6 +288,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 
 	activeIDs := make([]string, 0, len(jobs))
 	newIDs := make([]int64, 0)
+	classifyIDs := make([]int64, 0)
 	now := s.clock()
 
 	for _, job := range jobs {
@@ -295,7 +296,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 			continue
 		}
 		job.CompanyID = company.ID
-		inserted, err := s.postingModel.Upsert(job)
+		inserted, needsClassification, err := s.postingModel.Upsert(job)
 		if err != nil {
 			finish("failed", err)
 			return nil, err
@@ -305,6 +306,9 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 			newIDs = append(newIDs, job.ID)
 		} else {
 			result.JobsUpdated++
+		}
+		if inserted || needsClassification {
+			classifyIDs = append(classifyIDs, job.ID)
 		}
 		activeIDs = append(activeIDs, job.ExternalJobID)
 	}
@@ -320,8 +324,8 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 	if len(newIDs) > 0 && s.embeddingSvc != nil {
 		go s.embedJobPostingsBatch(s.ctx, newIDs)
 	}
-	if len(newIDs) > 0 {
-		go s.classifyJobPostingsBatch(s.ctx, newIDs)
+	if len(classifyIDs) > 0 {
+		go s.classifyJobPostingsBatch(s.ctx, classifyIDs)
 	}
 	return result, nil
 }
@@ -373,7 +377,7 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 	return s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority)
 }
 
-// classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority for newly inserted jobs.
+// classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority.
 // Throttle defaults (500ms per job, batch size 5) are applied by config.GetAppConfig;
 // the service trusts its caller to pass sensible values and respects 0 as "no sleep".
 func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {

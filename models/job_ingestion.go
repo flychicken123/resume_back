@@ -18,6 +18,11 @@ type rowScanner interface {
 	Scan(dest ...interface{}) error
 }
 
+const missingJobClassificationCondition = `(NULLIF(TRIM(career_field), '') IS NULL
+                OR extracted_skills IS NULL
+                OR COALESCE(array_length(extracted_skills, 1), 0) = 0
+                OR NULLIF(TRIM(seniority), '') IS NULL)`
+
 // JobCompany stores metadata about a company whose ATS we ingest
 type JobCompany struct {
 	ID                  int        `json:"id"`
@@ -705,8 +710,9 @@ func (m *JobPostingModel) GetByID(id int64) (*JobPosting, *string, error) {
 	return &posting, namePtr, nil
 }
 
-// Upsert creates or updates a job posting and refreshes last_seen_at
-func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, error) {
+// Upsert creates or updates a job posting and refreshes last_seen_at.
+// It also reports whether the row still needs AI classification after the write.
+func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, bool, error) {
 	rawPayload := []byte(nil)
 	if len(posting.RawPayload) > 0 {
 		rawPayload = posting.RawPayload
@@ -740,6 +746,27 @@ func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, error) {
             is_active = TRUE,
             last_seen_at = CURRENT_TIMESTAMP,
             closed_at = NULL,
+            career_field = CASE
+                WHEN EXCLUDED.description IS DISTINCT FROM job_postings.description
+                  OR EXCLUDED.title IS DISTINCT FROM job_postings.title
+                  OR EXCLUDED.department IS DISTINCT FROM job_postings.department
+                THEN NULL
+                ELSE job_postings.career_field
+            END,
+            extracted_skills = CASE
+                WHEN EXCLUDED.description IS DISTINCT FROM job_postings.description
+                  OR EXCLUDED.title IS DISTINCT FROM job_postings.title
+                  OR EXCLUDED.department IS DISTINCT FROM job_postings.department
+                THEN NULL
+                ELSE job_postings.extracted_skills
+            END,
+            seniority = CASE
+                WHEN EXCLUDED.description IS DISTINCT FROM job_postings.description
+                  OR EXCLUDED.title IS DISTINCT FROM job_postings.title
+                  OR EXCLUDED.department IS DISTINCT FROM job_postings.department
+                THEN NULL
+                ELSE job_postings.seniority
+            END,
             embedding = CASE
                 WHEN EXCLUDED.description IS DISTINCT FROM job_postings.description
                   OR EXCLUDED.title IS DISTINCT FROM job_postings.title
@@ -747,12 +774,14 @@ func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, error) {
                 THEN NULL
                 ELSE job_postings.embedding
             END
-        RETURNING id, first_seen_at, last_seen_at, is_active, (xmax = 0) AS inserted
+        RETURNING id, first_seen_at, last_seen_at, is_active, (xmax = 0) AS inserted,
+                  ` + missingJobClassificationCondition + ` AS needs_classification
     `
 
 	var firstSeen, lastSeen time.Time
 	var isActive bool
 	var inserted bool
+	var needsClassification bool
 
 	err := m.db.QueryRow(
 		query,
@@ -771,15 +800,15 @@ func (m *JobPostingModel) Upsert(posting *JobPosting) (bool, error) {
 		posting.SalaryCurrency,
 		posting.PostedAt,
 		rawPayload,
-	).Scan(&posting.ID, &firstSeen, &lastSeen, &isActive, &inserted)
+	).Scan(&posting.ID, &firstSeen, &lastSeen, &isActive, &inserted, &needsClassification)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 
 	posting.FirstSeenAt = firstSeen
 	posting.LastSeenAt = lastSeen
 	posting.IsActive = isActive
-	return inserted, nil
+	return inserted, needsClassification, nil
 }
 
 // DeactivateMissing marks jobs not returned in the latest sync as closed
@@ -1302,7 +1331,7 @@ func (m *JobPostingModel) UpdateJobClassification(ctx context.Context, id int64,
 	return err
 }
 
-// ListActiveWithNullClassification returns IDs of active jobs missing career_field or extracted_skills.
+// ListActiveWithNullClassification returns IDs of active jobs missing career field, skills, or seniority.
 func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays int) ([]int64, error) {
 	if limit <= 0 {
 		limit = 500
@@ -1312,14 +1341,14 @@ func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays 
 	if sinceDays > 0 {
 		rows, err = m.db.Query(`
 			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
+			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
 			  AND posted_at >= NOW() - ($2::text || ' days')::interval
 			ORDER BY id LIMIT $1
 		`, limit, sinceDays)
 	} else {
 		rows, err = m.db.Query(`
 			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
+			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
 			ORDER BY id LIMIT $1
 		`, limit)
 	}
@@ -1338,20 +1367,20 @@ func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays 
 	return ids, rows.Err()
 }
 
-// CountActiveWithNullClassification returns count of active jobs missing career_field or extracted_skills.
+// CountActiveWithNullClassification returns count of active jobs missing career field, skills, or seniority.
 func (m *JobPostingModel) CountActiveWithNullClassification(sinceDays int) (int, error) {
 	var count int
 	var err error
 	if sinceDays > 0 {
 		err = m.db.QueryRow(`
 			SELECT COUNT(*) FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
+			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
 			  AND posted_at >= NOW() - ($1::text || ' days')::interval
 		`, sinceDays).Scan(&count)
 	} else {
 		err = m.db.QueryRow(`
 			SELECT COUNT(*) FROM job_postings
-			WHERE is_active = TRUE AND (career_field IS NULL OR extracted_skills IS NULL OR seniority IS NULL)
+			WHERE is_active = TRUE AND ` + missingJobClassificationCondition + `
 		`).Scan(&count)
 	}
 	return count, err
