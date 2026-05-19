@@ -15,15 +15,25 @@ var (
 	ErrClassifyAlreadyRunning = errors.New("classify backfill already running")
 )
 
+const maxClassifyBackfillErrorLogs = 100
+
+// JobClassifyBackfillErrorLog stores a recent failure from a classify backfill run.
+type JobClassifyBackfillErrorLog struct {
+	At      time.Time `json:"at"`
+	JobID   int64     `json:"job_id,omitempty"`
+	Message string    `json:"message"`
+}
+
 // JobClassifyBackfillStatus tracks the progress of the classify backfill.
 type JobClassifyBackfillStatus struct {
-	Running    bool       `json:"running"`
-	StartedAt  *time.Time `json:"started_at,omitempty"`
-	FinishedAt *time.Time `json:"finished_at,omitempty"`
-	Processed  int        `json:"processed"`
-	Errors     int        `json:"errors"`
-	Total      int        `json:"total"`
-	SinceDays  int        `json:"since_days"`
+	Running    bool                          `json:"running"`
+	StartedAt  *time.Time                    `json:"started_at,omitempty"`
+	FinishedAt *time.Time                    `json:"finished_at,omitempty"`
+	Processed  int                           `json:"processed"`
+	Errors     int                           `json:"errors"`
+	ErrorLogs  []JobClassifyBackfillErrorLog `json:"error_logs,omitempty"`
+	Total      int                           `json:"total"`
+	SinceDays  int                           `json:"since_days"`
 }
 
 // JobClassifyBackfillService runs background job classification.
@@ -114,7 +124,31 @@ func (s *JobClassifyBackfillService) setRunningForTest(ctx context.Context, canc
 func (s *JobClassifyBackfillService) Status() JobClassifyBackfillStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.status
+	status := s.status
+	if len(status.ErrorLogs) > 0 {
+		status.ErrorLogs = append([]JobClassifyBackfillErrorLog(nil), status.ErrorLogs...)
+	}
+	return status
+}
+
+func (s *JobClassifyBackfillService) recordError(jobID int64, message string) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		message = "unknown classify backfill error"
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.status.Errors++
+	s.status.ErrorLogs = append(s.status.ErrorLogs, JobClassifyBackfillErrorLog{
+		At:      time.Now(),
+		JobID:   jobID,
+		Message: message,
+	})
+	if len(s.status.ErrorLogs) > maxClassifyBackfillErrorLogs {
+		s.status.ErrorLogs = append([]JobClassifyBackfillErrorLog(nil), s.status.ErrorLogs[len(s.status.ErrorLogs)-maxClassifyBackfillErrorLogs:]...)
+	}
 }
 
 func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sinceDays int) {
@@ -123,10 +157,12 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 		s.status.Running = false
 		now := time.Now()
 		s.status.FinishedAt = &now
+		processed := s.status.Processed
+		errors := s.status.Errors
 		s.mu.Unlock()
 		s.logger.Info("classify backfill finished", map[string]interface{}{
-			"processed": s.status.Processed,
-			"errors":    s.status.Errors,
+			"processed": processed,
+			"errors":    errors,
 		})
 	}()
 
@@ -140,6 +176,7 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 
 		ids, err := s.postings.ListActiveWithNullClassification(batchSize, sinceDays)
 		if err != nil {
+			s.recordError(0, "failed to list jobs: "+err.Error())
 			s.logger.Warn("classify backfill: failed to list jobs", map[string]interface{}{"error": err.Error()})
 			return
 		}
@@ -157,9 +194,11 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 
 			job, err := s.postings.GetByIDForEmbedding(ctx, id)
 			if err != nil || job == nil {
-				s.mu.Lock()
-				s.status.Errors++
-				s.mu.Unlock()
+				if err != nil {
+					s.recordError(id, "failed to fetch job: "+err.Error())
+				} else {
+					s.recordError(id, "failed to fetch job: not found")
+				}
 				continue
 			}
 
@@ -191,17 +230,13 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			}
 
 			if callErr != nil {
-				s.mu.Lock()
-				s.status.Errors++
-				s.mu.Unlock()
+				s.recordError(id, "failed to classify job: "+callErr.Error())
 				continue
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
 			if err := s.postings.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
-				s.mu.Lock()
-				s.status.Errors++
-				s.mu.Unlock()
+				s.recordError(id, "failed to save classification: "+err.Error())
 				continue
 			}
 
