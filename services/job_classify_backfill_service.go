@@ -152,6 +152,20 @@ func (s *JobClassifyBackfillService) recordError(jobID int64, message string) {
 }
 
 func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sinceDays int) {
+	failedIDs := make(map[int64]struct{})
+	excludedIDs := make([]int64, 0)
+	recordJobError := func(jobID int64, message string) {
+		s.recordError(jobID, message)
+		if jobID == 0 {
+			return
+		}
+		if _, exists := failedIDs[jobID]; exists {
+			return
+		}
+		failedIDs[jobID] = struct{}{}
+		excludedIDs = append(excludedIDs, jobID)
+	}
+
 	defer func() {
 		s.mu.Lock()
 		s.status.Running = false
@@ -174,7 +188,7 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 		default:
 		}
 
-		ids, err := s.postings.ListActiveWithNullClassification(batchSize, sinceDays)
+		ids, err := s.postings.ListActiveWithNullClassificationExcluding(batchSize, sinceDays, excludedIDs)
 		if err != nil {
 			s.recordError(0, "failed to list jobs: "+err.Error())
 			s.logger.Warn("classify backfill: failed to list jobs", map[string]interface{}{"error": err.Error()})
@@ -195,9 +209,9 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			job, err := s.postings.GetByIDForEmbedding(ctx, id)
 			if err != nil || job == nil {
 				if err != nil {
-					s.recordError(id, "failed to fetch job: "+err.Error())
+					recordJobError(id, "failed to fetch job: "+err.Error())
 				} else {
-					s.recordError(id, "failed to fetch job: not found")
+					recordJobError(id, "failed to fetch job: not found")
 				}
 				continue
 			}
@@ -230,13 +244,13 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			}
 
 			if callErr != nil {
-				s.recordError(id, "failed to classify job: "+callErr.Error())
+				recordJobError(id, "failed to classify job: "+callErr.Error())
 				continue
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
 			if err := s.postings.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
-				s.recordError(id, "failed to save classification: "+err.Error())
+				recordJobError(id, "failed to save classification: "+err.Error())
 				continue
 			}
 

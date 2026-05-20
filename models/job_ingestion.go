@@ -1333,25 +1333,36 @@ func (m *JobPostingModel) UpdateJobClassification(ctx context.Context, id int64,
 
 // ListActiveWithNullClassification returns IDs of active jobs missing career field, skills, or seniority.
 func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays int) ([]int64, error) {
+	return m.ListActiveWithNullClassificationExcluding(limit, sinceDays, nil)
+}
+
+// ListActiveWithNullClassificationExcluding returns IDs of active jobs missing classification,
+// excluding IDs that already failed during the current backfill run.
+func (m *JobPostingModel) ListActiveWithNullClassificationExcluding(limit int, sinceDays int, excludedIDs []int64) ([]int64, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	var rows *sql.Rows
-	var err error
+	where := []string{"is_active = TRUE", missingJobClassificationCondition}
+	args := []interface{}{limit}
+	placeholder := 2
+
 	if sinceDays > 0 {
-		rows, err = m.db.Query(`
-			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
-			  AND posted_at >= NOW() - ($2::text || ' days')::interval
-			ORDER BY id LIMIT $1
-		`, limit, sinceDays)
-	} else {
-		rows, err = m.db.Query(`
-			SELECT id FROM job_postings
-			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
-			ORDER BY id LIMIT $1
-		`, limit)
+		where = append(where, fmt.Sprintf("(posted_at >= NOW() - ($%d::text || ' days')::interval OR first_seen_at >= NOW() - ($%d::text || ' days')::interval)", placeholder, placeholder))
+		args = append(args, sinceDays)
+		placeholder++
 	}
+	if len(excludedIDs) > 0 {
+		where = append(where, fmt.Sprintf("NOT (id = ANY($%d::bigint[]))", placeholder))
+		args = append(args, pq.Array(excludedIDs))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT id FROM job_postings
+		WHERE %s
+		ORDER BY id LIMIT $1
+	`, strings.Join(where, " AND "))
+
+	rows, err := m.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1375,7 +1386,7 @@ func (m *JobPostingModel) CountActiveWithNullClassification(sinceDays int) (int,
 		err = m.db.QueryRow(`
 			SELECT COUNT(*) FROM job_postings
 			WHERE is_active = TRUE AND `+missingJobClassificationCondition+`
-			  AND posted_at >= NOW() - ($1::text || ' days')::interval
+			  AND (posted_at >= NOW() - ($1::text || ' days')::interval OR first_seen_at >= NOW() - ($1::text || ' days')::interval)
 		`, sinceDays).Scan(&count)
 	} else {
 		err = m.db.QueryRow(`
