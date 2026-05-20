@@ -126,6 +126,10 @@ func getLangChainFlashModel() (llms.Model, error) {
 	return langChainFlashModel, langChainFlashErr
 }
 
+func sanitizeGeminiPrompt(prompt string) string {
+	return strings.ToValidUTF8(prompt, "")
+}
+
 // CallGeminiFlash calls Gemini Flash model which is 5-10x faster than Pro.
 func CallGeminiFlash(prompt string) (string, error) {
 	if err := geminiGate.acquire(context.Background()); err != nil {
@@ -137,7 +141,7 @@ func CallGeminiFlash(prompt string) (string, error) {
 		return "", err
 	}
 
-	return llms.GenerateFromSinglePrompt(context.Background(), llm, prompt)
+	return llms.GenerateFromSinglePrompt(context.Background(), llm, sanitizeGeminiPrompt(prompt))
 }
 
 // CallGeminiFlashWithTemperature calls Gemini Flash with a specific temperature.
@@ -153,7 +157,7 @@ func CallGeminiFlashWithTemperatureContext(ctx context.Context, prompt string, t
 	if err != nil {
 		return "", err
 	}
-	return llms.GenerateFromSinglePrompt(ctx, llm, prompt,
+	return llms.GenerateFromSinglePrompt(ctx, llm, sanitizeGeminiPrompt(prompt),
 		llms.WithTemperature(temperature))
 }
 
@@ -2097,10 +2101,8 @@ func ParseCareerFieldClassificationResponse(raw string) CareerField {
 
 // BuildJobClassificationPrompt builds a prompt that extracts both career field and required skills from a job posting.
 func BuildJobClassificationPrompt(title, description string) string {
-	desc := strings.TrimSpace(description)
-	if len(desc) > 2000 {
-		desc = desc[:2000] + "..."
-	}
+	title = strings.TrimSpace(strings.ToValidUTF8(title, ""))
+	desc := truncatePromptText(description, 2000)
 	return fmt.Sprintf(`Analyze this job posting and return:
 1. The career field (one of: SOFTWARE_ENGINEERING, DATA_SCIENCE, PRODUCT_MANAGEMENT, DESIGN, SALES, MARKETING, FINANCE, OPERATIONS, HR_RECRUITING, CUSTOMER_SUCCESS, OTHER)
 2. A list of required and preferred technical/professional skills mentioned or implied
@@ -2128,6 +2130,22 @@ Rules for seniority:
 - senior: senior-level, 5+ years
 - staff: staff engineer/designer — above senior individual contributor
 - lead: lead, principal, manager, director, VP, C-level`, title, desc)
+}
+
+func truncatePromptText(value string, maxRunes int) string {
+	value = strings.TrimSpace(strings.ToValidUTF8(value, ""))
+	if maxRunes <= 0 {
+		return ""
+	}
+
+	runeCount := 0
+	for idx := range value {
+		if runeCount == maxRunes {
+			return strings.TrimSpace(value[:idx]) + "..."
+		}
+		runeCount++
+	}
+	return value
 }
 
 // JobClassificationResult holds the parsed result of job classification.

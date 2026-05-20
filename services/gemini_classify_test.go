@@ -2,7 +2,9 @@ package services
 
 import (
 	"os"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 func TestClassifyWriteIntent(t *testing.T) {
@@ -38,5 +40,48 @@ func TestClassifyWriteIntent(t *testing.T) {
 				t.Errorf("ClassifyWriteIntent(%q) = %v, want %v", tt.message, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestBuildJobClassificationPrompt_RemovesInvalidUTF8(t *testing.T) {
+	title := "Engineer " + string([]byte{0xff, 0xfe})
+	description := "Build systems " + string([]byte{0xc3, 0x28}) + " at scale"
+
+	prompt := BuildJobClassificationPrompt(title, description)
+
+	if !utf8.ValidString(prompt) {
+		t.Fatal("expected classification prompt to be valid UTF-8")
+	}
+	if strings.Contains(prompt, string([]byte{0xff})) || strings.Contains(prompt, string([]byte{0xfe})) {
+		t.Fatal("expected invalid UTF-8 bytes to be removed")
+	}
+}
+
+func TestBuildJobClassificationPrompt_TruncatesAtRuneBoundary(t *testing.T) {
+	description := strings.Repeat("a", 1999) + "你" + "tail"
+
+	prompt := BuildJobClassificationPrompt("Engineer", description)
+
+	if !utf8.ValidString(prompt) {
+		t.Fatal("expected classification prompt to stay valid UTF-8 after truncation")
+	}
+	if !strings.Contains(prompt, "你...") {
+		t.Fatal("expected long description to be truncated")
+	}
+	if strings.Contains(prompt, "tail") {
+		t.Fatal("expected content after the rune-safe limit to be removed")
+	}
+}
+
+func TestSanitizeGeminiPrompt_RemovesInvalidUTF8(t *testing.T) {
+	prompt := "hello " + string([]byte{0xff}) + " world"
+
+	got := sanitizeGeminiPrompt(prompt)
+
+	if !utf8.ValidString(got) {
+		t.Fatal("expected sanitized prompt to be valid UTF-8")
+	}
+	if got != "hello  world" {
+		t.Fatalf("sanitizeGeminiPrompt() = %q", got)
 	}
 }
