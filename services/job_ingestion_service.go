@@ -155,6 +155,8 @@ type JobIngestionService struct {
 	throttle       ClassifyThrottleConfig
 	classifyPaused atomic.Bool
 	classifyOneFn  func(ctx context.Context, id int64) error
+	backlogMu      sync.Mutex
+	backlogRunning bool
 	testLogger     retryLogger
 
 	syncAllMu     sync.Mutex
@@ -171,7 +173,11 @@ type SyncAllStatus struct {
 	LastResult *JobSyncBatchResult `json:"last_result,omitempty"`
 }
 
-const dailySyncInterval = 24 * time.Hour
+const (
+	dailySyncInterval               = 24 * time.Hour
+	autoClassifyBacklogSinceDays    = 2
+	autoClassifyBacklogDefaultBatch = 20
+)
 
 func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *EmbeddingService, ctx context.Context, throttle ClassifyThrottleConfig) *JobIngestionService {
 	if logger == nil {
@@ -374,6 +380,9 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 	}
 
 	field, skills, seniority := ParseJobClassificationResponse(raw)
+	if err := validateJobClassificationResult(field, skills, seniority); err != nil {
+		return err
+	}
 	return s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority)
 }
 
@@ -412,6 +421,81 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 			case <-time.After(time.Duration(delayMS) * time.Millisecond):
 			case <-ctx.Done():
 				return
+			}
+		}
+	}
+}
+
+func (s *JobIngestionService) kickClassifyBacklog(ctx context.Context, sinceDays int) {
+	if aiBackgroundJobsDisabled() {
+		return
+	}
+
+	s.backlogMu.Lock()
+	if s.backlogRunning {
+		s.backlogMu.Unlock()
+		return
+	}
+	s.backlogRunning = true
+	s.backlogMu.Unlock()
+
+	go func() {
+		defer func() {
+			s.backlogMu.Lock()
+			s.backlogRunning = false
+			s.backlogMu.Unlock()
+		}()
+		s.classifyMissingJobPostings(ctx, sinceDays)
+	}()
+}
+
+func (s *JobIngestionService) classifyMissingJobPostings(ctx context.Context, sinceDays int) {
+	batchSize := s.throttle.BatchSize
+	if batchSize < autoClassifyBacklogDefaultBatch {
+		batchSize = autoClassifyBacklogDefaultBatch
+	}
+	delayMS := s.throttle.PerJobDelayMS
+	failedIDs := make(map[int64]struct{})
+	excludedIDs := make([]int64, 0)
+
+	for {
+		if ctx.Err() != nil || aiBackgroundJobsDisabled() || s.classifyPaused.Load() {
+			return
+		}
+
+		ids, err := s.postingModel.ListActiveWithNullClassificationExcluding(batchSize, sinceDays, excludedIDs)
+		if err != nil {
+			s.logger.Warn("auto classify backlog: failed to list jobs", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		if len(ids) == 0 {
+			return
+		}
+
+		s.emitClassifyTick(batchSize, delayMS, len(ids))
+		for _, id := range ids {
+			if ctx.Err() != nil || s.classifyPaused.Load() {
+				return
+			}
+
+			if err := s.classifyOne(ctx, id); err != nil {
+				s.logger.Warn("auto classify backlog: job classification failed", map[string]interface{}{
+					"jobID": id,
+					"error": err.Error(),
+				})
+				if _, exists := failedIDs[id]; !exists {
+					failedIDs[id] = struct{}{}
+					excludedIDs = append(excludedIDs, id)
+				}
+				continue
+			}
+
+			if delayMS > 0 {
+				select {
+				case <-time.After(time.Duration(delayMS) * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 			}
 		}
 	}
@@ -743,6 +827,7 @@ func (s *JobIngestionService) schedulerLoop(ctx context.Context, interval time.D
 		if err := s.syncDueCompanies(ctx); err != nil {
 			s.logger.Error("scheduled sync error", err)
 		}
+		s.kickClassifyBacklog(ctx, autoClassifyBacklogSinceDays)
 		if err := s.purgeOldJobPostings(ctx); err != nil {
 			s.logger.Error("scheduled job purge error", err)
 		}

@@ -728,8 +728,7 @@ func main() {
 			admin.DELETE("/jobs/classify/backfill", jobClassifyCtrl.StopBackfill)
 
 			admin.POST("/classify/stop", handlers.ClassifyStopHandler(&classifyStopperAdapter{
-				backfill:  jobClassifyBackfill,
-				ingestion: jobsService,
+				backfill: jobClassifyBackfill,
 			}))
 
 			admin.GET("/gemini/diag", handlers.GeminiDiagHandler())
@@ -781,13 +780,11 @@ func main() {
 	}
 }
 
-// classifyStopperAdapter bridges the two classifier services so a single admin
-// endpoint can halt both paths. Lives in main.go (not a sibling file) because
-// the EC2 deploy script builds with `go build -o main main.go`, which only
-// compiles a single file.
+// classifyStopperAdapter bridges the explicit classify backfill service. Lives
+// in main.go (not a sibling file) because the EC2 deploy script builds with
+// `go build -o main main.go`, which only compiles a single file.
 type classifyStopperAdapter struct {
-	backfill  *services.JobClassifyBackfillService
-	ingestion *services.JobIngestionService
+	backfill *services.JobClassifyBackfillService
 }
 
 func (a *classifyStopperAdapter) CancelBackfill() bool {
@@ -795,18 +792,4 @@ func (a *classifyStopperAdapter) CancelBackfill() bool {
 		return false
 	}
 	return a.backfill.Cancel()
-}
-
-func (a *classifyStopperAdapter) PauseIngestionClassifier() {
-	if a.ingestion == nil {
-		return
-	}
-	a.ingestion.PauseClassifier()
-}
-
-func (a *classifyStopperAdapter) IsIngestionClassifierRunning() bool {
-	if a.ingestion == nil {
-		return false
-	}
-	return !a.ingestion.IsClassifierPaused()
 }

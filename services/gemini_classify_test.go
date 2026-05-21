@@ -85,3 +85,9 @@ func TestSanitizeGeminiPrompt_RemovesInvalidUTF8(t *testing.T) {
 		t.Fatalf("sanitizeGeminiPrompt() = %q", got)
 	}
 }
+
+func TestValidateJobClassificationResult_RejectsNonPersistableResult(t *testing.T) {
+	if err := validateJobClassificationResult(CareerFieldUnknown, nil, "mid"); err == nil {
+		t.Fatal("expected UNKNOWN career field with no skills to be rejected")
+	}
+}

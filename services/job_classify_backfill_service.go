@@ -249,6 +249,10 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
+			if err := validateJobClassificationResult(field, skills, seniority); err != nil {
+				recordJobError(id, err.Error())
+				continue
+			}
 			if err := s.postings.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
 				recordJobError(id, "failed to save classification: "+err.Error())
 				continue
