@@ -2150,9 +2150,14 @@ func truncatePromptText(value string, maxRunes int) string {
 
 // JobClassificationResult holds the parsed result of job classification.
 type JobClassificationResult struct {
-	CareerField string   `json:"career_field"`
-	Skills      []string `json:"skills"`
-	Seniority   string   `json:"seniority"`
+	CareerField     string   `json:"career_field"`
+	Skills          []string `json:"skills"`
+	ExtractedSkills []string `json:"extracted_skills"`
+	RequiredSkills  []string `json:"required_skills"`
+	PreferredSkills []string `json:"preferred_skills"`
+	Technologies    []string `json:"technologies"`
+	Seniority       string   `json:"seniority"`
+	SeniorityLevel  string   `json:"seniority_level"`
 }
 
 var validSeniorityValues = map[string]bool{
@@ -2160,46 +2165,263 @@ var validSeniorityValues = map[string]bool{
 	"senior": true, "staff": true, "lead": true,
 }
 
+var jobCareerFieldAliases = map[string]CareerField{
+	"ACCOUNTING":                CareerFieldFinance,
+	"ACCOUNT_MANAGEMENT":        CareerFieldSales,
+	"AI":                        CareerFieldDataScience,
+	"AI_ENGINEERING":            CareerFieldDataScience,
+	"ANALYTICS":                 CareerFieldDataScience,
+	"AEROSPACE_ENGINEERING":     CareerFieldOther,
+	"BUSINESS_DEVELOPMENT":      CareerFieldSales,
+	"BUSINESS_INTELLIGENCE":     CareerFieldDataScience,
+	"CLOUD":                     CareerFieldSoftwareEngineering,
+	"CLOUD_ENGINEERING":         CareerFieldSoftwareEngineering,
+	"COMPUTER_SCIENCE":          CareerFieldSoftwareEngineering,
+	"CUSTOMER_SUPPORT":          CareerFieldCustomerSuccess,
+	"CYBERSECURITY":             CareerFieldSoftwareEngineering,
+	"DATA":                      CareerFieldDataScience,
+	"DATA_ANALYTICS":            CareerFieldDataScience,
+	"DATA_ENGINEERING":          CareerFieldDataScience,
+	"DEVOPS":                    CareerFieldSoftwareEngineering,
+	"ELECTRICAL_ENGINEERING":    CareerFieldOther,
+	"ENGINEERING":               CareerFieldOther,
+	"FINANCIAL":                 CareerFieldFinance,
+	"HARDWARE":                  CareerFieldOther,
+	"HARDWARE_ENGINEERING":      CareerFieldOther,
+	"HUMAN_RESOURCES":           CareerFieldHRRecruiting,
+	"INFORMATION_SECURITY":      CareerFieldSoftwareEngineering,
+	"LEGAL":                     CareerFieldOther,
+	"LOGISTICS":                 CareerFieldOperations,
+	"MACHINE_LEARNING":          CareerFieldDataScience,
+	"MANUFACTURING":             CareerFieldOperations,
+	"MANUFACTURING_ENGINEERING": CareerFieldOperations,
+	"MARKETING_COMMUNICATIONS":  CareerFieldMarketing,
+	"MECHANICAL_ENGINEERING":    CareerFieldOther,
+	"MOBILE":                    CareerFieldSoftwareEngineering,
+	"MOBILE_DEVELOPMENT":        CareerFieldSoftwareEngineering,
+	"OPERATIONS_MANAGEMENT":     CareerFieldOperations,
+	"PLATFORM_ENGINEERING":      CareerFieldSoftwareEngineering,
+	"PROGRAM_MANAGEMENT":        CareerFieldProductManagement,
+	"PROJECT_MANAGEMENT":        CareerFieldOperations,
+	"QA":                        CareerFieldSoftwareEngineering,
+	"QUALITY":                   CareerFieldOperations,
+	"QUALITY_ASSURANCE":         CareerFieldSoftwareEngineering,
+	"RECRUITING":                CareerFieldHRRecruiting,
+	"SECURITY":                  CareerFieldSoftwareEngineering,
+	"SOFTWARE":                  CareerFieldSoftwareEngineering,
+	"SOFTWARE_DEVELOPMENT":      CareerFieldSoftwareEngineering,
+	"SUPPLY_CHAIN":              CareerFieldOperations,
+	"SYSTEMS_ENGINEERING":       CareerFieldOther,
+	"TAX":                       CareerFieldFinance,
+	"TECHNICAL_SUPPORT":         CareerFieldCustomerSuccess,
+	"UX":                        CareerFieldDesign,
+	"UX_DESIGN":                 CareerFieldDesign,
+	"WEB_DEVELOPMENT":           CareerFieldSoftwareEngineering,
+}
+
 // ParseJobClassificationResponse parses the AI response for job classification.
 // Returns career field, skills, and seniority string.
 func ParseJobClassificationResponse(raw string) (CareerField, []string, string) {
-	trimmed := strings.TrimSpace(raw)
+	trimmed := extractJobClassificationJSON(raw)
 	if trimmed == "" {
 		return CareerFieldUnknown, nil, "mid"
 	}
-	trimmed = strings.TrimPrefix(trimmed, "```json")
-	trimmed = strings.TrimPrefix(trimmed, "```")
-	trimmed = strings.TrimSuffix(trimmed, "```")
-	trimmed = strings.TrimSpace(trimmed)
 
-	var result JobClassificationResult
-	if err := json.Unmarshal([]byte(trimmed), &result); err != nil {
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(trimmed), &payload); err != nil {
 		return CareerFieldUnknown, nil, "mid"
 	}
 
-	field := CareerField(strings.ToUpper(strings.TrimSpace(result.CareerField)))
-	switch field {
-	case CareerFieldSoftwareEngineering, CareerFieldDataScience, CareerFieldProductManagement,
-		CareerFieldDesign, CareerFieldSales, CareerFieldMarketing, CareerFieldFinance,
-		CareerFieldOperations, CareerFieldHRRecruiting, CareerFieldCustomerSuccess, CareerFieldOther:
-		// valid
-	default:
-		field = CareerFieldUnknown
+	var result JobClassificationResult
+	_ = json.Unmarshal([]byte(trimmed), &result)
+
+	careerField := result.CareerField
+	if careerField == "" {
+		careerField = readJSONString(payload, "career_field", "careerField", "field", "category")
 	}
+	field := normalizeJobCareerField(careerField)
 
 	seniority := strings.ToLower(strings.TrimSpace(result.Seniority))
+	if seniority == "" {
+		seniority = strings.ToLower(strings.TrimSpace(result.SeniorityLevel))
+	}
+	if seniority == "" {
+		seniority = strings.ToLower(strings.TrimSpace(readJSONString(payload, "seniority", "seniority_level", "seniorityLevel", "level")))
+	}
 	if !validSeniorityValues[seniority] {
 		seniority = "mid"
 	}
 
-	// Normalize skills to lowercase
-	skills := make([]string, 0, len(result.Skills))
-	for _, s := range result.Skills {
-		if trimS := strings.TrimSpace(strings.ToLower(s)); trimS != "" {
-			skills = append(skills, trimS)
+	skills := normalizeJobClassificationSkills(
+		result.Skills,
+		result.ExtractedSkills,
+		result.RequiredSkills,
+		result.PreferredSkills,
+		result.Technologies,
+		readJSONStringSlice(payload, "skills", "extracted_skills", "extractedSkills", "required_skills", "requiredSkills", "preferred_skills", "preferredSkills", "technologies"),
+	)
+	return field, skills, seniority
+}
+
+func extractJobClassificationJSON(raw string) string {
+	trimmed := stripJSONCodeFence(strings.TrimSpace(raw))
+	if trimmed == "" {
+		return ""
+	}
+	if json.Valid([]byte(trimmed)) {
+		return trimmed
+	}
+
+	start := strings.Index(trimmed, "{")
+	end := strings.LastIndex(trimmed, "}")
+	if start >= 0 && end > start {
+		candidate := strings.TrimSpace(trimmed[start : end+1])
+		if json.Valid([]byte(candidate)) {
+			return candidate
 		}
 	}
-	return field, skills, seniority
+	return trimmed
+}
+
+func stripJSONCodeFence(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+
+	trimmed = strings.TrimSpace(strings.TrimPrefix(trimmed, "```"))
+	if newline := strings.Index(trimmed, "\n"); newline >= 0 {
+		firstLine := strings.TrimSpace(trimmed[:newline])
+		if strings.EqualFold(firstLine, "json") {
+			trimmed = trimmed[newline+1:]
+		}
+	}
+	trimmed = strings.TrimSpace(trimmed)
+	trimmed = strings.TrimSpace(strings.TrimSuffix(trimmed, "```"))
+	return trimmed
+}
+
+func normalizeJobCareerField(raw string) CareerField {
+	normalized := normalizeClassificationToken(raw)
+	if normalized == "" {
+		return CareerFieldUnknown
+	}
+
+	field := CareerField(normalized)
+	switch field {
+	case CareerFieldSoftwareEngineering, CareerFieldDataScience, CareerFieldProductManagement,
+		CareerFieldDesign, CareerFieldSales, CareerFieldMarketing, CareerFieldFinance,
+		CareerFieldOperations, CareerFieldHRRecruiting, CareerFieldCustomerSuccess, CareerFieldOther:
+		return field
+	}
+	if alias, ok := jobCareerFieldAliases[normalized]; ok {
+		return alias
+	}
+	return CareerFieldOther
+}
+
+func normalizeClassificationToken(raw string) string {
+	replacer := strings.NewReplacer("-", "_", " ", "_", "/", "_", "&", "_", ".", "_")
+	normalized := strings.ToUpper(strings.TrimSpace(raw))
+	normalized = replacer.Replace(normalized)
+	for strings.Contains(normalized, "__") {
+		normalized = strings.ReplaceAll(normalized, "__", "_")
+	}
+	return strings.Trim(normalized, "_")
+}
+
+func normalizeJobClassificationSkills(groups ...[]string) []string {
+	skills := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, raw := range group {
+			skill := strings.Trim(strings.ToLower(strings.TrimSpace(raw)), " \t\r\n.,;:")
+			if skill == "" {
+				continue
+			}
+			skill = GetCanonicalSkill(skill)
+			if _, exists := seen[skill]; exists {
+				continue
+			}
+			seen[skill] = struct{}{}
+			skills = append(skills, skill)
+			if len(skills) >= 20 {
+				return skills
+			}
+		}
+	}
+	return skills
+}
+
+func readJSONString(payload map[string]json.RawMessage, keys ...string) string {
+	raw, ok := lookupJSONRaw(payload, keys...)
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err == nil {
+		return strings.TrimSpace(value)
+	}
+	return ""
+}
+
+func readJSONStringSlice(payload map[string]json.RawMessage, keys ...string) []string {
+	raw, ok := lookupJSONRaw(payload, keys...)
+	if !ok {
+		return nil
+	}
+	var values []string
+	if err := json.Unmarshal(raw, &values); err == nil {
+		return values
+	}
+	var single string
+	if err := json.Unmarshal(raw, &single); err == nil {
+		return splitClassificationSkillString(single)
+	}
+	var objects []map[string]interface{}
+	if err := json.Unmarshal(raw, &objects); err == nil {
+		out := make([]string, 0, len(objects))
+		for _, object := range objects {
+			for _, key := range []string{"skill", "name", "value"} {
+				if value, ok := object[key].(string); ok {
+					out = append(out, value)
+					break
+				}
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func splitClassificationSkillString(value string) []string {
+	return strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n'
+	})
+}
+
+func lookupJSONRaw(payload map[string]json.RawMessage, keys ...string) (json.RawMessage, bool) {
+	if len(payload) == 0 {
+		return nil, false
+	}
+	wanted := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		wanted[normalizeJSONKey(key)] = struct{}{}
+	}
+	for key, raw := range payload {
+		if _, ok := wanted[normalizeJSONKey(key)]; ok {
+			return raw, true
+		}
+	}
+	return nil, false
+}
+
+func normalizeJSONKey(key string) string {
+	key = strings.ToLower(strings.TrimSpace(key))
+	key = strings.ReplaceAll(key, "_", "")
+	key = strings.ReplaceAll(key, "-", "")
+	key = strings.ReplaceAll(key, " ", "")
+	return key
 }
 
 func validateJobClassificationResult(field CareerField, skills []string, seniority string) error {

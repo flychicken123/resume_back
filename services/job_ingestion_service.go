@@ -393,6 +393,12 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 	if aiBackgroundJobsDisabled() {
 		return
 	}
+	jobClassificationRunMu.Lock()
+	defer jobClassificationRunMu.Unlock()
+	if aiBackgroundJobsDisabled() {
+		return
+	}
+
 	delayMS := s.throttle.PerJobDelayMS
 	batchSize := s.throttle.BatchSize
 
@@ -450,6 +456,15 @@ func (s *JobIngestionService) kickClassifyBacklog(ctx context.Context, sinceDays
 }
 
 func (s *JobIngestionService) classifyMissingJobPostings(ctx context.Context, sinceDays int) {
+	if aiBackgroundJobsDisabled() {
+		return
+	}
+	jobClassificationRunMu.Lock()
+	defer jobClassificationRunMu.Unlock()
+	if aiBackgroundJobsDisabled() {
+		return
+	}
+
 	batchSize := s.throttle.BatchSize
 	if batchSize < autoClassifyBacklogDefaultBatch {
 		batchSize = autoClassifyBacklogDefaultBatch

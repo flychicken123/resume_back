@@ -43,16 +43,30 @@ type JobClassifyBackfillService struct {
 	cancel   context.CancelFunc
 	postings *models.JobPostingModel
 	logger   *utils.Logger
+	throttle ClassifyThrottleConfig
 }
 
 // NewJobClassifyBackfillService creates a new classify backfill service.
-func NewJobClassifyBackfillService(postings *models.JobPostingModel, logger *utils.Logger) *JobClassifyBackfillService {
+func NewJobClassifyBackfillService(postings *models.JobPostingModel, logger *utils.Logger, throttle ...ClassifyThrottleConfig) *JobClassifyBackfillService {
 	if logger == nil {
 		logger = utils.NewLogger()
+	}
+	cfg := ClassifyThrottleConfig{
+		PerJobDelayMS: 500,
+		BatchSize:     20,
+	}
+	if len(throttle) > 0 {
+		if throttle[0].PerJobDelayMS > 0 {
+			cfg.PerJobDelayMS = throttle[0].PerJobDelayMS
+		}
+		if throttle[0].BatchSize > 0 {
+			cfg.BatchSize = throttle[0].BatchSize
+		}
 	}
 	return &JobClassifyBackfillService{
 		postings: postings,
 		logger:   logger,
+		throttle: cfg,
 	}
 }
 
@@ -66,7 +80,7 @@ func (s *JobClassifyBackfillService) Trigger(ctx context.Context, batchSize int,
 	}
 
 	if batchSize <= 0 {
-		batchSize = 20
+		batchSize = s.throttle.BatchSize
 	}
 
 	total, err := s.postings.CountActiveWithNullClassification(sinceDays)
@@ -152,6 +166,9 @@ func (s *JobClassifyBackfillService) recordError(jobID int64, message string) {
 }
 
 func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sinceDays int) {
+	jobClassificationRunMu.Lock()
+	defer jobClassificationRunMu.Unlock()
+
 	failedIDs := make(map[int64]struct{})
 	excludedIDs := make([]int64, 0)
 	recordJobError := func(jobID int64, message string) {
@@ -213,54 +230,63 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 				} else {
 					recordJobError(id, "failed to fetch job: not found")
 				}
+				if !s.sleepBetweenJobs(ctx) {
+					return
+				}
 				continue
 			}
 
 			prompt := BuildJobClassificationPrompt(job.Title, job.Description)
 
-			var raw string
-			var callErr error
-			// Retry with exponential backoff on rate limit
-			for attempt := 0; attempt < 3; attempt++ {
-				raw, callErr = CallGeminiFlashWithTemperature(prompt, 0.0)
-				if callErr == nil {
-					break
-				}
-				errMsg := strings.ToLower(callErr.Error())
-				if strings.Contains(errMsg, "429") || strings.Contains(errMsg, "resource_exhausted") || strings.Contains(errMsg, "rate") {
-					backoff := time.Duration(1<<uint(attempt)) * 5 * time.Second
-					s.logger.Warn("classify backfill: rate limited, backing off", map[string]interface{}{
-						"jobID":   id,
-						"backoff": backoff.String(),
-					})
-					select {
-					case <-time.After(backoff):
-					case <-ctx.Done():
-						return
-					}
-				} else {
-					break
-				}
-			}
-
+			raw, callErr := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+				func(ctx context.Context) (string, error) {
+					return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
+				},
+				RetryOpts{Endpoint: "classify_job_backfill", Logger: s.logger},
+			)
 			if callErr != nil {
 				recordJobError(id, "failed to classify job: "+callErr.Error())
+				if !s.sleepBetweenJobs(ctx) {
+					return
+				}
 				continue
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
 			if err := validateJobClassificationResult(field, skills, seniority); err != nil {
 				recordJobError(id, err.Error())
+				if !s.sleepBetweenJobs(ctx) {
+					return
+				}
 				continue
 			}
 			if err := s.postings.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
 				recordJobError(id, "failed to save classification: "+err.Error())
+				if !s.sleepBetweenJobs(ctx) {
+					return
+				}
 				continue
 			}
 
 			s.mu.Lock()
 			s.status.Processed++
 			s.mu.Unlock()
+			if !s.sleepBetweenJobs(ctx) {
+				return
+			}
 		}
+	}
+}
+
+func (s *JobClassifyBackfillService) sleepBetweenJobs(ctx context.Context) bool {
+	delayMS := s.throttle.PerJobDelayMS
+	if delayMS <= 0 {
+		return true
+	}
+	select {
+	case <-time.After(time.Duration(delayMS) * time.Millisecond):
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

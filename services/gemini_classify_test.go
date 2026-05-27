@@ -91,3 +91,35 @@ func TestValidateJobClassificationResult_RejectsNonPersistableResult(t *testing.
 		t.Fatal("expected UNKNOWN career field with no skills to be rejected")
 	}
 }
+
+func TestParseJobClassificationResponse_NormalizesCareerFieldAliasesAndSkillKeys(t *testing.T) {
+	raw := "Here is the JSON:\n```JSON\n{\"careerField\":\"Manufacturing Engineering\",\"requiredSkills\":[\"CNC Machining\",\"GD&T\"],\"seniorityLevel\":\"Lead\"}\n```"
+
+	field, skills, seniority := ParseJobClassificationResponse(raw)
+
+	if field != CareerFieldOperations {
+		t.Fatalf("expected manufacturing engineering to normalize to %s, got %s", CareerFieldOperations, field)
+	}
+	if seniority != "lead" {
+		t.Fatalf("expected lead seniority, got %q", seniority)
+	}
+	if len(skills) != 2 || skills[0] != "cnc machining" || skills[1] != "gd&t" {
+		t.Fatalf("expected normalized skills, got %#v", skills)
+	}
+}
+
+func TestParseJobClassificationResponse_UsesOtherForOutOfTaxonomyFields(t *testing.T) {
+	raw := `{"career_field":"Legal","skills":"contracts, compliance","seniority":"senior"}`
+
+	field, skills, seniority := ParseJobClassificationResponse(raw)
+
+	if field != CareerFieldOther {
+		t.Fatalf("expected legal to normalize to %s, got %s", CareerFieldOther, field)
+	}
+	if seniority != "senior" {
+		t.Fatalf("expected senior seniority, got %q", seniority)
+	}
+	if len(skills) != 2 || skills[0] != "contracts" || skills[1] != "compliance" {
+		t.Fatalf("expected comma-separated skills to parse, got %#v", skills)
+	}
+}

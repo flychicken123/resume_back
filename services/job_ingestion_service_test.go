@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,4 +85,37 @@ func TestClassifyLoop_EmitsClassifyTickLog(t *testing.T) {
 		assert.Equal(t, 0, log.fields["delay_ms"])
 		assert.Equal(t, 3, log.fields["remaining_backlog"])
 	}
+}
+
+func TestClassifyLoop_SerializesConcurrentBatches(t *testing.T) {
+	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 0, BatchSize: 5})
+	var current atomic.Int32
+	var maxSeen atomic.Int32
+
+	svc.classifyOneFn = func(ctx context.Context, id int64) error {
+		n := current.Add(1)
+		for {
+			max := maxSeen.Load()
+			if n <= max || maxSeen.CompareAndSwap(max, n) {
+				break
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+		current.Add(-1)
+		return nil
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		svc.classifyJobPostingsBatch(context.Background(), []int64{1, 2, 3})
+	}()
+	go func() {
+		defer wg.Done()
+		svc.classifyJobPostingsBatch(context.Background(), []int64{4, 5, 6})
+	}()
+	wg.Wait()
+
+	assert.Equal(t, int32(1), maxSeen.Load())
 }

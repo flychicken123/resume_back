@@ -286,7 +286,10 @@ func main() {
 	resumeBackfill := services.NewResumeProfileBackfillService(db, resumeModel, s3Service, logger)
 	jobEmbeddingBackfill := services.NewJobEmbeddingBackfillService(jobPostingModel, embeddingSvc, logger)
 	jobEmbeddingCtrl := controllers.NewJobEmbeddingController(jobEmbeddingBackfill, ctx)
-	jobClassifyBackfill := services.NewJobClassifyBackfillService(jobPostingModel, logger)
+	jobClassifyBackfill := services.NewJobClassifyBackfillService(jobPostingModel, logger, services.ClassifyThrottleConfig{
+		PerJobDelayMS: appConfig.ClassifyPerJobDelayMS,
+		BatchSize:     appConfig.ClassifyBatchSize,
+	})
 	jobClassifyCtrl := controllers.NewJobClassifyController(jobClassifyBackfill, ctx)
 	benchmarkModel := models.NewAiBenchmarkModel(db)
 	benchmarkSvc := services.NewBenchmarkService(jobPostingModel, jobMatchModel, benchmarkModel, logger)
