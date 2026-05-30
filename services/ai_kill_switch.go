@@ -5,11 +5,22 @@ import (
 	"strings"
 )
 
-// aiBackgroundJobsDisabled reports whether DISABLE_AI_BACKGROUND_JOBS is set to
-// "true" in the environment. When true, classification and embedding goroutines
-// spawned from ingestion return early so background work doesn't consume Gemini
-// quota. Only affects background paths — user-facing chat, AI optimize, and
-// tailoring endpoints stay live.
+const DisableJobAutoClassificationEnv = "DISABLE_JOB_AUTO_CLASSIFICATION"
+
+// aiBackgroundJobsDisabled reports whether scheduled/background AI loops should
+// stop to avoid consuming Gemini quota. User-facing AI endpoints stay live.
 func aiBackgroundJobsDisabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_AI_BACKGROUND_JOBS")), "true")
+	return envFlagEnabled("DISABLE_AI_BACKGROUND_JOBS")
+}
+
+// JobAutoClassificationDisabled reports whether newly pulled jobs should skip
+// automatic classification. This is intentionally separate from
+// DISABLE_AI_BACKGROUND_JOBS so job pulls can still classify fresh postings
+// while broader scheduled AI work is paused.
+func JobAutoClassificationDisabled() bool {
+	return envFlagEnabled(DisableJobAutoClassificationEnv)
+}
+
+func envFlagEnabled(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv(name)), "true")
 }

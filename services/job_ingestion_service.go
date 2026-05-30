@@ -390,12 +390,12 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 // Throttle defaults (500ms per job, batch size 5) are applied by config.GetAppConfig;
 // the service trusts its caller to pass sensible values and respects 0 as "no sleep".
 func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids []int64) {
-	if aiBackgroundJobsDisabled() {
+	if JobAutoClassificationDisabled() {
 		return
 	}
 	jobClassificationRunMu.Lock()
 	defer jobClassificationRunMu.Unlock()
-	if aiBackgroundJobsDisabled() {
+	if JobAutoClassificationDisabled() {
 		return
 	}
 
@@ -433,7 +433,7 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 }
 
 func (s *JobIngestionService) kickClassifyBacklog(ctx context.Context, sinceDays int) {
-	if aiBackgroundJobsDisabled() {
+	if aiBackgroundJobsDisabled() || JobAutoClassificationDisabled() {
 		return
 	}
 
@@ -456,12 +456,12 @@ func (s *JobIngestionService) kickClassifyBacklog(ctx context.Context, sinceDays
 }
 
 func (s *JobIngestionService) classifyMissingJobPostings(ctx context.Context, sinceDays int) {
-	if aiBackgroundJobsDisabled() {
+	if aiBackgroundJobsDisabled() || JobAutoClassificationDisabled() {
 		return
 	}
 	jobClassificationRunMu.Lock()
 	defer jobClassificationRunMu.Unlock()
-	if aiBackgroundJobsDisabled() {
+	if aiBackgroundJobsDisabled() || JobAutoClassificationDisabled() {
 		return
 	}
 
@@ -474,7 +474,7 @@ func (s *JobIngestionService) classifyMissingJobPostings(ctx context.Context, si
 	excludedIDs := make([]int64, 0)
 
 	for {
-		if ctx.Err() != nil || aiBackgroundJobsDisabled() || s.classifyPaused.Load() {
+		if ctx.Err() != nil || aiBackgroundJobsDisabled() || JobAutoClassificationDisabled() || s.classifyPaused.Load() {
 			return
 		}
 

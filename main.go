@@ -273,7 +273,10 @@ func main() {
 
 	aiBackgroundDisabled := strings.EqualFold(strings.TrimSpace(os.Getenv("DISABLE_AI_BACKGROUND_JOBS")), "true")
 	if aiBackgroundDisabled {
-		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; benchmark, notifier, classification, and embedding loops will NOT start", nil)
+		logger.Warn("AI background jobs disabled via DISABLE_AI_BACKGROUND_JOBS; benchmark, notifier, scheduled classification backlog, and embedding loops will NOT start", nil)
+	}
+	if services.JobAutoClassificationDisabled() {
+		logger.Warn("job auto-classification disabled via DISABLE_JOB_AUTO_CLASSIFICATION; pulled jobs will not be classified automatically", nil)
 		jobsService.PauseClassifier()
 	}
 

@@ -59,6 +59,38 @@ func TestClassifyLoop_ContextCancelled_ExitsImmediately(t *testing.T) {
 	assert.Equal(t, int32(2), processed.Load())
 }
 
+func TestClassifyLoop_GlobalAIBackgroundKillSwitchDoesNotStopPulledJobClassification(t *testing.T) {
+	t.Setenv("DISABLE_AI_BACKGROUND_JOBS", "true")
+	t.Setenv(DisableJobAutoClassificationEnv, "false")
+
+	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 0, BatchSize: 5})
+	var processed atomic.Int32
+	svc.classifyOneFn = func(ctx context.Context, id int64) error {
+		processed.Add(1)
+		return nil
+	}
+
+	svc.classifyJobPostingsBatch(context.Background(), []int64{1, 2, 3})
+
+	assert.Equal(t, int32(3), processed.Load())
+}
+
+func TestClassifyLoop_JobAutoClassificationKillSwitchStopsPulledJobClassification(t *testing.T) {
+	t.Setenv("DISABLE_AI_BACKGROUND_JOBS", "false")
+	t.Setenv(DisableJobAutoClassificationEnv, "true")
+
+	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 0, BatchSize: 5})
+	var processed atomic.Int32
+	svc.classifyOneFn = func(ctx context.Context, id int64) error {
+		processed.Add(1)
+		return nil
+	}
+
+	svc.classifyJobPostingsBatch(context.Background(), []int64{1, 2, 3})
+
+	assert.Equal(t, int32(0), processed.Load())
+}
+
 func TestClassifyLoop_SleepsPerJob(t *testing.T) {
 	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 123, BatchSize: 5})
 	svc.classifyOneFn = func(ctx context.Context, id int64) error { return nil }
