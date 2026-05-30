@@ -265,7 +265,7 @@ jobs:
           
           # Test health endpoint
           echo "Testing health endpoint..."
-          if curl -f https://hihired.org/api/health; then
+          if curl --http1.1 -f https://hihired.org/api/health; then
             echo "✅ Health check passed"
           else
             echo "❌ Health check failed"
@@ -282,7 +282,7 @@ jobs:
             "/api/resume/generate" \
             "/api/ai/summary"; do
             echo "Testing OPTIONS $EP"
-            if curl -sS -i -X OPTIONS \
+            if curl --http1.1 -sS -i -X OPTIONS \
               -H "Origin: https://www.hihired.org" \
               -H "Access-Control-Request-Method: POST" \
               https://hihired.org$EP | grep -i "Access-Control-Allow-Origin"; then
@@ -306,7 +306,7 @@ jobs:
           
           # Test invalid JSON should return 400
           echo "Testing invalid JSON handling..."
-          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          response=$(curl --http1.1 -s -o /dev/null -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -d '{"invalid": json}' \
             https://hihired.org/api/experience/optimize)
@@ -318,7 +318,7 @@ jobs:
           
           # Test missing content-type should return 400
           echo "Testing content-type validation..."
-          response=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+          response=$(curl --http1.1 -s -o /dev/null -w "%{http_code}" -X POST \
             -d '{"test": "data"}' \
             https://hihired.org/api/experience/optimize)
           if [ "$response" = "400" ]; then
