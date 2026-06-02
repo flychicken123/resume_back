@@ -91,6 +91,91 @@ func TestClassifyLoop_JobAutoClassificationKillSwitchStopsPulledJobClassificatio
 	assert.Equal(t, int32(0), processed.Load())
 }
 
+func TestClassifyQueue_ProcessesQueuedIDs(t *testing.T) {
+	t.Setenv(DisableJobAutoClassificationEnv, "false")
+
+	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 0, BatchSize: 5})
+	var processed atomic.Int32
+	var idsMu sync.Mutex
+	processedIDs := make([]int64, 0, 3)
+	done := make(chan struct{})
+	var closeDone sync.Once
+
+	svc.classifyOneFn = func(ctx context.Context, id int64) error {
+		idsMu.Lock()
+		processedIDs = append(processedIDs, id)
+		idsMu.Unlock()
+		if processed.Add(1) == 3 {
+			closeDone.Do(func() { close(done) })
+		}
+		return nil
+	}
+
+	svc.enqueueClassifyJobPostings([]int64{3, 1, 2})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for classification queue")
+	}
+
+	idsMu.Lock()
+	defer idsMu.Unlock()
+	assert.Equal(t, []int64{1, 2, 3}, processedIDs)
+}
+
+func TestClassifyQueue_SkipsDuplicateQueuedAndInFlightIDs(t *testing.T) {
+	t.Setenv(DisableJobAutoClassificationEnv, "false")
+
+	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 0, BatchSize: 5})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var closeStarted sync.Once
+	var closeDone sync.Once
+	var processed atomic.Int32
+	var idsMu sync.Mutex
+	processedIDs := make([]int64, 0, 3)
+
+	svc.classifyOneFn = func(ctx context.Context, id int64) error {
+		idsMu.Lock()
+		processedIDs = append(processedIDs, id)
+		idsMu.Unlock()
+		if id == 1 {
+			closeStarted.Do(func() { close(started) })
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if processed.Add(1) == 3 {
+			closeDone.Do(func() { close(done) })
+		}
+		return nil
+	}
+
+	svc.enqueueClassifyJobPostings([]int64{1, 2})
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for first classification")
+	}
+
+	svc.enqueueClassifyJobPostings([]int64{2, 3})
+	close(release)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for classification queue")
+	}
+
+	idsMu.Lock()
+	defer idsMu.Unlock()
+	assert.Equal(t, []int64{1, 2, 3}, processedIDs)
+}
+
 func TestClassifyLoop_SleepsPerJob(t *testing.T) {
 	svc := newTestIngestionService(ClassifyThrottleConfig{PerJobDelayMS: 123, BatchSize: 5})
 	svc.classifyOneFn = func(ctx context.Context, id int64) error { return nil }

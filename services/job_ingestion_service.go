@@ -142,22 +142,26 @@ type ClassifyThrottleConfig struct {
 }
 
 type JobIngestionService struct {
-	companyModel   *models.JobCompanyModel
-	postingModel   *models.JobPostingModel
-	syncRunModel   *models.JobSyncRunModel
-	providers      map[string]ATSProvider
-	logger         *utils.Logger
-	clock          func() time.Time
-	embeddingSvc   *EmbeddingService
-	ctx            context.Context
-	embedMu        sync.Mutex
-	embedRunning   bool
-	throttle       ClassifyThrottleConfig
-	classifyPaused atomic.Bool
-	classifyOneFn  func(ctx context.Context, id int64) error
-	backlogMu      sync.Mutex
-	backlogRunning bool
-	testLogger     retryLogger
+	companyModel         *models.JobCompanyModel
+	postingModel         *models.JobPostingModel
+	syncRunModel         *models.JobSyncRunModel
+	providers            map[string]ATSProvider
+	logger               *utils.Logger
+	clock                func() time.Time
+	embeddingSvc         *EmbeddingService
+	ctx                  context.Context
+	embedMu              sync.Mutex
+	embedRunning         bool
+	throttle             ClassifyThrottleConfig
+	classifyPaused       atomic.Bool
+	classifyOneFn        func(ctx context.Context, id int64) error
+	classifyQueueMu      sync.Mutex
+	classifyQueued       map[int64]struct{}
+	classifyInFlight     map[int64]struct{}
+	classifyQueueRunning bool
+	backlogMu            sync.Mutex
+	backlogRunning       bool
+	testLogger           retryLogger
 
 	syncAllMu     sync.Mutex
 	syncAllStatus SyncAllStatus
@@ -331,7 +335,7 @@ func (s *JobIngestionService) SyncCompany(ctx context.Context, companyID int) (*
 		go s.embedJobPostingsBatch(s.ctx, newIDs)
 	}
 	if len(classifyIDs) > 0 {
-		go s.classifyJobPostingsBatch(s.ctx, classifyIDs)
+		s.enqueueClassifyJobPostings(classifyIDs)
 	}
 	return result, nil
 }
@@ -350,6 +354,102 @@ func (s *JobIngestionService) ResumeClassifier() {
 // IsClassifierPaused reports whether the classify loop is currently paused.
 func (s *JobIngestionService) IsClassifierPaused() bool {
 	return s.classifyPaused.Load()
+}
+
+func (s *JobIngestionService) enqueueClassifyJobPostings(ids []int64) {
+	if len(ids) == 0 || JobAutoClassificationDisabled() {
+		return
+	}
+
+	s.classifyQueueMu.Lock()
+	if s.classifyQueued == nil {
+		s.classifyQueued = make(map[int64]struct{})
+	}
+	if s.classifyInFlight == nil {
+		s.classifyInFlight = make(map[int64]struct{})
+	}
+
+	queued := 0
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, exists := s.classifyQueued[id]; exists {
+			continue
+		}
+		if _, exists := s.classifyInFlight[id]; exists {
+			continue
+		}
+		s.classifyQueued[id] = struct{}{}
+		queued++
+	}
+	if queued == 0 || s.classifyQueueRunning {
+		s.classifyQueueMu.Unlock()
+		return
+	}
+
+	s.classifyQueueRunning = true
+	s.classifyQueueMu.Unlock()
+
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go s.drainClassifyQueue(ctx)
+}
+
+func (s *JobIngestionService) drainClassifyQueue(ctx context.Context) {
+	for {
+		if ctx.Err() != nil || JobAutoClassificationDisabled() {
+			s.stopClassifyQueue()
+			return
+		}
+
+		ids := s.takeQueuedClassifyIDs()
+		if len(ids) == 0 {
+			return
+		}
+
+		s.classifyJobPostingsBatch(ctx, ids)
+		s.finishQueuedClassifyIDs(ids)
+	}
+}
+
+func (s *JobIngestionService) takeQueuedClassifyIDs() []int64 {
+	s.classifyQueueMu.Lock()
+	defer s.classifyQueueMu.Unlock()
+
+	if len(s.classifyQueued) == 0 {
+		s.classifyQueueRunning = false
+		return nil
+	}
+
+	ids := make([]int64, 0, len(s.classifyQueued))
+	for id := range s.classifyQueued {
+		ids = append(ids, id)
+		delete(s.classifyQueued, id)
+		s.classifyInFlight[id] = struct{}{}
+	}
+	sort.Slice(ids, func(i, j int) bool {
+		return ids[i] < ids[j]
+	})
+	return ids
+}
+
+func (s *JobIngestionService) finishQueuedClassifyIDs(ids []int64) {
+	s.classifyQueueMu.Lock()
+	defer s.classifyQueueMu.Unlock()
+
+	for _, id := range ids {
+		delete(s.classifyInFlight, id)
+	}
+}
+
+func (s *JobIngestionService) stopClassifyQueue() {
+	s.classifyQueueMu.Lock()
+	defer s.classifyQueueMu.Unlock()
+
+	s.classifyQueueRunning = false
 }
 
 // classifyOne runs a single classification round-trip. Separated out so tests can
