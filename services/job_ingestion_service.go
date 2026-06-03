@@ -179,7 +179,7 @@ type SyncAllStatus struct {
 
 const (
 	dailySyncInterval               = 24 * time.Hour
-	autoClassifyBacklogSinceDays    = 2
+	autoClassifyBacklogSinceDays    = 7
 	autoClassifyBacklogDefaultBatch = 20
 )
 
@@ -937,6 +937,8 @@ func (s *JobIngestionService) StartScheduler(ctx context.Context, interval time.
 func (s *JobIngestionService) schedulerLoop(ctx context.Context, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	s.kickClassifyBacklog(ctx, autoClassifyBacklogSinceDays)
 
 	for {
 		if err := s.syncDueCompanies(ctx); err != nil {
