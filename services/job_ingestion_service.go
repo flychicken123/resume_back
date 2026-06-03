@@ -480,10 +480,19 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 	}
 
 	field, skills, seniority := ParseJobClassificationResponse(raw)
+	skills = enrichJobClassificationSkills(job, skills)
 	if err := validateJobClassificationResult(field, skills, seniority); err != nil {
 		return err
 	}
 	return s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority)
+}
+
+func enrichJobClassificationSkills(job *models.JobPosting, skills []string) []string {
+	if job == nil {
+		return skills
+	}
+	text := strings.Join([]string{job.Title, job.Department, job.Description}, " ")
+	return normalizeJobClassificationSkills(skills, ExtractSkillsFromText(text))
 }
 
 // classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority.

@@ -88,7 +88,13 @@ func TestSanitizeGeminiPrompt_RemovesInvalidUTF8(t *testing.T) {
 
 func TestValidateJobClassificationResult_RejectsNonPersistableResult(t *testing.T) {
 	if err := validateJobClassificationResult(CareerFieldUnknown, nil, "mid"); err == nil {
-		t.Fatal("expected UNKNOWN career field with no skills to be rejected")
+		t.Fatal("expected UNKNOWN career field to be rejected")
+	}
+}
+
+func TestValidateJobClassificationResult_AllowsEmptySkills(t *testing.T) {
+	if err := validateJobClassificationResult(CareerFieldOther, nil, "mid"); err != nil {
+		t.Fatalf("expected empty skills to be persistable, got %v", err)
 	}
 }
 

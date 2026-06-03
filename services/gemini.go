@@ -2428,9 +2428,6 @@ func validateJobClassificationResult(field CareerField, skills []string, seniori
 	if field == CareerFieldUnknown {
 		return fmt.Errorf("classification response missing valid career_field")
 	}
-	if len(skills) == 0 {
-		return fmt.Errorf("classification response missing skills")
-	}
 	if strings.TrimSpace(seniority) == "" {
 		return fmt.Errorf("classification response missing seniority")
 	}

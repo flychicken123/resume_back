@@ -253,6 +253,7 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
+			skills = enrichJobClassificationSkills(job, skills)
 			if err := validateJobClassificationResult(field, skills, seniority); err != nil {
 				recordJobError(id, err.Error())
 				if !s.sleepBetweenJobs(ctx) {

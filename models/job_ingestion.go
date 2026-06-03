@@ -19,8 +19,6 @@ type rowScanner interface {
 }
 
 const missingJobClassificationCondition = `(NULLIF(TRIM(career_field), '') IS NULL
-                OR extracted_skills IS NULL
-                OR COALESCE(array_length(extracted_skills, 1), 0) = 0
                 OR NULLIF(TRIM(seniority), '') IS NULL)`
 
 // JobCompany stores metadata about a company whose ATS we ingest
@@ -1331,12 +1329,12 @@ func (m *JobPostingModel) UpdateJobClassification(ctx context.Context, id int64,
 	return err
 }
 
-// ListActiveWithNullClassification returns IDs of active jobs missing career field, skills, or seniority.
+// ListActiveWithNullClassification returns IDs of active jobs missing career field or seniority.
 func (m *JobPostingModel) ListActiveWithNullClassification(limit int, sinceDays int) ([]int64, error) {
 	return m.ListActiveWithNullClassificationExcluding(limit, sinceDays, nil)
 }
 
-// ListActiveWithNullClassificationExcluding returns IDs of active jobs missing classification,
+// ListActiveWithNullClassificationExcluding returns IDs of active jobs missing career field or seniority,
 // excluding IDs that already failed during the current backfill run.
 func (m *JobPostingModel) ListActiveWithNullClassificationExcluding(limit int, sinceDays int, excludedIDs []int64) ([]int64, error) {
 	if limit <= 0 {
@@ -1378,7 +1376,7 @@ func (m *JobPostingModel) ListActiveWithNullClassificationExcluding(limit int, s
 	return ids, rows.Err()
 }
 
-// CountActiveWithNullClassification returns count of active jobs missing career field, skills, or seniority.
+// CountActiveWithNullClassification returns count of active jobs missing career field or seniority.
 func (m *JobPostingModel) CountActiveWithNullClassification(sinceDays int) (int, error) {
 	var count int
 	var err error
@@ -1459,17 +1457,20 @@ func (m *JobPostingModel) CountActiveWithNullEmbedding(sinceDays int) (int, erro
 // GetByIDForEmbedding fetches the fields needed to generate a job embedding.
 func (m *JobPostingModel) GetByIDForEmbedding(ctx context.Context, id int64) (*JobPosting, error) {
 	var posting JobPosting
+	var skills pq.StringArray
 	err := m.db.QueryRowContext(ctx,
-		`SELECT id, COALESCE(title,''), COALESCE(department,''), COALESCE(description,'')
+		`SELECT id, COALESCE(title,''), COALESCE(department,''), COALESCE(description,''),
+		        COALESCE(career_field, ''), COALESCE(extracted_skills, ARRAY[]::text[]), COALESCE(seniority, '')
 		 FROM job_postings WHERE id = $1`,
 		id,
-	).Scan(&posting.ID, &posting.Title, &posting.Department, &posting.Description)
+	).Scan(&posting.ID, &posting.Title, &posting.Department, &posting.Description, &posting.CareerField, &skills, &posting.Seniority)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("job posting %d not found", id)
 	}
 	if err != nil {
 		return nil, err
 	}
+	posting.ExtractedSkills = []string(skills)
 	return &posting, nil
 }
 
