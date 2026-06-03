@@ -527,6 +527,7 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 	batchSize := s.throttle.BatchSize
 
 	s.emitClassifyTick(batchSize, delayMS, len(ids))
+	s.fallbackClassifyJobPostingIDs(ctx, ids)
 
 	for _, id := range ids {
 		if ctx.Err() != nil {
@@ -552,6 +553,62 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 			case <-ctx.Done():
 				return
 			}
+		}
+	}
+}
+
+func (s *JobIngestionService) KickFallbackClassifyBacklog(ctx context.Context, sinceDays, limit int) {
+	if JobAutoClassificationDisabled() || s.postingModel == nil {
+		return
+	}
+	if limit <= 0 {
+		limit = autoClassifyBacklogDefaultBatch
+	}
+
+	go func() {
+		ids, err := s.postingModel.ListActiveWithNullClassificationExcluding(limit, sinceDays, nil)
+		if err != nil {
+			s.logger.Warn("fallback classify backlog: failed to list jobs", map[string]interface{}{"error": err.Error()})
+			return
+		}
+		s.fallbackClassifyJobPostingIDs(ctx, ids)
+	}()
+}
+
+func (s *JobIngestionService) fallbackClassifyJobPostingIDs(ctx context.Context, ids []int64) {
+	if s.postingModel == nil {
+		return
+	}
+	for _, id := range ids {
+		if ctx.Err() != nil {
+			return
+		}
+		job, err := s.postingModel.GetByIDForEmbedding(ctx, id)
+		if err != nil || job == nil {
+			if err != nil {
+				s.logger.Warn("fallback job classification failed to fetch posting", map[string]interface{}{
+					"jobID": id,
+					"error": err.Error(),
+				})
+			}
+			continue
+		}
+		if job.CareerField != "" && job.Seniority != "" {
+			continue
+		}
+		field, skills, seniority := fallbackJobClassification(job)
+		if err := validateJobClassificationResult(field, skills, seniority); err != nil {
+			s.logger.Warn("fallback job classification produced invalid result", map[string]interface{}{
+				"jobID": id,
+				"error": err.Error(),
+			})
+			continue
+		}
+		if err := s.postingModel.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
+			s.logger.Warn("fallback job classification failed to save posting", map[string]interface{}{
+				"jobID": id,
+				"error": err.Error(),
+			})
 		}
 	}
 }

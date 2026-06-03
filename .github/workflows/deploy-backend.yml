@@ -202,6 +202,9 @@ jobs:
           CLASSIFY_BATCH_SIZE=${{ vars.CLASSIFY_BATCH_SIZE || '5' }}
           DISABLE_AI_BACKGROUND_JOBS=${{ vars.DISABLE_AI_BACKGROUND_JOBS || 'false' }}
           DISABLE_JOB_AUTO_CLASSIFICATION=${{ vars.DISABLE_JOB_AUTO_CLASSIFICATION || 'false' }}
+          DISABLE_JOB_SYNC_SCHEDULER=${{ vars.DISABLE_JOB_SYNC_SCHEDULER || 'false' }}
+          JOB_SYNC_SCHEDULER_INTERVAL_MINUTES=${{ vars.JOB_SYNC_SCHEDULER_INTERVAL_MINUTES || '' }}
+          MIN_JOB_SYNC_INTERVAL_MINUTES=${{ vars.MIN_JOB_SYNC_INTERVAL_MINUTES || '1440' }}
           GEMINI_CONCURRENCY=${{ vars.GEMINI_CONCURRENCY || '4' }}
           SYNC_WORKER_CONCURRENCY=${{ vars.SYNC_WORKER_CONCURRENCY || '8' }}
           EOF
@@ -222,6 +225,7 @@ jobs:
           # no backend container exists.
           if docker ps -a --format '{{.Names}}' | grep -qx 'ai-resume-backend-backend-1'; then
             echo "🚀 Deploying backend binary through GitHub Actions..."
+            docker-compose -p ai-resume-backend -f docker-compose.backend.yml up -d --no-deps --force-recreate --no-build backend
             docker cp main ai-resume-backend-backend-1:/root/main
             docker restart ai-resume-backend-backend-1
           else
