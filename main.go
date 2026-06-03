@@ -279,7 +279,7 @@ func main() {
 		logger.Warn("job auto-classification disabled via DISABLE_JOB_AUTO_CLASSIFICATION; pulled jobs will not be classified automatically", nil)
 		jobsService.PauseClassifier()
 	} else {
-		jobsService.KickFallbackClassifyBacklog(ctx, 7, 200)
+		jobsService.KickFallbackClassifyBacklog(ctx, 7, 5000)
 	}
 
 	if services.JobSyncSchedulerDisabled() {

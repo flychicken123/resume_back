@@ -517,6 +517,9 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 	if JobAutoClassificationDisabled() {
 		return
 	}
+
+	s.fallbackClassifyJobPostingIDs(ctx, ids)
+
 	jobClassificationRunMu.Lock()
 	defer jobClassificationRunMu.Unlock()
 	if JobAutoClassificationDisabled() {
@@ -527,7 +530,6 @@ func (s *JobIngestionService) classifyJobPostingsBatch(ctx context.Context, ids 
 	batchSize := s.throttle.BatchSize
 
 	s.emitClassifyTick(batchSize, delayMS, len(ids))
-	s.fallbackClassifyJobPostingIDs(ctx, ids)
 
 	for _, id := range ids {
 		if ctx.Err() != nil {
