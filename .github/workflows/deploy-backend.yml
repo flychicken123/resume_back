@@ -225,9 +225,9 @@ jobs:
           # no backend container exists.
           if docker ps -a --format '{{.Names}}' | grep -qx 'ai-resume-backend-backend-1'; then
             echo "🚀 Deploying backend binary through GitHub Actions..."
-            docker-compose -p ai-resume-backend -f docker-compose.backend.yml up -d --no-deps --force-recreate --no-build backend
+            docker-compose -p ai-resume-backend -f docker-compose.backend.yml up --no-start --no-deps --force-recreate --no-build backend
             docker cp main ai-resume-backend-backend-1:/root/main
-            docker restart ai-resume-backend-backend-1
+            docker start ai-resume-backend-backend-1
           else
             # Build new image - only needed when no existing container is present.
             # Disable Buildx to avoid "file already closed" bug.
