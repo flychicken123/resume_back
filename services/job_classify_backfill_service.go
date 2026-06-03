@@ -238,14 +238,37 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 
 			prompt := BuildJobClassificationPrompt(job.Title, job.Description)
 
-			raw, callErr := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+			llmCtx, cancel := context.WithTimeout(ctx, jobClassificationLLMTimeout)
+			raw, callErr := CallWithRateLimitRetry(llmCtx, DefaultRetryConfig(),
 				func(ctx context.Context) (string, error) {
 					return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
 				},
 				RetryOpts{Endpoint: "classify_job_backfill", Logger: s.logger},
 			)
+			cancel()
 			if callErr != nil {
-				recordJobError(id, "failed to classify job: "+callErr.Error())
+				field, skills, seniority := fallbackJobClassification(job)
+				if err := validateJobClassificationResult(field, skills, seniority); err != nil {
+					recordJobError(id, "failed to classify job: "+callErr.Error())
+					if !s.sleepBetweenJobs(ctx) {
+						return
+					}
+					continue
+				}
+				s.logger.Warn("classify backfill: AI failed; saving fallback classification", map[string]interface{}{
+					"job_id": id,
+					"error":  callErr.Error(),
+				})
+				if err := s.postings.UpdateJobClassification(ctx, id, string(field), skills, seniority); err != nil {
+					recordJobError(id, "failed to save fallback classification: "+err.Error())
+					if !s.sleepBetweenJobs(ctx) {
+						return
+					}
+					continue
+				}
+				s.mu.Lock()
+				s.status.Processed++
+				s.mu.Unlock()
 				if !s.sleepBetweenJobs(ctx) {
 					return
 				}
@@ -253,7 +276,7 @@ func (s *JobClassifyBackfillService) run(ctx context.Context, batchSize int, sin
 			}
 
 			field, skills, seniority := ParseJobClassificationResponse(raw)
-			skills = enrichJobClassificationSkills(job, skills)
+			field, skills, seniority = finalizeJobClassification(job, field, skills, seniority)
 			if err := validateJobClassificationResult(field, skills, seniority); err != nil {
 				recordJobError(id, err.Error())
 				if !s.sleepBetweenJobs(ctx) {

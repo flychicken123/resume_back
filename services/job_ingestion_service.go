@@ -181,6 +181,7 @@ const (
 	dailySyncInterval               = 24 * time.Hour
 	autoClassifyBacklogSinceDays    = 7
 	autoClassifyBacklogDefaultBatch = 20
+	jobClassificationLLMTimeout     = 8 * time.Second
 )
 
 func NewJobIngestionService(db *sql.DB, logger *utils.Logger, embeddingSvc *EmbeddingService, ctx context.Context, throttle ClassifyThrottleConfig) *JobIngestionService {
@@ -431,7 +432,7 @@ func (s *JobIngestionService) takeQueuedClassifyIDs() []int64 {
 		s.classifyInFlight[id] = struct{}{}
 	}
 	sort.Slice(ids, func(i, j int) bool {
-		return ids[i] < ids[j]
+		return ids[i] > ids[j]
 	})
 	return ids
 }
@@ -463,24 +464,38 @@ func (s *JobIngestionService) classifyOne(ctx context.Context, id int64) error {
 	if err != nil || job == nil {
 		return err
 	}
-	if job.CareerField != "" && len(job.ExtractedSkills) > 0 && job.Seniority != "" {
+	if job.CareerField != "" && job.Seniority != "" {
 		return nil
+	}
+
+	fallbackField, fallbackSkills, fallbackSeniority := fallbackJobClassification(job)
+	if err := validateJobClassificationResult(fallbackField, fallbackSkills, fallbackSeniority); err != nil {
+		return err
+	}
+	if err := s.postingModel.UpdateJobClassification(ctx, id, string(fallbackField), fallbackSkills, fallbackSeniority); err != nil {
+		return err
 	}
 
 	prompt := BuildJobClassificationPrompt(job.Title, job.Description)
 
-	raw, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+	llmCtx, cancel := context.WithTimeout(ctx, jobClassificationLLMTimeout)
+	defer cancel()
+	raw, err := CallWithRateLimitRetry(llmCtx, DefaultRetryConfig(),
 		func(ctx context.Context) (string, error) {
-			return CallGeminiFlashWithTemperature(prompt, 0.0)
+			return CallGeminiFlashWithTemperatureContext(ctx, prompt, 0.0)
 		},
 		RetryOpts{Endpoint: "classify_job", Logger: s.logger},
 	)
 	if err != nil {
-		return err
+		s.logger.Warn("job classification AI failed after fallback classification was saved", map[string]interface{}{
+			"jobID": id,
+			"error": err.Error(),
+		})
+		return nil
 	}
 
 	field, skills, seniority := ParseJobClassificationResponse(raw)
-	skills = enrichJobClassificationSkills(job, skills)
+	field, skills, seniority = finalizeJobClassification(job, field, skills, seniority)
 	if err := validateJobClassificationResult(field, skills, seniority); err != nil {
 		return err
 	}
@@ -492,7 +507,7 @@ func enrichJobClassificationSkills(job *models.JobPosting, skills []string) []st
 		return skills
 	}
 	text := strings.Join([]string{job.Title, job.Department, job.Description}, " ")
-	return normalizeJobClassificationSkills(skills, ExtractSkillsFromText(text))
+	return normalizeJobClassificationSkills(job.ExtractedSkills, skills, ExtractSkillsFromText(text))
 }
 
 // classifyJobPostingsBatch classifies career field, extracts skills, and determines seniority.

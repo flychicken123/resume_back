@@ -121,7 +121,7 @@ func TestClassifyQueue_ProcessesQueuedIDs(t *testing.T) {
 
 	idsMu.Lock()
 	defer idsMu.Unlock()
-	assert.Equal(t, []int64{1, 2, 3}, processedIDs)
+	assert.Equal(t, []int64{3, 2, 1}, processedIDs)
 }
 
 func TestClassifyQueue_SkipsDuplicateQueuedAndInFlightIDs(t *testing.T) {
@@ -141,7 +141,7 @@ func TestClassifyQueue_SkipsDuplicateQueuedAndInFlightIDs(t *testing.T) {
 		idsMu.Lock()
 		processedIDs = append(processedIDs, id)
 		idsMu.Unlock()
-		if id == 1 {
+		if id == 2 {
 			closeStarted.Do(func() { close(started) })
 			select {
 			case <-release:
@@ -173,7 +173,7 @@ func TestClassifyQueue_SkipsDuplicateQueuedAndInFlightIDs(t *testing.T) {
 
 	idsMu.Lock()
 	defer idsMu.Unlock()
-	assert.Equal(t, []int64{1, 2, 3}, processedIDs)
+	assert.Equal(t, []int64{2, 1, 3}, processedIDs)
 }
 
 func TestClassifyLoop_SleepsPerJob(t *testing.T) {
