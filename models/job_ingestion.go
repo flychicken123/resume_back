@@ -1357,7 +1357,7 @@ func (m *JobPostingModel) ListActiveWithNullClassificationExcluding(limit int, s
 	query := fmt.Sprintf(`
 		SELECT id FROM job_postings
 		WHERE %s
-		ORDER BY id LIMIT $1
+		ORDER BY COALESCE(posted_at, first_seen_at) DESC, id DESC LIMIT $1
 	`, strings.Join(where, " AND "))
 
 	rows, err := m.db.Query(query, args...)
