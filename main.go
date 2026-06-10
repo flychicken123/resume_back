@@ -252,9 +252,12 @@ func main() {
 		handlers.SetImpactKeywordsAgent(impactKeywordsAgent)
 	}
 
-	// Initialize Stripe products (only run this once or on startup)
-	if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
-		log.Printf("Warning: Could not initialize Stripe products: %v", err)
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("STRIPE_SYNC_PRODUCTS_ON_STARTUP")), "true") {
+		if err := stripeService.CreateOrUpdateStripeProducts(); err != nil {
+			log.Printf("Warning: Could not initialize Stripe products: %v", err)
+		}
+	} else {
+		log.Println("Stripe product startup sync disabled; set STRIPE_SYNC_PRODUCTS_ON_STARTUP=true to run it explicitly")
 	}
 
 	// Initialize controllers
