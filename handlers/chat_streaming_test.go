@@ -157,3 +157,71 @@ func TestChatAssistantStreamQualityGateStreamsOnlyFinalAnswer(t *testing.T) {
 	require.Less(t, statusIndex, tokenIndex)
 	require.Less(t, tokenIndex, doneIndex)
 }
+
+func TestChatAssistantStreamReturnsFullUpdatedResumeDataForToolPatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	previousStreaming := callGeminiToolsStreaming
+	previousClassify := classifyWriteIntent
+	callGeminiToolsStreaming = func(ctx context.Context, systemPrompt, userPrompt string, tools []services.ChatTool, userID int, callbacks services.ToolStreamCallbacks, opts ...services.ToolCallOption) (string, *services.ToolCallMetadata, error) {
+		return "I added the generated summary.", &services.ToolCallMetadata{
+			ResumeUpdates: []map[string]any{
+				{
+					"resume_update": true,
+					"field":         "summary",
+					"action":        "set",
+					"value":         "Generated professional summary",
+				},
+			},
+		}, nil
+	}
+	classifyWriteIntent = func(ctx context.Context, userMessage string) bool {
+		return false
+	}
+	t.Cleanup(func() {
+		callGeminiToolsStreaming = previousStreaming
+		classifyWriteIntent = previousClassify
+	})
+
+	router := gin.New()
+	router.POST("/api/assistant/chat", ChatAssistant)
+	body, err := json.Marshal(chatRequest{
+		Message:   "generate one for me",
+		SessionID: "test-session",
+		ResumeData: map[string]interface{}{
+			"name":    "Xuan Wu",
+			"email":   "harwtalk@gmail.com",
+			"summary": "",
+			"skills":  "Go, React",
+		},
+	})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/assistant/chat?stream=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	raw := w.Body.String()
+	var done map[string]any
+	for _, event := range strings.Split(raw, "\n\n") {
+		event = strings.TrimSpace(event)
+		if !strings.HasPrefix(event, "data: ") {
+			continue
+		}
+		var payload map[string]any
+		require.NoError(t, json.Unmarshal([]byte(strings.TrimPrefix(event, "data: ")), &payload))
+		if payload["done"] == true {
+			done = payload
+			break
+		}
+	}
+	require.NotNil(t, done, raw)
+	updated, ok := done["updatedResumeData"].(map[string]any)
+	require.True(t, ok, raw)
+	require.Equal(t, "Generated professional summary", updated["summary"])
+	require.Equal(t, "Xuan Wu", updated["name"])
+	require.Equal(t, "harwtalk@gmail.com", updated["email"])
+	require.Equal(t, "Go, React", updated["skills"])
+}

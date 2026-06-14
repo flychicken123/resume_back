@@ -952,18 +952,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		}
 	}
 
-	// Build updatedResumeData from tool metadata (e.g., update_resume_field results)
-	var updatedResumeData map[string]interface{}
-	if toolMeta != nil && len(toolMeta.ResumeUpdates) > 0 {
-		updatedResumeData = map[string]interface{}{}
-		for _, update := range toolMeta.ResumeUpdates {
-			field, _ := update["field"].(string)
-			value, _ := update["value"].(string)
-			if field != "" && value != "" {
-				updatedResumeData[field] = value
-			}
-		}
-	}
+	updatedResumeData := buildUpdatedResumeDataFromToolUpdates(req.ResumeData, toolMeta)
 	if cleaned == "" {
 		cleaned = "I'm still learning. Please contact us via the Help bubble or at hihired_support@tactechs.net and our team will help you right away."
 	}
@@ -1018,6 +1007,40 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 	} else {
 		c.JSON(http.StatusOK, resp)
 	}
+}
+
+func buildUpdatedResumeDataFromToolUpdates(base map[string]interface{}, toolMeta *services.ToolCallMetadata) map[string]interface{} {
+	if toolMeta == nil || len(toolMeta.ResumeUpdates) == 0 {
+		return nil
+	}
+
+	updated := copyResumeData(base)
+	applied := false
+	for _, update := range toolMeta.ResumeUpdates {
+		field, _ := update["field"].(string)
+		if strings.TrimSpace(field) == "" {
+			continue
+		}
+
+		value, hasValue := update["value"]
+		action, _ := update["action"].(string)
+		if !hasValue {
+			switch strings.ToLower(strings.TrimSpace(action)) {
+			case "clear", "delete", "remove":
+				value = ""
+			default:
+				continue
+			}
+		}
+
+		updated[field] = value
+		applied = true
+	}
+
+	if !applied {
+		return nil
+	}
+	return updated
 }
 
 func fallbackChatReply(userMessage string, llmErr error) string {
