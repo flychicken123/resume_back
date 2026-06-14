@@ -166,6 +166,7 @@ type QualityGateResult struct {
 	BypassReason            string
 	Revised                 bool
 	Score                   float64
+	Groundedness            float64
 	FallbackReason          string
 	ExtraModelCalls         int
 	UnsupportedClaimCount   int
@@ -366,6 +367,7 @@ func RunChatQualityGate(ctx context.Context, input QualityGateInput, generator C
 	}
 	chatQualityCircuit.Record(true, time.Since(evalStart))
 	result.Score = eval.Score
+	result.Groundedness = eval.Dimensions.Groundedness
 	result.UnsupportedClaimCount = len(eval.UnsupportedClaims)
 
 	if !needsQualityRevision(cfg, input.Intent, check, eval) || cfg.MaxRevisions == 0 || result.ExtraModelCalls >= cfg.MaxExtraModelCalls {
@@ -550,8 +552,8 @@ func startQualityAuditWorkers(cfg QualityGateConfig) {
 						continue
 					}
 					chatQualityCircuit.Record(true, time.Since(evalStart))
-					log.Printf("[QUALITY-GATE] audit result intent=%s score=%.2f passed=%t revised=false unsupported=%d deterministic_issues=%d",
-						job.Input.Intent, eval.Score, evalPassedForIntent(cfg, job.Input.Intent, eval) && check.Passed, len(eval.UnsupportedClaims), len(check.Issues))
+					log.Printf("[QUALITY-GATE] audit result intent=%s score=%.2f groundedness=%.2f passed=%t revised=false unsupported=%d deterministic_issues=%d",
+						job.Input.Intent, eval.Score, eval.Dimensions.Groundedness, evalPassedForIntent(cfg, job.Input.Intent, eval) && check.Passed, len(eval.UnsupportedClaims), len(check.Issues))
 				}
 			}()
 		}
@@ -617,21 +619,45 @@ func evalPassedForIntent(cfg QualityGateConfig, intent string, eval QualityEvalR
 	minScore := cfg.DefaultMinScore
 	minGroundedness := 0.75
 	switch intent {
-	case "resume_rewrite", "job_match":
+	case "job_match":
+		if minScore < 0.86 {
+			minScore = 0.86
+		}
+		minGroundedness = 0.90
+	case "resume_rewrite":
+		if minScore < 0.84 {
+			minScore = 0.84
+		}
+		minGroundedness = 0.88
+	case "application_answer":
+		if minScore < 0.84 {
+			minScore = 0.84
+		}
+		minGroundedness = 0.86
+	case "application_status", "user_profile":
+		if minScore < 0.84 {
+			minScore = 0.84
+		}
+		minGroundedness = 0.88
+	case "product_fact":
 		if minScore < 0.82 {
 			minScore = 0.82
 		}
-		minGroundedness = 0.85
+		minGroundedness = 0.84
 	case "cover_letter":
-		if minScore < 0.80 {
-			minScore = 0.80
+		if minScore < 0.82 {
+			minScore = 0.82
 		}
-		minGroundedness = 0.80
+		minGroundedness = 0.84
 	case "interview_prep":
+		if minScore < 0.78 {
+			minScore = 0.78
+		}
+		minGroundedness = 0.78
+	case "career_advice":
 		if minScore < 0.76 {
 			minScore = 0.76
 		}
-		minGroundedness = 0.75
 	}
 	return eval.Passed &&
 		eval.Score >= minScore &&
@@ -664,6 +690,10 @@ Return ONLY valid JSON with this shape:
 
 Rules:
 - Be strict about invented skills, years, companies, degrees, certifications, metrics, leadership, achievements, and job fit.
+- If the DRAFT says "your resume", "your profile", "your application", "your job match", "your skills", or similar, require direct support in SOURCE MATERIAL or tool results.
+- If the DRAFT mentions application status, counts, company names, job titles, salary, locations, saved preferences, or membership/product features, require matching evidence in SOURCE MATERIAL.
+- If SOURCE MATERIAL includes a TOOL RESULT SUMMARY, compare the DRAFT against those tool results and flag any mismatch as unsupported.
+- If SOURCE MATERIAL is empty or does not contain personal data, the DRAFT must not imply access to the user's resume, profile, applications, matches, or saved preferences.
 - If a claim is not supported by source material, add it to unsupported_claims.
 - Do not treat evaluator or deterministic issues as source facts.
 - Score from 0 to 1.
@@ -739,10 +769,16 @@ func classifyQualityIntent(msg string) (string, bool) {
 		return "job_match", true
 	case containsAny(msg, "interview", "behavioral question", "mock interview", "answer this question"):
 		return "interview_prep", true
-	case containsAny(msg, "rewrite", "improve", "tailor", "optimize", "bullet", "summary", "resume", "cv"):
-		return "resume_rewrite", true
 	case containsAny(msg, "application answer", "application question", "why are you interested", "why this company"):
 		return "application_answer", true
+	case referencesApplicationData(msg):
+		return "application_status", true
+	case referencesUserProfileData(msg):
+		return "user_profile", true
+	case referencesProductFacts(msg):
+		return "product_fact", true
+	case containsAny(msg, "rewrite", "improve", "tailor", "optimize", "bullet", "summary", "resume", "cv"):
+		return "resume_rewrite", true
 	case containsAny(msg, "career advice", "career", "job search strategy", "salary", "negotiation"):
 		return "career_advice", true
 	case containsAny(msg, "skills", "experience", "education", "achievement", "metric", "leadership", "certification", "degree", "job fit"):
@@ -750,6 +786,30 @@ func classifyQualityIntent(msg string) (string, bool) {
 	default:
 		return "low_risk", false
 	}
+}
+
+func referencesApplicationData(msg string) bool {
+	return containsAny(msg,
+		"my application", "my applications", "application status", "applications status",
+		"applied to", "where did i apply", "how many jobs", "job search progress",
+		"interviewing", "screening", "rejected", "offer", "offered", "accepted", "withdrawn",
+	)
+}
+
+func referencesUserProfileData(msg string) bool {
+	return containsAny(msg,
+		"my profile", "my background", "my resume data", "what did i enter",
+		"what is my name", "my name", "my email", "my phone", "my skills",
+		"my experience", "my education", "my salary", "my preference", "my preferences",
+	)
+}
+
+func referencesProductFacts(msg string) bool {
+	return containsAny(msg,
+		"hihired", "pricing", "membership", "premium", "ultimate", "free plan",
+		"template", "templates", "pdf export", "chrome extension", "autofill",
+		"auto-fill", "builder", "cover letter generator",
+	)
 }
 
 func isHighValueIntent(intent string) bool {

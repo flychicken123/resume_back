@@ -845,8 +845,8 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		} else {
 			reply = qualityResult.FinalAnswer
 			toolMeta = qualityResult.ToolMeta
-			log.Printf("[QUALITY-GATE] mode=%s intent=%s score=%.2f revised=%t fallback=%s extra_calls=%d unsupported=%d deterministic_issues=%d",
-				qualityResult.Mode, qualityResult.Intent, qualityResult.Score, qualityResult.Revised, qualityResult.FallbackReason,
+			log.Printf("[QUALITY-GATE] mode=%s intent=%s score=%.2f groundedness=%.2f revised=%t fallback=%s extra_calls=%d unsupported=%d deterministic_issues=%d",
+				qualityResult.Mode, qualityResult.Intent, qualityResult.Score, qualityResult.Groundedness, qualityResult.Revised, qualityResult.FallbackReason,
 				qualityResult.ExtraModelCalls, qualityResult.UnsupportedClaimCount, qualityResult.DeterministicIssueCount)
 		}
 	} else if isStream {

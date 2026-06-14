@@ -61,6 +61,42 @@ func TestDecideChatQualityGateRoutesHighValueAndBypassesLowRisk(t *testing.T) {
 	require.Equal(t, "low_risk", low.BypassReason)
 }
 
+func TestDecideChatQualityGateRoutesUserDataAndProductFacts(t *testing.T) {
+	resetQualityCircuitForTest()
+	t.Setenv("AI_QUALITY_GATE_ENABLED", "true")
+	t.Setenv("AI_QUALITY_GATE_MODE", "enforce")
+
+	tests := []struct {
+		name    string
+		message string
+		intent  string
+	}{
+		{
+			name:    "application status",
+			message: "How many jobs did I apply to and which ones are rejected?",
+			intent:  "application_status",
+		},
+		{
+			name:    "user profile",
+			message: "What did I enter as my skills and background?",
+			intent:  "user_profile",
+		},
+		{
+			name:    "product facts",
+			message: "What does HiHired Premium include for PDF export?",
+			intent:  "product_fact",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			decision := DecideChatQualityGate(QualityRoutingInput{UserMessage: tt.message})
+			require.True(t, decision.Apply)
+			require.Equal(t, tt.intent, decision.Intent)
+		})
+	}
+}
+
 func TestDecideChatQualityGateBypassesSideEffectRequest(t *testing.T) {
 	resetQualityCircuitForTest()
 	t.Setenv("AI_QUALITY_GATE_ENABLED", "true")
@@ -81,6 +117,50 @@ func TestRunChatQualityDeterministicChecksFlagsUnsupportedYears(t *testing.T) {
 
 	require.False(t, result.Passed)
 	require.Contains(t, result.Issues, "mentions years of experience not present in source context")
+}
+
+func TestEvalPassedForIntentUsesStricterThresholds(t *testing.T) {
+	cfg := QualityGateConfig{DefaultMinScore: defaultQualityGateMinScore}
+	passing := QualityEvalResult{
+		Passed: true,
+		Score:  0.86,
+		Risk:   "low",
+		Dimensions: QualityDimensionScores{
+			Groundedness:    0.90,
+			Specificity:     0.80,
+			Completeness:    0.80,
+			Usefulness:      0.80,
+			FormatFollowing: 0.80,
+		},
+	}
+
+	require.True(t, evalPassedForIntent(cfg, "job_match", passing))
+
+	lowScore := passing
+	lowScore.Score = 0.85
+	require.False(t, evalPassedForIntent(cfg, "job_match", lowScore))
+
+	lowGroundedness := passing
+	lowGroundedness.Dimensions.Groundedness = 0.89
+	require.False(t, evalPassedForIntent(cfg, "job_match", lowGroundedness))
+
+	applicationAnswer := passing
+	applicationAnswer.Score = 0.84
+	applicationAnswer.Dimensions.Groundedness = 0.86
+	require.True(t, evalPassedForIntent(cfg, "application_answer", applicationAnswer))
+}
+
+func TestBuildQualityEvalPromptRequiresEvidenceForPersonalAndToolClaims(t *testing.T) {
+	prompt := buildQualityEvalPrompt(QualityEvalInput{
+		UserMessage:   "Do I match this job?",
+		DraftReply:    "Your profile shows strong AWS experience.",
+		SourceContext: "--- BEGIN TOOL RESULT SUMMARY ---\nTool: job_search\nResult: {}\n--- END TOOL RESULT SUMMARY ---",
+		Intent:        "job_match",
+	})
+
+	require.Contains(t, prompt, "require direct support in SOURCE MATERIAL or tool results")
+	require.Contains(t, prompt, "compare the DRAFT against those tool results")
+	require.Contains(t, prompt, "must not imply access to the user's resume")
 }
 
 func TestRunChatQualityGateRevisesUnsupportedDraft(t *testing.T) {
@@ -130,6 +210,7 @@ func TestRunChatQualityGateRevisesUnsupportedDraft(t *testing.T) {
 	require.True(t, result.Revised)
 	require.Equal(t, "Your backend Go experience is relevant. Emphasize the services you built, the tools you used, and any measurable impact already present in your resume.", result.FinalAnswer)
 	require.Equal(t, 2, result.ExtraModelCalls)
+	require.InDelta(t, 0.4, result.Groundedness, 0.001)
 }
 
 func TestRunChatQualityGateReturnsDraftWhenEvaluatorFailsAndDraftPasses(t *testing.T) {
