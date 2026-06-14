@@ -11,15 +11,18 @@ import (
 )
 
 type ExperienceOptimizationRequest struct {
-	JobDescription string   `json:"jobDescription" binding:"required"`
-	UserExperience string   `json:"userExperience" binding:"required"`
-	MatchedSkills  []string `json:"matchedSkills,omitempty"`
-	MissingSkills  []string `json:"missingSkills,omitempty"`
+	JobDescription    string                                 `json:"jobDescription" binding:"required"`
+	UserExperience    string                                 `json:"userExperience" binding:"required"`
+	MatchedSkills     []string                               `json:"matchedSkills,omitempty"`
+	MissingSkills     []string                               `json:"missingSkills,omitempty"`
+	ExperienceContext services.ExperienceOptimizationContext `json:"experienceContext,omitempty"`
 }
 
 type ExperienceOptimizationResponse struct {
 	OptimizedExperience string `json:"optimizedExperience"`
 	Message             string `json:"message"`
+	ReviewStatus        string `json:"reviewStatus,omitempty"`
+	ReviewReason        string `json:"reviewReason,omitempty"`
 }
 
 func OptimizeExperience(c *gin.Context) {
@@ -29,30 +32,26 @@ func OptimizeExperience(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for experience optimization with skill context
-	prompt := services.BuildExperienceOptimizationPromptWithSkills(
-		req.JobDescription,
-		req.UserExperience,
-		req.MatchedSkills,
-		req.MissingSkills,
-	)
-
-	// Call AI service to generate optimized experience
-	optimizedExperience, err := services.CallGeminiWithTemperature(prompt, 0.3) // Low temp for consistency
+	outcome, err := services.OptimizeExperienceWithReview(c.Request.Context(), services.ExperienceOptimizationInput{
+		JobDescription: req.JobDescription,
+		UserExperience: req.UserExperience,
+		MatchedSkills:  req.MatchedSkills,
+		MissingSkills:  req.MissingSkills,
+		Context:        req.ExperienceContext,
+	})
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize experience", err)
 		return
 	}
 
-	// Validate output to catch potential hallucinations
-	validatedExperience := services.ValidateAndCleanOutput(req.UserExperience, optimizedExperience)
-
 	// Clean up the AI response to remove asterisks and format properly
-	cleanedExperience := cleanupAIResponse(validatedExperience)
+	cleanedExperience := cleanupAIResponse(outcome.OptimizedExperience)
 
 	response := ExperienceOptimizationResponse{
 		OptimizedExperience: cleanedExperience,
 		Message:             "Experience optimized successfully based on job description.",
+		ReviewStatus:        outcome.ReviewStatus,
+		ReviewReason:        outcome.ReviewReason,
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Experience optimized successfully", response)
@@ -152,12 +151,15 @@ func decodeLooseQuotedText(text string) string {
 }
 
 type ExperienceGrammarRequest struct {
-	UserExperience string `json:"userExperience" binding:"required"`
+	UserExperience    string                                 `json:"userExperience" binding:"required"`
+	ExperienceContext services.ExperienceOptimizationContext `json:"experienceContext,omitempty"`
 }
 
 type ExperienceGrammarResponse struct {
 	ImprovedExperience string `json:"improvedExperience"`
 	Message            string `json:"message"`
+	ReviewStatus       string `json:"reviewStatus,omitempty"`
+	ReviewReason       string `json:"reviewReason,omitempty"`
 }
 
 func ImproveExperienceGrammar(c *gin.Context) {
@@ -167,22 +169,23 @@ func ImproveExperienceGrammar(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for grammar improvement
-	prompt := services.BuildExperienceGrammarPrompt(req.UserExperience)
-
-	// Call AI service to improve grammar
-	improvedExperience, err := services.CallGeminiWithTemperature(prompt, 0.3)
+	outcome, err := services.ImproveExperienceGrammarWithReview(c.Request.Context(), services.ExperienceOptimizationInput{
+		UserExperience: req.UserExperience,
+		Context:        req.ExperienceContext,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
 	// Clean up the AI response
-	cleanedExperience := cleanupAIResponse(improvedExperience)
+	cleanedExperience := cleanupAIResponse(outcome.OptimizedExperience)
 
 	response := ExperienceGrammarResponse{
 		ImprovedExperience: cleanedExperience,
 		Message:            "Experience grammar and style improved successfully.",
+		ReviewStatus:       outcome.ReviewStatus,
+		ReviewReason:       outcome.ReviewReason,
 	}
 
 	c.JSON(http.StatusOK, response)
