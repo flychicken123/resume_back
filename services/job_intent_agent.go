@@ -21,7 +21,7 @@ type JobIntentAgent struct {
 // URL is the first job posting URL mentioned in the text (if any).
 // JobDescriptionFromText is any job description content the user pasted or described directly.
 type JobIntentResult struct {
-	URL                  string `json:"url"`
+	URL                    string `json:"url"`
 	JobDescriptionFromText string `json:"job_description_from_text"`
 }
 
@@ -32,7 +32,10 @@ func NewJobIntentAgent() (*JobIntentAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client: %w", err)
 	}
@@ -92,4 +95,3 @@ User message:
 
 	return result, nil
 }
-

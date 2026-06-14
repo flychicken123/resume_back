@@ -19,9 +19,9 @@ type ImpactKeywordsAgent struct {
 
 // ExperienceImpactInput represents the input for a single experience entry.
 type ExperienceImpactInput struct {
-	ID          string                  `json:"id"`
-	Description string                  `json:"description"`
-	Projects    []ProjectImpactInput    `json:"projects,omitempty"`
+	ID          string               `json:"id"`
+	Description string               `json:"description"`
+	Projects    []ProjectImpactInput `json:"projects,omitempty"`
 }
 
 // ProjectImpactInput represents the input for a single project.
@@ -62,7 +62,10 @@ func NewImpactKeywordsAgent() (*ImpactKeywordsAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for impact keywords agent: %w", err)
 	}

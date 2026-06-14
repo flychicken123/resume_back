@@ -29,7 +29,10 @@ func NewTemplatePreferenceAgent() (*TemplatePreferenceAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client: %w", err)
 	}
@@ -140,4 +143,3 @@ func normalizeFontSizeSlug(value string) string {
 		return value
 	}
 }
-

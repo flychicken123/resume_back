@@ -90,7 +90,7 @@ func GeminiDiagHandler() gin.HandlerFunc {
 // quota-related metadata Google might include that the SDK hides.
 func GeminiRawDiagHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		model := c.DefaultQuery("model", "gemini-2.0-flash")
+		model := c.DefaultQuery("model", services.DefaultGeminiGenerationModel)
 		apiKey := os.Getenv("GEMINI_API_KEY")
 		if apiKey == "" {
 			c.JSON(http.StatusOK, gin.H{"ok": false, "error": "GEMINI_API_KEY not set"})
@@ -240,8 +240,8 @@ func GeminiMultiModelDiagHandler() gin.HandlerFunc {
 		}
 
 		models := []string{
-			"gemini-2.0-flash",
-			"gemini-2.0-flash-lite",
+			services.DefaultGeminiGenerationModel,
+			"gemini-2.5-flash-lite",
 			"gemini-1.5-flash",
 			"gemini-1.5-pro",
 			"gemini-embedding-001",

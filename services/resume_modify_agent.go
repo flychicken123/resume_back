@@ -18,15 +18,15 @@ type ResumeModifyAgent struct {
 
 // ResumeModifyResult represents the result of analyzing a modification request.
 type ResumeModifyResult struct {
-	IsModification    bool                   `json:"isModification"`    // Whether this is a modification request
-	Action            string                 `json:"action"`            // "create", "update", "delete", or "none"
-	Section           string                 `json:"section"`           // "personal", "experience", "education", "projects", "skills", "summary"
-	Field             string                 `json:"field"`             // Specific field if applicable (e.g., "name", "email", "phone")
-	Value             interface{}            `json:"value"`             // The new value to set
-	NeedsClarification bool                  `json:"needsClarification"` // Whether we need to ask user for clarification
-	ClarificationQuestion string             `json:"clarificationQuestion"` // Question to ask user if clarification needed
-	Message           string                 `json:"message"`           // Confirmation message for the user
-	ParsedData        map[string]interface{} `json:"parsedData"`        // Structured data for the section
+	IsModification        bool                   `json:"isModification"`        // Whether this is a modification request
+	Action                string                 `json:"action"`                // "create", "update", "delete", or "none"
+	Section               string                 `json:"section"`               // "personal", "experience", "education", "projects", "skills", "summary"
+	Field                 string                 `json:"field"`                 // Specific field if applicable (e.g., "name", "email", "phone")
+	Value                 interface{}            `json:"value"`                 // The new value to set
+	NeedsClarification    bool                   `json:"needsClarification"`    // Whether we need to ask user for clarification
+	ClarificationQuestion string                 `json:"clarificationQuestion"` // Question to ask user if clarification needed
+	Message               string                 `json:"message"`               // Confirmation message for the user
+	ParsedData            map[string]interface{} `json:"parsedData"`            // Structured data for the section
 }
 
 // NewResumeModifyAgent constructs a LangChain-backed agent using the GEMINI_API_KEY.
@@ -36,7 +36,10 @@ func NewResumeModifyAgent() (*ResumeModifyAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for resume modify agent: %w", err)
 	}

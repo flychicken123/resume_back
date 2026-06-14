@@ -44,6 +44,11 @@ type Experience struct {
 	Tasks    string `json:"tasks"`
 }
 
+// DefaultGeminiGenerationModel is the shared Gemini model used for text and
+// multimodal generation calls. Keep direct LangChain clients pinned here so
+// they do not fall back to a stale SDK default.
+const DefaultGeminiGenerationModel = "gemini-2.5-flash"
+
 var (
 	langChainOnce  sync.Once
 	langChainErr   error
@@ -65,7 +70,7 @@ func getLangChainModel() (llms.Model, error) {
 
 		opts := []googleai.Option{
 			googleai.WithAPIKey(apiKey),
-			googleai.WithDefaultModel("gemini-2.5-flash"),
+			googleai.WithDefaultModel(DefaultGeminiGenerationModel),
 		}
 
 		llm, err := googleai.New(context.Background(), opts...)
@@ -111,7 +116,7 @@ func getLangChainFlashModel() (llms.Model, error) {
 
 		opts := []googleai.Option{
 			googleai.WithAPIKey(apiKey),
-			googleai.WithDefaultModel("gemini-2.5-flash"),
+			googleai.WithDefaultModel(DefaultGeminiGenerationModel),
 		}
 
 		llm, err := googleai.New(context.Background(), opts...)

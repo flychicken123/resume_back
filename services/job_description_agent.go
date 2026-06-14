@@ -27,13 +27,13 @@ type JobDescriptionEntry struct {
 
 // JobDescriptionParseResult is the result of parsing user input for job descriptions.
 type JobDescriptionParseResult struct {
-	Action       string                `json:"action"`       // "add", "modify", "remove", or "none"
-	TargetID     string                `json:"targetId"`     // ID of entry to modify/remove (if applicable)
-	Title        string                `json:"title"`        // Job title extracted
-	Text         string                `json:"text"`         // Job description text
-	URL          string                `json:"url"`          // Job posting URL if provided
-	Entries      []JobDescriptionEntry `json:"entries"`      // Updated list of all entries
-	Message      string                `json:"message"`      // Confirmation message for the user
+	Action   string                `json:"action"`   // "add", "modify", "remove", or "none"
+	TargetID string                `json:"targetId"` // ID of entry to modify/remove (if applicable)
+	Title    string                `json:"title"`    // Job title extracted
+	Text     string                `json:"text"`     // Job description text
+	URL      string                `json:"url"`      // Job posting URL if provided
+	Entries  []JobDescriptionEntry `json:"entries"`  // Updated list of all entries
+	Message  string                `json:"message"`  // Confirmation message for the user
 }
 
 // NewJobDescriptionAgent constructs a LangChain-backed agent using the GEMINI_API_KEY.
@@ -43,7 +43,10 @@ func NewJobDescriptionAgent() (*JobDescriptionAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for job description agent: %w", err)
 	}

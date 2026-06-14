@@ -20,15 +20,15 @@ type ExperienceAgent struct {
 // ExperienceRecord represents a structured work experience entry aligned with
 // the resume builder's Experience model.
 type ExperienceRecord struct {
-	JobTitle         string             `json:"jobTitle"`
-	Company          string             `json:"company"`
-	City             string             `json:"city"`
-	State            string             `json:"state"`
-	Remote           bool               `json:"remote"`
-	StartDate        string             `json:"startDate"`
-	EndDate          string             `json:"endDate"`
-	CurrentlyWorking bool               `json:"currentlyWorking"`
-	Description      string             `json:"description"`
+	JobTitle         string `json:"jobTitle"`
+	Company          string `json:"company"`
+	City             string `json:"city"`
+	State            string `json:"state"`
+	Remote           bool   `json:"remote"`
+	StartDate        string `json:"startDate"`
+	EndDate          string `json:"endDate"`
+	CurrentlyWorking bool   `json:"currentlyWorking"`
+	Description      string `json:"description"`
 }
 
 // ExperienceParseResult is the top-level payload returned by the agent.
@@ -43,7 +43,10 @@ func NewExperienceAgent() (*ExperienceAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for experience agent: %w", err)
 	}
@@ -168,4 +171,3 @@ User text:
 
 	return result, nil
 }
-

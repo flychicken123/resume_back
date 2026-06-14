@@ -7,7 +7,7 @@ import (
 	"time"
 )
 
-// Gemini 2.0 Flash on "standard" service tier rejects requests past ~6
+// Gemini Flash on "standard" service tier rejects requests past ~6
 // concurrent in-flight per project (measured via burst diagnostic endpoint).
 // Default cap 4 leaves headroom for spikes below that ceiling.
 // Override via GEMINI_CONCURRENCY env var (1-32).

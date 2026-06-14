@@ -24,23 +24,23 @@ type PolishAgent struct {
 
 // PolishIntent represents the parsed intent from user's polish request.
 type PolishIntent struct {
-	IsPolishRequest bool     `json:"isPolishRequest"` // Whether this is a polish/optimize request
-	Section         string   `json:"section"`         // "experience", "education", "projects", "summary", "skills", "all"
-	Identifier      string   `json:"identifier"`      // Company name, project name, school name to match
-	EntryIndex      int      `json:"entryIndex"`      // Index of entry if identifiable (-1 if not)
-	Message         string   `json:"message"`         // Confirmation or clarification message
-	NeedsClarification bool  `json:"needsClarification"` // Whether we need user to clarify which entry
+	IsPolishRequest       bool   `json:"isPolishRequest"`       // Whether this is a polish/optimize request
+	Section               string `json:"section"`               // "experience", "education", "projects", "summary", "skills", "all"
+	Identifier            string `json:"identifier"`            // Company name, project name, school name to match
+	EntryIndex            int    `json:"entryIndex"`            // Index of entry if identifiable (-1 if not)
+	Message               string `json:"message"`               // Confirmation or clarification message
+	NeedsClarification    bool   `json:"needsClarification"`    // Whether we need user to clarify which entry
 	ClarificationQuestion string `json:"clarificationQuestion"` // Question to ask if clarification needed
 }
 
 // PolishResult contains the polished content for a resume section.
 type PolishResult struct {
-	Section         string                   `json:"section"`
-	Identifier      string                   `json:"identifier"`
-	EntryIndex      int                      `json:"entryIndex"`
-	OriginalContent interface{}              `json:"originalContent"`
-	PolishedContent interface{}              `json:"polishedContent"`
-	Message         string                   `json:"message"`
+	Section         string      `json:"section"`
+	Identifier      string      `json:"identifier"`
+	EntryIndex      int         `json:"entryIndex"`
+	OriginalContent interface{} `json:"originalContent"`
+	PolishedContent interface{} `json:"polishedContent"`
+	Message         string      `json:"message"`
 }
 
 // NewPolishAgent constructs a LangChain-backed agent for polish intent detection.
@@ -50,7 +50,10 @@ func NewPolishAgent() (*PolishAgent, error) {
 		return nil, fmt.Errorf("GEMINI_API_KEY environment variable is not set")
 	}
 
-	llm, err := googleai.New(context.Background(), googleai.WithAPIKey(apiKey))
+	llm, err := googleai.New(context.Background(),
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for polish agent: %w", err)
 	}

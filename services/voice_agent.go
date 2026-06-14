@@ -32,6 +32,7 @@ func NewVoiceAgent() (*VoiceAgent, error) {
 	// Use the default Gemini model to ensure the API supports generateContent.
 	llm, err := googleai.New(context.Background(),
 		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(DefaultGeminiGenerationModel),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LangChain GoogleAI client for voice agent: %w", err)
