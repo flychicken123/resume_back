@@ -216,6 +216,7 @@ QUALITY RUBRIC:
 - Extract phrases a recruiter would notice as evidence of measurable impact, business outcome, scale, ownership, performance, automation, reliability, leadership, or unusually relevant technical impact.
 - Ordinary technology names, job duties, and generic responsibility phrases should only be included when the surrounding wording makes them clearly impact-bearing.
 - Each text value must be an exact substring from the provided input. Do not rewrite, summarize, normalize, or invent phrases.
+- Select complete short phrases, not fragments. Do not return a bare adjective or vague single word when the original text has a stronger noun phrase.
 - Each text value must be 1-%d words and must not be a full sentence or bullet.
 - Return no more than 10 candidates per array. It is acceptable to return fewer.
 
@@ -247,6 +248,7 @@ INPUT DATA:
 Rules:
 - Return ONLY JSON.
 - Use exact substrings from the input.
+- Select complete short phrases, not bare adjectives or fragments.
 - Each text value is 1-%d words.
 - Keep at most %d strongest items per array.
 - Do not include explanations outside JSON.
@@ -268,6 +270,7 @@ REVIEW RULES:
 - Keep only phrases that would make a resume bullet stronger at a glance.
 - Prefer quantified achievements, concrete outcomes, scale, ownership, leadership, automation, performance, reliability, and business value.
 - Drop ordinary task descriptions, weak buzzwords, generic verbs, duplicate ideas, and technology-only phrases unless they are clearly tied to impact in the original wording.
+- Do not keep bare adjectives or fragments. Prefer the complete noun/outcome phrase from the original text.
 - Keep at most %d phrases per array; 3-5 is usually best.
 - Preserve each selected candidate's text exactly. Do not invent or rewrite.
 - Return the same JSON shape as CANDIDATES, with only selected candidates.
