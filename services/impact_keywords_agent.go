@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"regexp"
 	"strings"
 
 	"github.com/tmc/langchaingo/llms"
@@ -59,51 +58,46 @@ type ImpactKeywordsResult struct {
 
 const (
 	impactKeywordsMaxOutputTokens = 8192
-	impactKeywordsMaxPerField     = 8
+	impactKeywordsMaxPerField     = 6
+	impactKeywordsMaxWords        = 6
 )
 
-var (
-	impactMetricRe  = regexp.MustCompile(`(?i)(?:\$ ?\d[\d,.]*(?:\s?(?:k|m|b|million|billion))?|\d+(?:\.\d+)?\s?(?:%|x|ms|sec|secs|seconds|minutes|hours|days|weeks|k\+?|m\+?|b\+?|\+|users|customers|requests/day|requests|engineers|people|members|revenue|costs?))`)
-	impactPhraseRes = []*regexp.Regexp{
-		regexp.MustCompile(`(?i)\b(?:reduced|increased|improved|automated|streamlined|optimized|scaled|accelerated|saved|delivered|deployed|migrated|built|designed|implemented)\s+[a-z0-9#+./-]+(?:\s+[a-z0-9#+./-]+){0,4}`),
-		regexp.MustCompile(`(?i)\b(?:scalable|distributed|real-time|high-availability|production|enterprise-wide|cross-functional|low-latency|full-stack|backend|frontend)\s+[a-z0-9#+./-]+(?:\s+[a-z0-9#+./-]+){0,4}`),
+type impactKeywordCandidate struct {
+	Text   string  `json:"text"`
+	Type   string  `json:"type,omitempty"`
+	Score  float64 `json:"score,omitempty"`
+	Reason string  `json:"reason,omitempty"`
+}
+
+func (c *impactKeywordCandidate) UnmarshalJSON(data []byte) error {
+	var text string
+	if err := json.Unmarshal(data, &text); err == nil {
+		c.Text = text
+		return nil
 	}
-	impactKnownTerms = []string{
-		"scalable loan management system",
-		"improved operational efficiency",
-		"automated batch processing",
-		"streamlining workflows",
-		"Java Spring backend",
-		"JavaScript frontend",
-		"stored procedures",
-		"Spring Boot",
-		"TypeScript",
-		"JavaScript",
-		"Kubernetes",
-		"microservices",
-		"PostgreSQL",
-		"distributed system",
-		"real-time pipeline",
-		"production system",
-		"high-availability",
-		"Python",
-		"React",
-		"Node.js",
-		"Redis",
-		"Docker",
-		"Java",
-		"AWS",
-		"GCP",
+	type candidate impactKeywordCandidate
+	var parsed candidate
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		return err
 	}
-	leadingImpactVerbs = map[string]struct{}{
-		"reduced": {}, "increased": {}, "improved": {}, "automated": {}, "streamlined": {},
-		"optimized": {}, "scaled": {}, "accelerated": {}, "saved": {}, "delivered": {},
-		"deployed": {}, "migrated": {}, "built": {}, "designed": {}, "implemented": {},
-	}
-	genericImpactKeywords = map[string]struct{}{
-		"built": {}, "developed": {}, "implemented": {}, "worked": {}, "responsible": {},
-	}
-)
+	*c = impactKeywordCandidate(parsed)
+	return nil
+}
+
+type impactCandidateProject struct {
+	Name         []impactKeywordCandidate `json:"name,omitempty"`
+	Description  []impactKeywordCandidate `json:"description,omitempty"`
+	Technologies []impactKeywordCandidate `json:"technologies,omitempty"`
+}
+
+type impactCandidateExperience struct {
+	Description []impactKeywordCandidate          `json:"description,omitempty"`
+	Projects    map[string]impactCandidateProject `json:"projects,omitempty"`
+}
+
+type impactCandidateResult struct {
+	Experiences map[string]impactCandidateExperience `json:"experiences"`
+}
 
 // NewImpactKeywordsAgent constructs a LangChain-backed agent using the GEMINI_API_KEY.
 func NewImpactKeywordsAgent() (*ImpactKeywordsAgent, error) {
@@ -130,81 +124,67 @@ func (a *ImpactKeywordsAgent) ExtractImpactKeywords(ctx context.Context, input I
 		return ImpactKeywordsResult{}, fmt.Errorf("impact keywords agent is not initialized")
 	}
 
-	// Build a simplified input for the LLM
 	inputJSON, err := json.Marshal(input)
 	if err != nil {
 		return ImpactKeywordsResult{}, fmt.Errorf("failed to marshal input: %w", err)
 	}
 
-	prompt := fmt.Sprintf(`You are an expert resume analyzer. Extract SHORT keywords and phrases (1-5 words) that demonstrate impact and achievements.
+	candidates, err := a.extractImpactKeywordCandidates(ctx, string(inputJSON))
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ImpactKeywordsResult{}, ctxErr
+		}
+		log.Printf("[impact-keywords-agent] candidate extraction failed, returning empty highlights: %v", err)
+		return emptyImpactKeywords(input), nil
+	}
 
-=== RULE: MAXIMUM 5 WORDS PER KEYWORD ===
-Each keyword must be 1-5 words. Never extract full sentences.
-Return at most 8 keywords per array. Prefer fewer, high-signal keywords.
+	reviewed, err := a.reviewImpactKeywordCandidates(ctx, string(inputJSON), candidates)
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ImpactKeywordsResult{}, ctxErr
+		}
+		log.Printf("[impact-keywords-agent] candidate review failed, using extractor candidates: %v", err)
+		reviewed = candidates
+	}
 
-INPUT DATA:
-%s
-
-=== WHAT TO EXTRACT (1-5 words each) ===
-
-1. Numbers and Metrics (highest priority):
-   - "40%%", "80%% reduction", "$2M revenue", "saved $500K"
-   - "3x faster", "10x improvement", "99.9%% uptime"
-   - "1M+ users", "500K requests/day", "50ms latency"
-
-2. Team and Scale:
-   - "team of 10", "12 engineers", "cross-functional team"
-   - "enterprise-wide", "company-wide", "global deployment"
-   - "production environment", "high-availability system"
-
-3. Key Technologies (when significant):
-   - "Redis", "Kubernetes", "AWS", "microservices"
-   - "real-time pipeline", "distributed system"
-
-4. Outcome Words:
-   - "increased revenue", "reduced costs", "improved performance"
-   - "automated deployment", "streamlined workflow"
-   - "award-winning", "patent pending"
-
-=== DO NOT EXTRACT ===
-- Full sentences or bullet points (6+ words)
-- Standalone action verbs: "Developed", "Built", "Implemented"
-- Generic phrases: "worked on", "responsible for", "helped with"
-
-=== EXAMPLES ===
-
-Input: "Reduced API latency by 80%% using Redis caching for production"
-Extract: ["80%%", "Redis", "production"] ✓
-NOT: ["Reduced API latency by 80%% using Redis caching for production"] ✗
-
-Input: "Led a cross-functional team of 12 engineers to deliver on time"
-Extract: ["cross-functional team", "12 engineers"] ✓
-NOT: ["Led a cross-functional team of 12 engineers to deliver on time"] ✗
-
-Input: "Built scalable microservices architecture handling 1M requests"
-Extract: ["scalable microservices", "1M requests"] ✓
-NOT: ["Built scalable microservices architecture handling 1M requests"] ✗
-
-=== OUTPUT FORMAT ===
-Return ONLY valid JSON:
-{
-  "experiences": {
-    "<experience_id>": {
-      "description": ["keyword1", "keyword2"],
-      "projects": {
-        "<project_id>": {
-          "name": [],
-          "description": ["keyword1"],
-          "technologies": []
-        }
-      }
-    }
-  }
+	return validateImpactKeywordCandidates(input, reviewed), nil
 }
 
-Return ONLY the JSON:`, string(inputJSON))
+func (a *ImpactKeywordsAgent) extractImpactKeywordCandidates(ctx context.Context, inputJSON string) (impactCandidateResult, error) {
+	raw, err := a.generateImpactKeywordJSON(ctx, buildImpactKeywordExtractorPrompt(inputJSON))
+	if err != nil {
+		return impactCandidateResult{}, err
+	}
+	candidates, err := parseImpactCandidateResult(raw)
+	if err == nil {
+		return candidates, nil
+	}
 
-	raw, err := llms.GenerateFromSinglePrompt(
+	retryRaw, retryErr := a.generateImpactKeywordJSON(ctx, buildImpactKeywordRetryPrompt(inputJSON))
+	if retryErr != nil {
+		return impactCandidateResult{}, fmt.Errorf("parse extractor JSON: %w; retry call: %v", err, retryErr)
+	}
+	retryCandidates, retryParseErr := parseImpactCandidateResult(retryRaw)
+	if retryParseErr != nil {
+		return impactCandidateResult{}, fmt.Errorf("parse extractor JSON: %w; parse retry JSON: %v", err, retryParseErr)
+	}
+	return retryCandidates, nil
+}
+
+func (a *ImpactKeywordsAgent) reviewImpactKeywordCandidates(ctx context.Context, inputJSON string, candidates impactCandidateResult) (impactCandidateResult, error) {
+	candidatesJSON, err := json.Marshal(candidates)
+	if err != nil {
+		return impactCandidateResult{}, fmt.Errorf("marshal candidates: %w", err)
+	}
+	raw, err := a.generateImpactKeywordJSON(ctx, buildImpactKeywordReviewerPrompt(inputJSON, string(candidatesJSON)))
+	if err != nil {
+		return impactCandidateResult{}, err
+	}
+	return parseImpactCandidateResult(raw)
+}
+
+func (a *ImpactKeywordsAgent) generateImpactKeywordJSON(ctx context.Context, prompt string) (string, error) {
+	return llms.GenerateFromSinglePrompt(
 		ctx,
 		a.llm,
 		prompt,
@@ -212,143 +192,224 @@ Return ONLY the JSON:`, string(inputJSON))
 		llms.WithMaxTokens(impactKeywordsMaxOutputTokens),
 		llms.WithJSONMode(),
 	)
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ImpactKeywordsResult{}, ctxErr
-		}
-		log.Printf("[impact-keywords-agent] LLM call failed, using fallback extractor: %v", err)
-		return fallbackImpactKeywords(input), nil
-	}
+}
 
+func parseImpactCandidateResult(raw string) (impactCandidateResult, error) {
 	clean := sanitizeLLMJSON(raw)
-
-	var result ImpactKeywordsResult
+	var result impactCandidateResult
 	if err := json.Unmarshal([]byte(clean), &result); err != nil {
-		log.Printf("[impact-keywords-agent] failed to parse LLM JSON, using fallback extractor: %v raw_len=%d", err, len(clean))
-		return fallbackImpactKeywords(input), nil
+		return impactCandidateResult{}, fmt.Errorf("failed to parse impact keyword JSON: %w (raw_len=%d)", err, len(clean))
 	}
-
-	// Ensure non-nil maps
 	if result.Experiences == nil {
-		result.Experiences = make(map[string]ExperienceImpactKeywords)
+		result.Experiences = make(map[string]impactCandidateExperience)
 	}
-
 	return result, nil
 }
 
-func fallbackImpactKeywords(input ImpactKeywordsRequest) ImpactKeywordsResult {
+func buildImpactKeywordExtractorPrompt(inputJSON string) string {
+	return fmt.Sprintf(`You are an expert resume reviewer. Extract candidate phrases that may deserve visual emphasis in a resume preview.
+
+INPUT DATA:
+%s
+
+QUALITY RUBRIC:
+- Extract phrases a recruiter would notice as evidence of measurable impact, business outcome, scale, ownership, performance, automation, reliability, leadership, or unusually relevant technical impact.
+- Ordinary technology names, job duties, and generic responsibility phrases should only be included when the surrounding wording makes them clearly impact-bearing.
+- Each text value must be an exact substring from the provided input. Do not rewrite, summarize, normalize, or invent phrases.
+- Each text value must be 1-%d words and must not be a full sentence or bullet.
+- Return no more than 10 candidates per array. It is acceptable to return fewer.
+
+Return ONLY valid JSON in this shape:
+{
+  "experiences": {
+    "<experience_id>": {
+      "description": [
+        {"text": "<exact substring>", "type": "metric|outcome|scale|ownership|technology|leadership", "score": 0.0, "reason": "<brief reason>"}
+      ],
+      "projects": {
+        "<project_id>": {
+          "name": [],
+          "description": [],
+          "technologies": []
+        }
+      }
+    }
+  }
+}`, inputJSON, impactKeywordsMaxWords)
+}
+
+func buildImpactKeywordRetryPrompt(inputJSON string) string {
+	return fmt.Sprintf(`Your previous impact-keyword JSON was invalid or truncated. Re-extract compact, valid JSON.
+
+INPUT DATA:
+%s
+
+Rules:
+- Return ONLY JSON.
+- Use exact substrings from the input.
+- Each text value is 1-%d words.
+- Keep at most %d strongest items per array.
+- Do not include explanations outside JSON.
+
+JSON shape:
+{"experiences":{"<experience_id>":{"description":[{"text":"<exact substring>","type":"metric|outcome|scale|ownership|technology|leadership","score":0.0,"reason":"<brief reason>"}],"projects":{"<project_id>":{"name":[],"description":[],"technologies":[]}}}}}`, inputJSON, impactKeywordsMaxWords, impactKeywordsMaxPerField)
+}
+
+func buildImpactKeywordReviewerPrompt(inputJSON, candidatesJSON string) string {
+	return fmt.Sprintf(`You are a strict resume highlight reviewer. Select only the strongest highlight phrases from the candidates.
+
+ORIGINAL INPUT:
+%s
+
+CANDIDATES:
+%s
+
+REVIEW RULES:
+- Keep only phrases that would make a resume bullet stronger at a glance.
+- Prefer quantified achievements, concrete outcomes, scale, ownership, leadership, automation, performance, reliability, and business value.
+- Drop ordinary task descriptions, weak buzzwords, generic verbs, duplicate ideas, and technology-only phrases unless they are clearly tied to impact in the original wording.
+- Keep at most %d phrases per array; 3-5 is usually best.
+- Preserve each selected candidate's text exactly. Do not invent or rewrite.
+- Return the same JSON shape as CANDIDATES, with only selected candidates.
+
+Return ONLY valid JSON.`, inputJSON, candidatesJSON, impactKeywordsMaxPerField)
+}
+
+func validateImpactKeywordCandidates(input ImpactKeywordsRequest, candidates impactCandidateResult) ImpactKeywordsResult {
+	result := emptyImpactKeywords(input)
+	for i, exp := range input.Experiences {
+		expID := normalizedExperienceImpactID(exp.ID, i)
+		candidateExp, ok := candidates.Experiences[expID]
+		if !ok {
+			continue
+		}
+
+		expOut := result.Experiences[expID]
+		expOut.Description = validateImpactKeywordList(exp.Description, candidateExp.Description)
+
+		for j, project := range exp.Projects {
+			projectID := normalizedProjectImpactID(project.ID, j)
+			candidateProject, ok := candidateExp.Projects[projectID]
+			if !ok {
+				continue
+			}
+			projectOut := expOut.Projects[projectID]
+			projectOut.Name = validateImpactKeywordList(project.Name, candidateProject.Name)
+			projectOut.Description = validateImpactKeywordList(project.Description, candidateProject.Description)
+			projectOut.Technologies = validateImpactKeywordList(project.Technologies, candidateProject.Technologies)
+			expOut.Projects[projectID] = projectOut
+		}
+
+		result.Experiences[expID] = expOut
+	}
+	return result
+}
+
+func emptyImpactKeywords(input ImpactKeywordsRequest) ImpactKeywordsResult {
 	result := ImpactKeywordsResult{
 		Experiences: make(map[string]ExperienceImpactKeywords, len(input.Experiences)),
 	}
 	for i, exp := range input.Experiences {
-		expID := strings.TrimSpace(exp.ID)
-		if expID == "" {
-			expID = fmt.Sprintf("experience_%d", i)
-		}
-
+		expID := normalizedExperienceImpactID(exp.ID, i)
 		out := ExperienceImpactKeywords{
-			Description: extractImpactKeywordsFromText(exp.Description, impactKeywordsMaxPerField),
+			Description: []string{},
 		}
 		if len(exp.Projects) > 0 {
 			out.Projects = make(map[string]ProjectImpactKeywords, len(exp.Projects))
 			for j, project := range exp.Projects {
-				projectID := strings.TrimSpace(project.ID)
-				if projectID == "" {
-					projectID = fmt.Sprintf("project_%d", j)
-				}
+				projectID := normalizedProjectImpactID(project.ID, j)
 				out.Projects[projectID] = ProjectImpactKeywords{
-					Name:         extractImpactKeywordsFromText(project.Name, impactKeywordsMaxPerField),
-					Description:  extractImpactKeywordsFromText(project.Description, impactKeywordsMaxPerField),
-					Technologies: extractImpactKeywordsFromText(project.Technologies, impactKeywordsMaxPerField),
+					Name:         []string{},
+					Description:  []string{},
+					Technologies: []string{},
 				}
 			}
 		}
-
 		result.Experiences[expID] = out
 	}
 	return result
 }
 
-func extractImpactKeywordsFromText(text string, max int) []string {
-	text = strings.TrimSpace(text)
-	if text == "" || max <= 0 {
-		return nil
+func validateImpactKeywordList(source string, candidates []impactKeywordCandidate) []string {
+	source = strings.TrimSpace(source)
+	if source == "" || len(candidates) == 0 {
+		return []string{}
 	}
 
-	seen := make(map[string]struct{})
-	keywords := make([]string, 0, max)
-	add := func(keyword string) bool {
-		keyword = cleanImpactKeyword(keyword)
-		if keyword == "" {
-			return false
+	seen := map[string]struct{}{}
+	ranges := make([][2]int, 0, impactKeywordsMaxPerField)
+	keywords := make([]string, 0, impactKeywordsMaxPerField)
+	for _, candidate := range candidates {
+		text := normalizeImpactCandidateText(candidate.Text)
+		if text == "" || wordCount(text) > impactKeywordsMaxWords {
+			continue
 		}
-		if _, skip := genericImpactKeywords[strings.ToLower(keyword)]; skip {
-			return false
+		start, end, originalText, ok := findOriginalImpactPhrase(source, text)
+		if !ok {
+			continue
 		}
-		key := strings.ToLower(keyword)
+		key := strings.ToLower(originalText)
 		if _, exists := seen[key]; exists {
-			return false
+			continue
+		}
+		if overlapsAny(start, end, ranges) {
+			continue
 		}
 		seen[key] = struct{}{}
-		keywords = append(keywords, keyword)
-		return len(keywords) >= max
-	}
-
-	for _, match := range impactMetricRe.FindAllString(text, -1) {
-		if add(match) {
-			return keywords
-		}
-	}
-
-	lower := strings.ToLower(text)
-	for _, term := range impactKnownTerms {
-		if strings.Contains(lower, strings.ToLower(term)) {
-			if add(term) {
-				return keywords
-			}
-		}
-	}
-
-	for _, re := range impactPhraseRes {
-		for _, match := range re.FindAllString(text, -1) {
-			if add(stripLeadingImpactVerb(match)) {
-				return keywords
-			}
-		}
-	}
-
-	if len(keywords) == 0 {
-		for _, keyword := range extractKeywords(text, max) {
-			if add(keyword) {
-				return keywords
-			}
+		ranges = append(ranges, [2]int{start, end})
+		keywords = append(keywords, originalText)
+		if len(keywords) >= impactKeywordsMaxPerField {
+			break
 		}
 	}
 
 	return keywords
 }
 
-func stripLeadingImpactVerb(value string) string {
-	words := strings.Fields(value)
-	if len(words) <= 1 {
-		return value
-	}
-	if _, ok := leadingImpactVerbs[strings.ToLower(words[0])]; ok {
-		return strings.Join(words[1:], " ")
-	}
-	return value
+func normalizeImpactCandidateText(text string) string {
+	text = strings.TrimSpace(strings.Trim(text, ".,;:()[]{}\"'`"))
+	return strings.Join(strings.Fields(text), " ")
 }
 
-func cleanImpactKeyword(value string) string {
-	value = strings.TrimSpace(strings.Trim(value, ".,;:()[]{}\"'`"))
-	value = strings.Join(strings.Fields(value), " ")
-	if value == "" {
-		return ""
+func findOriginalImpactPhrase(source, phrase string) (int, int, string, bool) {
+	sourceLower := strings.ToLower(source)
+	phraseLower := strings.ToLower(phrase)
+	start := strings.Index(sourceLower, phraseLower)
+	if start < 0 {
+		return 0, 0, "", false
 	}
+	end := start + len(phrase)
+	if end > len(source) {
+		return 0, 0, "", false
+	}
+	return start, end, source[start:end], true
+}
 
-	words := strings.Fields(value)
-	if len(words) > 5 {
-		value = strings.Join(words[:5], " ")
+func overlapsAny(start, end int, ranges [][2]int) bool {
+	for _, existing := range ranges {
+		if start < existing[1] && end > existing[0] {
+			return true
+		}
 	}
-	return value
+	return false
+}
+
+func wordCount(text string) int {
+	return len(strings.Fields(text))
+}
+
+func normalizedExperienceImpactID(id string, index int) string {
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return id
+	}
+	return fmt.Sprintf("experience_%d", index)
+}
+
+func normalizedProjectImpactID(id string, index int) string {
+	id = strings.TrimSpace(id)
+	if id != "" {
+		return id
+	}
+	return fmt.Sprintf("project_%d", index)
 }

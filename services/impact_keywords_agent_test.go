@@ -11,30 +11,12 @@ import (
 	"github.com/tmc/langchaingo/llms/fake"
 )
 
-func TestImpactKeywordsAgentParsesValidJSON(t *testing.T) {
+func TestImpactKeywordsAgentUsesReviewerSelection(t *testing.T) {
 	t.Parallel()
 
 	llm := fake.NewFakeLLM([]string{
-		`{"experiences":{"exp-0":{"description":["80%","Redis","production systems"]}}}`,
-	})
-	agent := &ImpactKeywordsAgent{llm: llm}
-
-	result, err := agent.ExtractImpactKeywords(context.Background(), ImpactKeywordsRequest{
-		Experiences: []ExperienceImpactInput{{
-			ID:          "exp-0",
-			Description: "Reduced API latency by 80% using Redis in production systems.",
-		}},
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, []string{"80%", "Redis", "production systems"}, result.Experiences["exp-0"].Description)
-}
-
-func TestImpactKeywordsAgentFallsBackWhenJSONIsTruncated(t *testing.T) {
-	t.Parallel()
-
-	llm := fake.NewFakeLLM([]string{
-		`{"experiences":{"exp-0":{"description":["scalable loan management system","Java Spring backend","1B+`,
+		`{"experiences":{"exp-0":{"description":[{"text":"scalable loan management system","type":"scale","score":0.84},{"text":"Java Spring backend","type":"technology","score":0.58},{"text":"1B+ records","type":"metric","score":0.98}]}}}`,
+		`{"experiences":{"exp-0":{"description":[{"text":"1B+ records","type":"metric","score":0.98},{"text":"scalable loan management system","type":"scale","score":0.84}]}}}`,
 	})
 	agent := &ImpactKeywordsAgent{llm: llm}
 
@@ -42,18 +24,33 @@ func TestImpactKeywordsAgentFallsBackWhenJSONIsTruncated(t *testing.T) {
 		Experiences: []ExperienceImpactInput{{
 			ID: "exp-0",
 			Description: "Built a scalable loan management system with a Java Spring backend and JavaScript frontend, " +
-				"streamlining workflows, improving operational efficiency, automating batch processing with stored procedures, " +
-				"and processing 1B+ records.",
+				"streamlining workflows and processing 1B+ records.",
 		}},
 	})
 
 	require.NoError(t, err)
-	keywords := result.Experiences["exp-0"].Description
-	assert.Contains(t, keywords, "1B+")
-	assert.Contains(t, keywords, "scalable loan management system")
-	assert.Contains(t, keywords, "Java Spring backend")
-	assert.Contains(t, keywords, "JavaScript frontend")
-	assert.LessOrEqual(t, len(keywords), impactKeywordsMaxPerField)
+	assert.Equal(t, []string{"1B+ records", "scalable loan management system"}, result.Experiences["exp-0"].Description)
+}
+
+func TestImpactKeywordsAgentRetriesTruncatedExtractorJSON(t *testing.T) {
+	t.Parallel()
+
+	llm := fake.NewFakeLLM([]string{
+		`{"experiences":{"exp-0":{"description":[{"text":"1B+ records"}`,
+		`{"experiences":{"exp-0":{"description":[{"text":"1B+ records","type":"metric","score":0.98}]}}}`,
+		`{"experiences":{"exp-0":{"description":[{"text":"1B+ records","type":"metric","score":0.98}]}}}`,
+	})
+	agent := &ImpactKeywordsAgent{llm: llm}
+
+	result, err := agent.ExtractImpactKeywords(context.Background(), ImpactKeywordsRequest{
+		Experiences: []ExperienceImpactInput{{
+			ID:          "exp-0",
+			Description: "Processed 1B+ records across the loan platform.",
+		}},
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"1B+ records"}, result.Experiences["exp-0"].Description)
 }
 
 func TestImpactKeywordsAgentPassesStrictJSONOptions(t *testing.T) {
@@ -69,11 +66,12 @@ func TestImpactKeywordsAgentPassesStrictJSONOptions(t *testing.T) {
 	})
 
 	require.NoError(t, err)
+	assert.Equal(t, 2, llm.calls)
 	assert.Equal(t, impactKeywordsMaxOutputTokens, llm.options.MaxTokens)
 	assert.True(t, llm.options.JSONMode)
 }
 
-func TestImpactKeywordsAgentFallsBackWhenLLMCallFails(t *testing.T) {
+func TestImpactKeywordsAgentReturnsEmptyWhenLLMCallFails(t *testing.T) {
 	t.Parallel()
 
 	agent := &ImpactKeywordsAgent{llm: &errorImpactKeywordsLLM{}}
@@ -86,17 +84,56 @@ func TestImpactKeywordsAgentFallsBackWhenLLMCallFails(t *testing.T) {
 	})
 
 	require.NoError(t, err)
-	keywords := result.Experiences["exp-0"].Description
-	assert.Contains(t, keywords, "40%")
-	assert.Contains(t, keywords, "AWS")
+	assert.Empty(t, result.Experiences["exp-0"].Description)
+}
+
+func TestValidateImpactKeywordCandidatesRejectsUnsafePhrases(t *testing.T) {
+	t.Parallel()
+
+	input := ImpactKeywordsRequest{
+		Experiences: []ExperienceImpactInput{{
+			ID:          "exp-0",
+			Description: "Reduced API latency by 80% using Redis caching.",
+		}},
+	}
+	candidates := impactCandidateResult{
+		Experiences: map[string]impactCandidateExperience{
+			"exp-0": {
+				Description: []impactKeywordCandidate{
+					{Text: "Reduced API latency by 80%", Score: 0.95},
+					{Text: "API latency", Score: 0.90},
+					{Text: "80% using Redis caching and many unrelated extra words", Score: 0.80},
+					{Text: "invented revenue growth", Score: 0.99},
+					{Text: "Redis caching", Score: 0.70},
+				},
+			},
+		},
+	}
+
+	result := validateImpactKeywordCandidates(input, candidates)
+
+	assert.Equal(t, []string{"Reduced API latency by 80%", "Redis caching"}, result.Experiences["exp-0"].Description)
+}
+
+func TestImpactKeywordCandidateAcceptsLegacyStringJSON(t *testing.T) {
+	t.Parallel()
+
+	parsed, err := parseImpactCandidateResult(`{"experiences":{"exp-0":{"description":["80%","Redis caching"]}}}`)
+
+	require.NoError(t, err)
+	require.Len(t, parsed.Experiences["exp-0"].Description, 2)
+	assert.Equal(t, "80%", parsed.Experiences["exp-0"].Description[0].Text)
+	assert.Equal(t, "Redis caching", parsed.Experiences["exp-0"].Description[1].Text)
 }
 
 type capturingImpactKeywordsLLM struct {
 	response string
 	options  llms.CallOptions
+	calls    int
 }
 
 func (c *capturingImpactKeywordsLLM) GenerateContent(_ context.Context, _ []llms.MessageContent, options ...llms.CallOption) (*llms.ContentResponse, error) {
+	c.calls++
 	for _, opt := range options {
 		opt(&c.options)
 	}
