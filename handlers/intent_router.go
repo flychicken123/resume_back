@@ -345,13 +345,13 @@ func routeToFeature(ctx context.Context, intent ChatIntent, req chatRequest, onT
 		}, nil
 
 	case IntentResumeAdvice:
-		prompt := services.BuildResumeAdvicePrompt(resumeData, jobDesc) + conversationCtx
+		prompt := services.BuildResumeAnalysisPrompt(resumeData, jobDesc) + conversationCtx
 		var advice string
 		var err error
 		if onToken != nil {
 			advice, err = services.CallGeminiStreaming(prompt, onToken)
 		} else {
-			advice, err = services.CallGeminiWithAPIKey(prompt)
+			advice, err = services.CallGeminiAnalysisWithTemperatureContext(ctx, prompt, 0.2)
 		}
 		if err != nil {
 			return nil, fmt.Errorf("resume advice failed: %w", err)

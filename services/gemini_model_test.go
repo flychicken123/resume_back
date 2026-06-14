@@ -14,6 +14,18 @@ func TestDefaultGeminiGenerationModelPinned(t *testing.T) {
 	}
 }
 
+func TestGeminiAnalysisModelName(t *testing.T) {
+	t.Setenv("GEMINI_ANALYSIS_MODEL", "")
+	if got := GeminiAnalysisModelName(); got != DefaultGeminiAnalysisModel {
+		t.Fatalf("GeminiAnalysisModelName() = %q, want %q", got, DefaultGeminiAnalysisModel)
+	}
+
+	t.Setenv("GEMINI_ANALYSIS_MODEL", "gemini-custom-analysis")
+	if got := GeminiAnalysisModelName(); got != "gemini-custom-analysis" {
+		t.Fatalf("GeminiAnalysisModelName() = %q, want configured model", got)
+	}
+}
+
 func TestDirectGoogleAIClientsPinDefaultModel(t *testing.T) {
 	_, currentFile, _, ok := runtime.Caller(0)
 	if !ok {

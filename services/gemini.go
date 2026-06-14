@@ -49,6 +49,10 @@ type Experience struct {
 // they do not fall back to a stale SDK default.
 const DefaultGeminiGenerationModel = "gemini-2.5-flash"
 
+// DefaultGeminiAnalysisModel is reserved for high-value resume analysis where
+// latency is less important than reasoning quality.
+const DefaultGeminiAnalysisModel = "gemini-2.5-pro"
+
 var (
 	langChainOnce  sync.Once
 	langChainErr   error
@@ -276,6 +280,57 @@ func CallGeminiWithTemperatureContext(ctx context.Context, prompt string, temper
 
 func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {
 	return CallGeminiWithTemperatureContext(context.Background(), prompt, temperature)
+}
+
+func GeminiAnalysisModelName() string {
+	if configured := strings.TrimSpace(os.Getenv("GEMINI_ANALYSIS_MODEL")); configured != "" {
+		return configured
+	}
+	return DefaultGeminiAnalysisModel
+}
+
+func CallGeminiWithModelTemperatureContext(ctx context.Context, modelName, prompt string, temperature float64) (string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		modelName = DefaultGeminiGenerationModel
+	}
+	if err := geminiGate.acquire(ctx); err != nil {
+		return "", err
+	}
+	defer geminiGate.release()
+
+	apiKey := strings.TrimSpace(os.Getenv("GEMINI_API_KEY"))
+	if apiKey == "" {
+		return "", fmt.Errorf("GEMINI_API_KEY environment variable is not set")
+	}
+
+	llm, err := googleai.New(ctx,
+		googleai.WithAPIKey(apiKey),
+		googleai.WithDefaultModel(modelName),
+	)
+	if err != nil {
+		return "", fmt.Errorf("failed to initialize LangChain GoogleAI client for model %s: %w", modelName, err)
+	}
+
+	return llms.GenerateFromSinglePrompt(
+		ctx,
+		llm,
+		sanitizeGeminiPrompt(prompt),
+		llms.WithTemperature(temperature),
+		llms.WithMaxTokens(4096),
+	)
+}
+
+func CallGeminiAnalysisWithTemperatureContext(ctx context.Context, prompt string, temperature float64) (string, error) {
+	modelName := GeminiAnalysisModelName()
+	result, err := CallGeminiWithModelTemperatureContext(ctx, modelName, prompt, temperature)
+	if err == nil || modelName == DefaultGeminiGenerationModel || strings.EqualFold(os.Getenv("GEMINI_ANALYSIS_DISABLE_FALLBACK"), "true") {
+		return result, err
+	}
+	return CallGeminiWithModelTemperatureContext(ctx, DefaultGeminiGenerationModel, prompt, temperature)
 }
 
 // CallGeminiStrict calls Gemini with very low temperature (0.1) for factual tasks

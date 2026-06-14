@@ -539,12 +539,23 @@ func handleAnalyzeResume(ctx context.Context, userID int, args map[string]any) (
 	if requestCtx.ResumeData == nil {
 		return map[string]any{"error": "no resume data available"}, nil
 	}
-	prompt := BuildResumeAdvicePrompt(requestCtx.ResumeData, requestCtx.JobDescription)
-	result, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.3)
+	facts := AnalyzeResumeDeterministicFacts(requestCtx.ResumeData, requestCtx.JobDescription)
+	prompt := BuildResumeAnalysisPrompt(requestCtx.ResumeData, requestCtx.JobDescription)
+	result, err := CallWithRateLimitRetry(ctx, DefaultRetryConfig(),
+		func(ctx context.Context) (string, error) {
+			return CallGeminiAnalysisWithTemperatureContext(ctx, prompt, 0.2)
+		},
+		RetryOpts{Endpoint: "resume_analysis"},
+	)
 	if err != nil {
 		return map[string]any{"error": "analysis failed"}, nil
 	}
-	return map[string]any{"advice": strings.TrimSpace(result)}, nil
+	return map[string]any{
+		"analysis":            strings.TrimSpace(result),
+		"advice":              strings.TrimSpace(result),
+		"deterministic_facts": facts,
+		"analysis_model":      GeminiAnalysisModelName(),
+	}, nil
 }
 
 func handleGenerateCoverLetter(ctx context.Context, userID int, args map[string]any) (any, error) {

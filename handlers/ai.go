@@ -158,11 +158,9 @@ func AnalyzeResumeAdvice(c *gin.Context) {
 		return
 	}
 
-	// Build prompt for resume analysis
-	prompt := services.BuildResumeAdvicePrompt(req.ResumeData, req.JobDescription)
+	prompt := services.BuildResumeAnalysisPrompt(req.ResumeData, req.JobDescription)
 
-	// Call AI service to analyze resume
-	advice, err := services.CallGeminiWithAPIKey(prompt)
+	advice, err := services.CallGeminiAnalysisWithTemperatureContext(c.Request.Context(), prompt, 0.2)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

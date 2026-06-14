@@ -352,8 +352,8 @@ func buildCopilotPlan(ctx context.Context, req *CopilotRequest) (*CopilotPlanRes
 	}
 
 	if len(resumeData) > 0 {
-		prompt := services.BuildResumeAdvicePrompt(resumeData, jobDescription)
-		advice, err := runCopilotPrompt(ctx, prompt)
+		prompt := services.BuildResumeAnalysisPrompt(resumeData, jobDescription)
+		advice, err := services.CallGeminiAnalysisWithTemperatureContext(ctx, prompt, 0.2)
 		if err != nil {
 			return nil, err
 		}
