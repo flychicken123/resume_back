@@ -27,6 +27,7 @@ func setupTestRouter() *gin.Engine {
 	// Add routes
 	r.POST("/api/resume/generate", GenerateResume)
 	r.POST("/api/experience/optimize", OptimizeExperience)
+	r.POST("/api/experience/optimize-batch", OptimizeExperienceBatch)
 
 	return r
 }
@@ -185,6 +186,38 @@ func TestOptimizeExperience_MissingFields(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
+}
+
+func TestOptimizeExperienceBatch_InvalidJSON(t *testing.T) {
+	router := setupTestRouter()
+
+	req, err := http.NewRequest("POST", "/api/experience/optimize-batch", bytes.NewBuffer([]byte("invalid json")))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestOptimizeExperienceBatch_MissingExperiences(t *testing.T) {
+	router := setupTestRouter()
+
+	body, err := json.Marshal(map[string]interface{}{
+		"jobDescription": "Looking for a senior developer",
+		"experiences":    []interface{}{},
+	})
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/experience/optimize-batch", bytes.NewBuffer(body))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 // validateResumeRequest validates the ResumeRequest struct

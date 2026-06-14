@@ -162,6 +162,7 @@ func TestResponseCache_OnlyCache200Status(t *testing.T) {
 func TestResponseCache_AIEndpoint(t *testing.T) {
 	// Test that AI endpoints are properly identified
 	assert.True(t, isAIEndpoint("/api/experience/optimize"))
+	assert.True(t, isAIEndpoint("/api/experience/optimize-batch"))
 	assert.True(t, isAIEndpoint("/api/ai/education"))
 	assert.True(t, isAIEndpoint("/api/ai/summary"))
 	assert.False(t, isAIEndpoint("/api/auth/login"))

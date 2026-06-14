@@ -516,6 +516,7 @@ func main() {
 	{
 		// Existing AI optimization endpoints
 		public.POST("/experience/optimize", handlers.OptimizeExperience)
+		public.POST("/experience/optimize-batch", handlers.OptimizeExperienceBatch)
 		public.POST("/ai/education", handlers.OptimizeEducation)
 		public.POST("/ai/summary", handlers.OptimizeSummary)
 

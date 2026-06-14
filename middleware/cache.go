@@ -152,6 +152,7 @@ func (cb *cachedBody) Close() error {
 func isAIEndpoint(path string) bool {
 	aiPaths := []string{
 		"/api/experience/optimize",
+		"/api/experience/optimize-batch",
 		"/api/ai/education",
 		"/api/ai/summary",
 		"/api/experience/improve-grammar",

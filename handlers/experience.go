@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"resumeai/services"
 	"resumeai/utils"
@@ -21,6 +22,35 @@ type ExperienceOptimizationRequest struct {
 type ExperienceOptimizationResponse struct {
 	OptimizedExperience string `json:"optimizedExperience"`
 	Message             string `json:"message"`
+	ReviewStatus        string `json:"reviewStatus,omitempty"`
+	ReviewReason        string `json:"reviewReason,omitempty"`
+}
+
+type ExperienceBatchOptimizationRequest struct {
+	JobDescription string                       `json:"jobDescription,omitempty"`
+	Experiences    []ExperienceBatchItemRequest `json:"experiences" binding:"required"`
+	MatchedSkills  []string                     `json:"matchedSkills,omitempty"`
+	MissingSkills  []string                     `json:"missingSkills,omitempty"`
+}
+
+type ExperienceBatchItemRequest struct {
+	Index             int                                    `json:"index"`
+	UserExperience    string                                 `json:"userExperience"`
+	MatchedSkills     []string                               `json:"matchedSkills,omitempty"`
+	MissingSkills     []string                               `json:"missingSkills,omitempty"`
+	ExperienceContext services.ExperienceOptimizationContext `json:"experienceContext,omitempty"`
+}
+
+type ExperienceBatchOptimizationResponse struct {
+	Results []ExperienceBatchItemResponse `json:"results"`
+	Message string                        `json:"message"`
+}
+
+type ExperienceBatchItemResponse struct {
+	Index               int    `json:"index"`
+	Status              string `json:"status"`
+	OptimizedExperience string `json:"optimizedExperience,omitempty"`
+	Error               string `json:"error,omitempty"`
 	ReviewStatus        string `json:"reviewStatus,omitempty"`
 	ReviewReason        string `json:"reviewReason,omitempty"`
 }
@@ -55,6 +85,77 @@ func OptimizeExperience(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Experience optimized successfully", response)
+}
+
+func OptimizeExperienceBatch(c *gin.Context) {
+	var req ExperienceBatchOptimizationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		utils.ValidationError(c, err)
+		return
+	}
+	if len(req.Experiences) == 0 {
+		utils.ValidationError(c, fmt.Errorf("experiences is required"))
+		return
+	}
+
+	jobDescription := strings.TrimSpace(req.JobDescription)
+	results := make([]ExperienceBatchItemResponse, 0, len(req.Experiences))
+	for _, item := range req.Experiences {
+		result := ExperienceBatchItemResponse{Index: item.Index}
+		userExperience := strings.TrimSpace(item.UserExperience)
+		if userExperience == "" {
+			result.Status = "skipped"
+			result.Error = "missing userExperience"
+			results = append(results, result)
+			continue
+		}
+
+		matchedSkills := req.MatchedSkills
+		if len(item.MatchedSkills) > 0 {
+			matchedSkills = item.MatchedSkills
+		}
+		missingSkills := req.MissingSkills
+		if len(item.MissingSkills) > 0 {
+			missingSkills = item.MissingSkills
+		}
+
+		input := services.ExperienceOptimizationInput{
+			JobDescription: jobDescription,
+			UserExperience: item.UserExperience,
+			MatchedSkills:  matchedSkills,
+			MissingSkills:  missingSkills,
+			Context:        item.ExperienceContext,
+		}
+
+		var (
+			outcome services.ExperienceOptimizationOutcome
+			err     error
+		)
+		if jobDescription != "" {
+			outcome, err = services.OptimizeExperienceWithReview(c.Request.Context(), input)
+			result.Status = "optimized"
+		} else {
+			outcome, err = services.ImproveExperienceGrammarWithReview(c.Request.Context(), input)
+			result.Status = "improved"
+		}
+		if err != nil {
+			result.Status = "failed"
+			result.Error = err.Error()
+			results = append(results, result)
+			continue
+		}
+
+		result.OptimizedExperience = cleanupAIResponse(outcome.OptimizedExperience)
+		result.ReviewStatus = outcome.ReviewStatus
+		result.ReviewReason = outcome.ReviewReason
+		results = append(results, result)
+	}
+
+	response := ExperienceBatchOptimizationResponse{
+		Results: results,
+		Message: "Experience batch processed successfully.",
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Experience batch processed successfully", response)
 }
 
 // cleanupAIResponse removes asterisks and cleans up the AI response
