@@ -225,3 +225,23 @@ func TestChatAssistantStreamReturnsFullUpdatedResumeDataForToolPatch(t *testing.
 	require.Equal(t, "harwtalk@gmail.com", updated["email"])
 	require.Equal(t, "Go, React", updated["skills"])
 }
+
+func TestBuildUpdatedResumeDataFromToolUpdatesIgnoresUnsupportedField(t *testing.T) {
+	updated := buildUpdatedResumeDataFromToolUpdates(
+		map[string]interface{}{
+			"name": "Xuan Wu",
+		},
+		&services.ToolCallMetadata{
+			ResumeUpdates: []map[string]any{
+				{
+					"resume_update": true,
+					"field":         "jobTitle",
+					"action":        "set",
+					"value":         "Project Leader",
+				},
+			},
+		},
+	)
+
+	require.Nil(t, updated)
+}

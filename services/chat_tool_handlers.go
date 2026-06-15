@@ -430,12 +430,29 @@ func handleQueryUserData(ctx context.Context, userID int, args map[string]any) (
 }
 
 func handleUpdateResumeField(ctx context.Context, userID int, args map[string]any) (any, error) {
-	field := getStringArg(args, "field", "")
+	rawField := getStringArg(args, "field", "")
 	action := getStringArg(args, "action", "set")
 	value := getStringArg(args, "value", "")
 
-	if field == "" || value == "" {
+	if shouldRouteProjectUpdate(rawField, args) {
+		args["project_field"] = rawField
+		return handleUpdateProjectField(ctx, userID, args)
+	}
+	if shouldRouteEducationUpdate(rawField, args) {
+		args["education_field"] = rawField
+		return handleUpdateEducationField(ctx, userID, args)
+	}
+	if shouldRouteExperienceUpdate(rawField, args) {
+		args["experience_field"] = rawField
+		return handleUpdateExperienceField(ctx, userID, args)
+	}
+
+	if rawField == "" || value == "" {
 		return map[string]any{"error": "field and value are required"}, nil
+	}
+	field := canonicalTopLevelResumeField(rawField)
+	if field == "" {
+		return map[string]any{"error": fmt.Sprintf("unsupported top-level resume field: %s", rawField)}, nil
 	}
 
 	return map[string]any{
@@ -445,6 +462,497 @@ func handleUpdateResumeField(ctx context.Context, userID int, args map[string]an
 		"value":         value,
 		"message":       fmt.Sprintf("Updated %s: %s '%s'", field, action, value),
 	}, nil
+}
+
+func handleUpdateExperienceField(ctx context.Context, userID int, args map[string]any) (any, error) {
+	requestCtx := chatToolRequestContext(ctx)
+	experiences := getResumeSlice(ctx, "experiences")
+	if requestCtx.ResumeData == nil || len(experiences) == 0 {
+		return map[string]any{"error": "no work experiences available to update"}, nil
+	}
+
+	field := getStringArg(args, "experience_field", "")
+	if field == "" {
+		field = getStringArg(args, "field", "")
+	}
+	field = canonicalExperienceField(field)
+	value := getStringArg(args, "value", "")
+	if field == "" || value == "" {
+		return map[string]any{"error": "experience_field and value are required"}, nil
+	}
+
+	targetIndex := findExperienceUpdateIndex(experiences, args, field)
+	if targetIndex < 0 {
+		return map[string]any{"error": "could not identify which work experience to update"}, nil
+	}
+
+	updatedExperiences := make([]any, len(experiences))
+	var label string
+	for i, item := range experiences {
+		clone, ok := cloneResumeEntryForUpdate(item, i == targetIndex)
+		if !ok {
+			updatedExperiences[i] = item
+			continue
+		}
+		if i == targetIndex {
+			clone[field] = value
+			label = experienceLabel(clone, i)
+		}
+		updatedExperiences[i] = clone
+	}
+
+	if label == "" {
+		label = fmt.Sprintf("experience %d", targetIndex+1)
+	}
+	return map[string]any{
+		"resume_update": true,
+		"field":         "experiences",
+		"action":        "set",
+		"value":         updatedExperiences,
+		"message":       fmt.Sprintf("Updated %s for %s.", field, label),
+	}, nil
+}
+
+func handleUpdateEducationField(ctx context.Context, userID int, args map[string]any) (any, error) {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
+		return map[string]any{"error": "no resume data available"}, nil
+	}
+
+	field := getStringArg(args, "education_field", "")
+	if field == "" {
+		field = getStringArg(args, "field", "")
+	}
+	field = canonicalEducationField(field)
+	value := getStringArg(args, "value", "")
+	if field == "" || value == "" {
+		return map[string]any{"error": "education_field and value are required"}, nil
+	}
+
+	education := getResumeSlice(ctx, "education")
+	if len(education) == 0 {
+		education = []any{map[string]any{}}
+	}
+
+	targetIndex := findEducationUpdateIndex(education, args, field)
+	if targetIndex < 0 {
+		return map[string]any{"error": "could not identify which education entry to update"}, nil
+	}
+
+	updatedEducation := make([]any, len(education))
+	var label string
+	for i, item := range education {
+		clone, ok := cloneResumeEntryForUpdate(item, i == targetIndex)
+		if !ok {
+			updatedEducation[i] = item
+			continue
+		}
+		if i == targetIndex {
+			clone[field] = value
+			label = educationLabel(clone, i)
+		}
+		updatedEducation[i] = clone
+	}
+
+	return map[string]any{
+		"resume_update": true,
+		"field":         "education",
+		"action":        "set",
+		"value":         updatedEducation,
+		"message":       fmt.Sprintf("Updated %s for %s.", field, label),
+	}, nil
+}
+
+func handleUpdateProjectField(ctx context.Context, userID int, args map[string]any) (any, error) {
+	requestCtx := chatToolRequestContext(ctx)
+	if requestCtx.ResumeData == nil {
+		return map[string]any{"error": "no resume data available"}, nil
+	}
+
+	field := getStringArg(args, "project_field", "")
+	if field == "" {
+		field = getStringArg(args, "field", "")
+	}
+	field = canonicalProjectField(field)
+	value := getStringArg(args, "value", "")
+	if field == "" || value == "" {
+		return map[string]any{"error": "project_field and value are required"}, nil
+	}
+
+	projects := getResumeSlice(ctx, "projects")
+	if len(projects) == 0 {
+		projects = []any{map[string]any{}}
+	}
+
+	targetIndex := findProjectUpdateIndex(projects, args, field)
+	if targetIndex < 0 {
+		return map[string]any{"error": "could not identify which project to update"}, nil
+	}
+
+	updatedProjects := make([]any, len(projects))
+	var label string
+	for i, item := range projects {
+		clone, ok := cloneResumeEntryForUpdate(item, i == targetIndex)
+		if !ok {
+			updatedProjects[i] = item
+			continue
+		}
+		if i == targetIndex {
+			clone[field] = value
+			label = projectLabel(clone, i)
+		}
+		updatedProjects[i] = clone
+	}
+
+	return map[string]any{
+		"resume_update": true,
+		"field":         "projects",
+		"action":        "set",
+		"value":         updatedProjects,
+		"message":       fmt.Sprintf("Updated %s for %s.", field, label),
+	}, nil
+}
+
+func shouldRouteExperienceUpdate(field string, args map[string]any) bool {
+	section := strings.ToLower(strings.TrimSpace(getStringArg(args, "section", "")))
+	if section == "experience" || section == "experiences" {
+		return true
+	}
+	if getIntArg(args, "experience_index", 0) > 0 || strings.TrimSpace(getStringArg(args, "company_name", "")) != "" || strings.TrimSpace(getStringArg(args, "employer", "")) != "" {
+		return canonicalExperienceField(field) != ""
+	}
+	switch canonicalExperienceField(field) {
+	case "jobTitle", "company", "startDate", "endDate":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRouteEducationUpdate(field string, args map[string]any) bool {
+	section := strings.ToLower(strings.TrimSpace(getStringArg(args, "section", "")))
+	if section == "education" {
+		return true
+	}
+	if getIntArg(args, "education_index", 0) > 0 || strings.TrimSpace(getStringArg(args, "school_name", "")) != "" {
+		return canonicalEducationField(field) != ""
+	}
+	switch canonicalEducationField(field) {
+	case "degree", "school", "field", "graduationYear", "gpa", "honors":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldRouteProjectUpdate(field string, args map[string]any) bool {
+	section := strings.ToLower(strings.TrimSpace(getStringArg(args, "section", "")))
+	if section == "project" || section == "projects" {
+		return true
+	}
+	if getIntArg(args, "project_index", 0) > 0 || strings.TrimSpace(getStringArg(args, "project_name", "")) != "" {
+		return canonicalProjectField(field) != ""
+	}
+	switch canonicalProjectField(field) {
+	case "projectName", "technologies", "projectUrl":
+		return true
+	default:
+		return false
+	}
+}
+
+func canonicalTopLevelResumeField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "name", "fullname", "full_name":
+		return "name"
+	case "email", "emailaddress", "email_address":
+		return "email"
+	case "phone", "phonenumber", "phone_number":
+		return "phone"
+	case "location", "address":
+		return "location"
+	case "summary", "professionalsummary", "professional_summary":
+		return "summary"
+	case "skills":
+		return "skills"
+	case "skillscategorized", "skills_categorized", "categorizedskills", "categorized_skills":
+		return "skillsCategorized"
+	case "jobdescription", "job_description", "targetjob", "target_job", "targetrole", "target_role":
+		return "jobDescription"
+	case "selectedformat", "selected_format", "templateid", "template_id":
+		return "selectedFormat"
+	case "selectedfontsize", "selected_font_size", "fontsize", "font_size":
+		return "selectedFontSize"
+	case "coverlettertext", "cover_letter_text":
+		return "coverLetterText"
+	case "coverlettertype", "cover_letter_type":
+		return "coverLetterType"
+	default:
+		return ""
+	}
+}
+
+func canonicalExperienceField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "jobtitle", "job_title", "title", "role", "position":
+		return "jobTitle"
+	case "company", "employer", "companyname", "company_name":
+		return "company"
+	case "city":
+		return "city"
+	case "state", "region", "state/region":
+		return "state"
+	case "location":
+		return "location"
+	case "startdate", "start_date", "start":
+		return "startDate"
+	case "enddate", "end_date", "end":
+		return "endDate"
+	case "description", "bullets", "experience_description":
+		return "description"
+	default:
+		return ""
+	}
+}
+
+func canonicalEducationField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "degree", "education_degree":
+		return "degree"
+	case "school", "university", "institution", "schoolname", "school_name":
+		return "school"
+	case "field", "major", "fieldofstudy", "field_of_study":
+		return "field"
+	case "startmonth", "start_month":
+		return "startMonth"
+	case "startyear", "start_year":
+		return "startYear"
+	case "graduationmonth", "graduation_month":
+		return "graduationMonth"
+	case "graduationyear", "graduation_year", "year":
+		return "graduationYear"
+	case "gpa":
+		return "gpa"
+	case "honors", "honours":
+		return "honors"
+	case "location", "city", "state":
+		return "location"
+	default:
+		return ""
+	}
+}
+
+func canonicalProjectField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "projectname", "project_name", "name":
+		return "projectName"
+	case "description", "project_description":
+		return "description"
+	case "technologies", "technology", "tech", "techstack", "tech_stack":
+		return "technologies"
+	case "projecturl", "project_url", "url", "link":
+		return "projectUrl"
+	case "startdate", "start_date", "start":
+		return "startDate"
+	case "enddate", "end_date", "end":
+		return "endDate"
+	default:
+		return ""
+	}
+}
+
+func findExperienceUpdateIndex(experiences []any, args map[string]any, field string) int {
+	index := getIntArg(args, "experience_index", 0)
+	if index > 0 && index <= len(experiences) {
+		return index - 1
+	}
+
+	company := strings.TrimSpace(getStringArg(args, "company_name", ""))
+	if company == "" {
+		company = strings.TrimSpace(getStringArg(args, "employer", ""))
+	}
+	if company != "" {
+		if idx := findExperienceByCompany(experiences, company); idx >= 0 {
+			return idx
+		}
+	}
+
+	missingCandidates := make([]int, 0, 1)
+	for i, item := range experiences {
+		expMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(toAnalysisString(expMap[field])) == "" {
+			missingCandidates = append(missingCandidates, i)
+		}
+	}
+	if len(missingCandidates) == 1 {
+		return missingCandidates[0]
+	}
+	return -1
+}
+
+func findExperienceByCompany(experiences []any, company string) int {
+	needle := normalizeToolMatchText(company)
+	if needle == "" {
+		return -1
+	}
+	for i, item := range experiences {
+		expMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		existing := normalizeToolMatchText(toAnalysisString(expMap["company"]))
+		if existing == "" {
+			continue
+		}
+		if existing == needle || strings.Contains(existing, needle) || strings.Contains(needle, existing) {
+			return i
+		}
+	}
+	return -1
+}
+
+func findEducationUpdateIndex(education []any, args map[string]any, field string) int {
+	index := getIntArg(args, "education_index", 0)
+	if index > 0 && index <= len(education) {
+		return index - 1
+	}
+
+	school := strings.TrimSpace(getStringArg(args, "school_name", ""))
+	if school != "" {
+		if idx := findEntryByStringField(education, "school", school); idx >= 0 {
+			return idx
+		}
+	}
+	return findSingleMissingOrBlankEntry(education, field)
+}
+
+func findProjectUpdateIndex(projects []any, args map[string]any, field string) int {
+	index := getIntArg(args, "project_index", 0)
+	if index > 0 && index <= len(projects) {
+		return index - 1
+	}
+
+	project := strings.TrimSpace(getStringArg(args, "project_name", ""))
+	if project != "" {
+		if idx := findEntryByStringField(projects, "projectName", project); idx >= 0 {
+			return idx
+		}
+	}
+	return findSingleMissingOrBlankEntry(projects, field)
+}
+
+func findEntryByStringField(entries []any, key, value string) int {
+	needle := normalizeToolMatchText(value)
+	if needle == "" {
+		return -1
+	}
+	for i, item := range entries {
+		entryMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		existing := normalizeToolMatchText(toAnalysisString(entryMap[key]))
+		if existing == "" {
+			continue
+		}
+		if existing == needle || strings.Contains(existing, needle) || strings.Contains(needle, existing) {
+			return i
+		}
+	}
+	return -1
+}
+
+func findSingleMissingOrBlankEntry(entries []any, field string) int {
+	if len(entries) == 1 {
+		return 0
+	}
+	missingCandidates := make([]int, 0, 1)
+	for i, item := range entries {
+		entryMap, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(toAnalysisString(entryMap[field])) == "" || isBlankResumeEntry(entryMap) {
+			missingCandidates = append(missingCandidates, i)
+		}
+	}
+	if len(missingCandidates) == 1 {
+		return missingCandidates[0]
+	}
+	return -1
+}
+
+func isBlankResumeEntry(entry map[string]any) bool {
+	for _, value := range entry {
+		if strings.TrimSpace(toAnalysisString(value)) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func experienceLabel(exp map[string]any, index int) string {
+	company := strings.TrimSpace(toAnalysisString(exp["company"]))
+	title := strings.TrimSpace(toAnalysisString(exp["jobTitle"]))
+	switch {
+	case company != "" && title != "":
+		return fmt.Sprintf("%s at %s", title, company)
+	case company != "":
+		return company
+	case title != "":
+		return title
+	default:
+		return fmt.Sprintf("experience %d", index+1)
+	}
+}
+
+func educationLabel(education map[string]any, index int) string {
+	school := strings.TrimSpace(toAnalysisString(education["school"]))
+	degree := strings.TrimSpace(toAnalysisString(education["degree"]))
+	switch {
+	case school != "" && degree != "":
+		return fmt.Sprintf("%s at %s", degree, school)
+	case school != "":
+		return school
+	case degree != "":
+		return degree
+	default:
+		return fmt.Sprintf("education %d", index+1)
+	}
+}
+
+func projectLabel(project map[string]any, index int) string {
+	name := strings.TrimSpace(toAnalysisString(project["projectName"]))
+	if name != "" {
+		return name
+	}
+	return fmt.Sprintf("project %d", index+1)
+}
+
+func normalizeToolMatchText(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, ".", "")
+	value = strings.Join(strings.Fields(value), " ")
+	return value
+}
+
+func cloneResumeEntryForUpdate(item any, allowEmptyTarget bool) (map[string]any, bool) {
+	entryMap, ok := item.(map[string]any)
+	if !ok {
+		if allowEmptyTarget {
+			return map[string]any{}, true
+		}
+		return nil, false
+	}
+
+	clone := make(map[string]any, len(entryMap)+1)
+	for key, existing := range entryMap {
+		clone[key] = existing
+	}
+	return clone, true
 }
 
 // --- Resume feature tool handlers (migrated from intent router) ---
@@ -463,8 +971,18 @@ func getResumeSlice(ctx context.Context, key string) []any {
 	if requestCtx.ResumeData == nil {
 		return nil
 	}
-	v, _ := requestCtx.ResumeData[key].([]any)
-	return v
+	switch v := requestCtx.ResumeData[key].(type) {
+	case []any:
+		return v
+	case []map[string]any:
+		items := make([]any, len(v))
+		for i, item := range v {
+			items[i] = item
+		}
+		return items
+	default:
+		return nil
+	}
 }
 
 func extractExperience(ctx context.Context) string {
@@ -621,7 +1139,11 @@ func handleOptimizeExperience(ctx context.Context, userID int, args map[string]a
 		return map[string]any{"error": "optimization failed"}, nil
 	}
 	validated := ValidateAndCleanOutput(experience, result)
-	return map[string]any{"optimized": strings.TrimSpace(validated)}, nil
+	return map[string]any{
+		"optimized":         strings.TrimSpace(validated),
+		"applied_to_resume": false,
+		"message":           "Optimized draft generated; not applied to the resume builder.",
+	}, nil
 }
 
 func handleOptimizeProject(ctx context.Context, userID int, args map[string]any) (any, error) {
@@ -636,7 +1158,11 @@ func handleOptimizeProject(ctx context.Context, userID int, args map[string]any)
 		return map[string]any{"error": "optimization failed"}, nil
 	}
 	validated := ValidateAndCleanOutput(projects, result)
-	return map[string]any{"optimized": strings.TrimSpace(validated)}, nil
+	return map[string]any{
+		"optimized":         strings.TrimSpace(validated),
+		"applied_to_resume": false,
+		"message":           "Optimized project draft generated; not applied to the resume builder.",
+	}, nil
 }
 
 func handleImproveGrammar(ctx context.Context, userID int, args map[string]any) (any, error) {
@@ -670,7 +1196,11 @@ func handleImproveGrammar(ctx context.Context, userID int, args map[string]any) 
 			"message":       "Improved summary grammar",
 		}, nil
 	}
-	return map[string]any{"improved": cleaned}, nil
+	return map[string]any{
+		"improved":          cleaned,
+		"applied_to_resume": false,
+		"message":           "Improved draft generated; not applied to the resume builder.",
+	}, nil
 }
 
 func handleGenerateSkills(ctx context.Context, userID int, args map[string]any) (any, error) {
@@ -784,6 +1314,12 @@ func handleResumeEditorDispatch(ctx context.Context, userID int, args map[string
 		return handleGenerateSkills(ctx, userID, args)
 	case "categorize_skills":
 		return handleCategorizeSkills(ctx, userID, args)
+	case "update_experience":
+		return handleUpdateExperienceField(ctx, userID, args)
+	case "update_education":
+		return handleUpdateEducationField(ctx, userID, args)
+	case "update_project":
+		return handleUpdateProjectField(ctx, userID, args)
 	default:
 		return handleUpdateResumeField(ctx, userID, args)
 	}

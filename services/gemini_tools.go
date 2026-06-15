@@ -195,7 +195,7 @@ func callGeminiWithTools(ctx context.Context, systemPrompt, userPrompt string, t
 
 					// Collect resume update metadata and track data-level errors
 					if resultMap, ok := result.(map[string]any); ok {
-						if _, isResumeUpdate := resultMap["resume_update"]; isResumeUpdate {
+						if isResumeUpdate, _ := resultMap["resume_update"].(bool); isResumeUpdate {
 							meta.ResumeUpdates = append(meta.ResumeUpdates, resultMap)
 						}
 						if errMsg, hasErr := resultMap["error"]; hasErr {

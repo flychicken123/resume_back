@@ -698,6 +698,7 @@ IMPORTANT — REASONING: When answering questions, follow this process:
    Do NOT ask for information that is already in their data — use it directly.
 2. Determine if you need to WRITE data (call tools for updates/tracking) or if you can answer from the injected data.
    CRITICAL: For any write operation (move, update, track, change status, add, remove), you MUST call the appropriate tool. NEVER pretend you updated something without calling a tool — the user's data won't actually change. If the tool call fails, tell the user honestly.
+   CRITICAL: Only say the resume builder was updated when the tool result includes "resume_update": true. If a tool returns optimized/improved draft text without "resume_update": true, present it as a draft or suggestion, not as an applied change.
 3. Consider the user's specific situation (experience level, target roles, location).
 4. Give a personalized answer grounded in their data, not generic career advice.
 
@@ -1019,7 +1020,8 @@ func buildUpdatedResumeDataFromToolUpdates(base map[string]interface{}, toolMeta
 	applied := false
 	for _, update := range toolMeta.ResumeUpdates {
 		field, _ := update["field"].(string)
-		if strings.TrimSpace(field) == "" {
+		field = canonicalAssistantResumeUpdateField(field)
+		if field == "" {
 			continue
 		}
 
@@ -1042,6 +1044,63 @@ func buildUpdatedResumeDataFromToolUpdates(base map[string]interface{}, toolMeta
 		return nil
 	}
 	return updated
+}
+
+func canonicalAssistantResumeUpdateField(field string) string {
+	switch strings.ToLower(strings.TrimSpace(field)) {
+	case "name":
+		return "name"
+	case "email":
+		return "email"
+	case "phone":
+		return "phone"
+	case "location":
+		return "location"
+	case "summary":
+		return "summary"
+	case "skills":
+		return "skills"
+	case "skillscategorized":
+		return "skillsCategorized"
+	case "jobdescription":
+		return "jobDescription"
+	case "selectedformat":
+		return "selectedFormat"
+	case "selectedfontsize":
+		return "selectedFontSize"
+	case "coverlettertext":
+		return "coverLetterText"
+	case "coverlettertype":
+		return "coverLetterType"
+	case "highlightimpact":
+		return "highlightImpact"
+	case "impactkeywords":
+		return "impactKeywords"
+	case "experiences":
+		return "experiences"
+	case "education":
+		return "education"
+	case "projects":
+		return "projects"
+	case "skills_categorized", "categorizedskills", "categorized_skills":
+		return "skillsCategorized"
+	case "job_description", "targetjob", "target_job", "targetrole", "target_role":
+		return "jobDescription"
+	case "selected_format", "templateid", "template_id":
+		return "selectedFormat"
+	case "selected_font_size", "fontsize", "font_size":
+		return "selectedFontSize"
+	case "cover_letter_text":
+		return "coverLetterText"
+	case "cover_letter_type":
+		return "coverLetterType"
+	case "highlight_impact":
+		return "highlightImpact"
+	case "impact_keywords":
+		return "impactKeywords"
+	default:
+		return ""
+	}
 }
 
 func fallbackChatReply(userMessage string, llmErr error) string {

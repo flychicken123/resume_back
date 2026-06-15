@@ -16,7 +16,7 @@ type ChatTool struct {
 
 // ToolParam describes a parameter for a tool.
 type ToolParam struct {
-	Type        string   // "string", "integer", "boolean"
+	Type        string // "string", "integer", "boolean"
 	Description string
 	Required    bool
 	Enum        []string
@@ -54,13 +54,22 @@ func ChatTools() []ChatTool {
 		},
 		{
 			Name:        "resume_editor",
-			Description: "Update resume fields, generate summary, fix grammar, generate or categorize skills. Use for ANY request to modify or generate resume content.",
+			Description: "Update resume fields, work experience, education, or project details; generate summary; fix grammar; generate or categorize skills. Use for ANY request to modify or generate resume content.",
 			Parameters: map[string]ToolParam{
-				"operation": {Type: "string", Required: true, Enum: []string{"update_field", "generate_summary", "improve_grammar", "generate_skills", "categorize_skills"}, Description: "What to do with the resume"},
-				"field":     {Type: "string", Description: "Field to update (for update_field)", Enum: []string{"name", "email", "phone", "summary", "skills"}},
-				"action":    {Type: "string", Description: "set/add/remove/clear (for update_field)"},
-				"value":     {Type: "string", Description: "New value (for update_field)"},
-				"section":   {Type: "string", Description: "Section for grammar fix", Enum: []string{"summary", "experience", "projects"}},
+				"operation":        {Type: "string", Required: true, Enum: []string{"update_field", "update_experience", "update_education", "update_project", "generate_summary", "improve_grammar", "generate_skills", "categorize_skills"}, Description: "What to do with the resume. Use update_experience, update_education, or update_project for structured section entries."},
+				"field":            {Type: "string", Description: "Top-level field to update (for update_field)", Enum: []string{"name", "email", "phone", "summary", "skills", "jobDescription"}},
+				"action":           {Type: "string", Description: "set/add/remove/clear (for update_field)"},
+				"value":            {Type: "string", Description: "New value (for update_field)"},
+				"section":          {Type: "string", Description: "Section for grammar fix", Enum: []string{"summary", "experience", "projects"}},
+				"experience_field": {Type: "string", Description: "Experience field to update (for update_experience)", Enum: []string{"jobTitle", "company", "city", "state", "location", "startDate", "endDate", "description"}},
+				"company_name":     {Type: "string", Description: "Company/employer name to identify the existing experience for update_experience"},
+				"experience_index": {Type: "integer", Description: "1-based work experience number to update when company_name is unavailable"},
+				"education_field":  {Type: "string", Description: "Education field to update (for update_education)", Enum: []string{"degree", "school", "field", "startMonth", "startYear", "graduationMonth", "graduationYear", "gpa", "honors", "location"}},
+				"school_name":      {Type: "string", Description: "School name to identify the existing education entry for update_education"},
+				"education_index":  {Type: "integer", Description: "1-based education entry number to update when school_name is unavailable"},
+				"project_field":    {Type: "string", Description: "Project field to update (for update_project)", Enum: []string{"projectName", "description", "technologies", "projectUrl", "startDate", "endDate"}},
+				"project_name":     {Type: "string", Description: "Project name to identify the existing project for update_project"},
+				"project_index":    {Type: "integer", Description: "1-based project number to update when project_name is unavailable"},
 			},
 			Handler: handleResumeEditorDispatch,
 		},
