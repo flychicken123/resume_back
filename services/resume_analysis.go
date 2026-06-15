@@ -3,17 +3,21 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
 )
 
 type ResumeAnalysisFacts struct {
-	SectionCoverage ResumeSectionCoverage  `json:"section_coverage"`
-	Counts          ResumeAnalysisCounts   `json:"counts"`
-	MissingFields   []ResumeAnalysisIssue  `json:"missing_fields"`
-	QualityIssues   []ResumeAnalysisIssue  `json:"quality_issues"`
-	StrengthSignals []ResumeAnalysisSignal `json:"strength_signals"`
+	SectionCoverage   ResumeSectionCoverage  `json:"section_coverage"`
+	Counts            ResumeAnalysisCounts   `json:"counts"`
+	BulletQuality     ResumeBulletQuality    `json:"bullet_quality"`
+	Targeting         ResumeTargetingFacts   `json:"targeting"`
+	ExperienceEntries []ResumeExperienceFact `json:"experience_entries,omitempty"`
+	MissingFields     []ResumeAnalysisIssue  `json:"missing_fields"`
+	QualityIssues     []ResumeAnalysisIssue  `json:"quality_issues"`
+	StrengthSignals   []ResumeAnalysisSignal `json:"strength_signals"`
 }
 
 type ResumeSectionCoverage struct {
@@ -26,16 +30,52 @@ type ResumeSectionCoverage struct {
 }
 
 type ResumeAnalysisCounts struct {
-	ExperienceCount        int `json:"experience_count"`
-	EducationCount         int `json:"education_count"`
-	ProjectCount           int `json:"project_count"`
-	SkillCount             int `json:"skill_count"`
-	BulletCount            int `json:"bullet_count"`
-	BulletsWithMetrics     int `json:"bullets_with_metrics"`
-	BulletsWithoutMetrics  int `json:"bullets_without_metrics"`
-	WeakVerbBulletCount    int `json:"weak_verb_bullet_count"`
-	LongBulletCount        int `json:"long_bullet_count"`
-	MissingExperienceDates int `json:"missing_experience_dates"`
+	ExperienceCount         int `json:"experience_count"`
+	EducationCount          int `json:"education_count"`
+	ProjectCount            int `json:"project_count"`
+	SkillCount              int `json:"skill_count"`
+	BulletCount             int `json:"bullet_count"`
+	BulletsWithMetrics      int `json:"bullets_with_metrics"`
+	BulletsWithoutMetrics   int `json:"bullets_without_metrics"`
+	StrongActionBulletCount int `json:"strong_action_bullet_count"`
+	WeakVerbBulletCount     int `json:"weak_verb_bullet_count"`
+	LongBulletCount         int `json:"long_bullet_count"`
+	DuplicateBulletCount    int `json:"duplicate_bullet_count"`
+	MissingExperienceDates  int `json:"missing_experience_dates"`
+}
+
+type ResumeBulletQuality struct {
+	MetricDensity           float64 `json:"metric_density"`
+	StrongActionDensity     float64 `json:"strong_action_density"`
+	AverageWordsPerBullet   float64 `json:"average_words_per_bullet"`
+	OwnershipSignalCount    int     `json:"ownership_signal_count"`
+	ArchitectureSignalCount int     `json:"architecture_signal_count"`
+	ProductionSignalCount   int     `json:"production_signal_count"`
+}
+
+type ResumeTargetingFacts struct {
+	HasTargetDescription bool     `json:"has_target_description"`
+	TargetKeywords       []string `json:"target_keywords,omitempty"`
+	ResumeKeywords       []string `json:"resume_keywords,omitempty"`
+	MatchedKeywords      []string `json:"matched_keywords,omitempty"`
+	MissingKeywords      []string `json:"missing_keywords,omitempty"`
+	KeywordCoverage      float64  `json:"keyword_coverage"`
+}
+
+type ResumeExperienceFact struct {
+	Index                  int      `json:"index"`
+	Label                  string   `json:"label"`
+	Title                  string   `json:"title,omitempty"`
+	Company                string   `json:"company,omitempty"`
+	HasDates               bool     `json:"has_dates"`
+	MissingFields          []string `json:"missing_fields,omitempty"`
+	BulletCount            int      `json:"bullet_count"`
+	BulletsWithMetrics     int      `json:"bullets_with_metrics"`
+	StrongActionBullets    int      `json:"strong_action_bullets"`
+	WeakVerbBullets        int      `json:"weak_verb_bullets"`
+	LongBullets            int      `json:"long_bullets"`
+	DuplicateBullets       int      `json:"duplicate_bullets"`
+	RepresentativeEvidence []string `json:"representative_evidence,omitempty"`
 }
 
 type ResumeAnalysisIssue struct {
@@ -55,8 +95,24 @@ type ResumeAnalysisSignal struct {
 }
 
 var (
-	resumeMetricPattern = regexp.MustCompile(`(?i)(\b\d+(?:[.,]\d+)?%?\b|\$\s?\d+|\b(?:million|billion|thousand|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|users?|customers?|requests?|transactions?|uptime|latency|cost|revenue|savings)\b)`)
-	weakBulletPattern   = regexp.MustCompile(`(?i)^\s*(?:[-*]\s*)?(worked on|responsible for|helped|assisted|participated in|involved in|handled)\b`)
+	resumeMetricPattern       = regexp.MustCompile(`(?i)(\b\d+(?:[.,]\d+)?%?\b|\$\s?\d+|\b(?:million|billion|thousand|ms|seconds?|minutes?|hours?|days?|weeks?|months?|years?|users?|customers?|requests?|transactions?|uptime|latency|cost|revenue|savings)\b)`)
+	strongActionPattern       = regexp.MustCompile(`(?i)^\s*(?:[-*]\s*)?(architected|automated|built|created|delivered|deployed|designed|developed|drove|engineered|implemented|improved|increased|integrated|launched|led|managed|migrated|optimized|owned|reduced|refactored|scaled|streamlined)\b`)
+	weakBulletPattern         = regexp.MustCompile(`(?i)^\s*(?:[-*]\s*)?(worked on|responsible for|helped|assisted|participated in|involved in|handled)\b`)
+	ownershipSignalPattern    = regexp.MustCompile(`(?i)\b(owned|led|managed|drove|mentored|partnered|coordinated|cross-functional|stakeholder|team)\b`)
+	architectureSignalPattern = regexp.MustCompile(`(?i)\b(architect|architecture|distributed|scalable|platform|system|microservice|infrastructure|cloud|kubernetes|pipeline|backend)\b`)
+	productionSignalPattern   = regexp.MustCompile(`(?i)\b(production|deployed|uptime|availability|monitoring|incident|on-call|ci/cd|latency|throughput|requests|traffic|slo|sla)\b`)
+	analysisKeywordPattern    = regexp.MustCompile(`[a-z0-9][a-z0-9+#./-]*`)
+	analysisKeywordStopwords  = map[string]bool{
+		"about": true, "above": true, "across": true, "after": true, "also": true, "and": true, "are": true, "around": true,
+		"been": true, "being": true, "build": true, "can": true, "candidate": true, "company": true, "could": true,
+		"date": true, "dates": true, "description": true, "details": true, "during": true, "each": true, "end": true,
+		"experience": true, "for": true, "from": true, "has": true, "have": true, "into": true, "job": true,
+		"more": true, "must": true, "need": true, "needs": true, "not": true, "one": true, "only": true,
+		"other": true, "our": true, "per": true, "please": true, "preferred": true, "required": true, "requirements": true,
+		"resume": true, "role": true, "section": true, "should": true, "skills": true, "start": true, "that": true,
+		"the": true, "their": true, "this": true, "through": true, "using": true, "was": true, "with": true, "work": true,
+		"years": true, "you": true, "your": true,
+	}
 )
 
 func AnalyzeResumeDeterministicFacts(resumeData map[string]interface{}, jobDescription string) ResumeAnalysisFacts {
@@ -105,6 +161,8 @@ func AnalyzeResumeDeterministicFacts(resumeData map[string]interface{}, jobDescr
 
 	scanExperienceFacts(experiences, &facts)
 	scanProjectFacts(projects, &facts)
+	facts.Targeting = buildResumeTargetingFacts(buildResumeAnalysisText(resumeData), jobDescription)
+	scanTargetingFacts(&facts)
 	sortAnalysisFacts(&facts)
 	return facts
 }
@@ -120,12 +178,26 @@ Analyze the resume using the deterministic facts first, then explain the highest
 Use only evidence from the resume and the deterministic facts. Do not invent employers, degrees, dates, metrics, or skills.
 Do not say you already analyzed this resume before. Analyze the current resume state.
 
-Return concise Markdown with exactly these sections:
-1. Overall assessment: 2-3 sentences with the strongest evidence and biggest risk.
-2. Priority fixes: 3-5 ranked fixes. Each item must include severity, evidence, why it matters, and the concrete next action.
-3. Strengths to preserve: 2-4 bullets with evidence.
-4. ATS and recruiter impact: explain how missing fields, metrics, and structure affect screening.
-5. Next actions: 3 short commands the user can take in the builder.
+Return Markdown that renders cleanly in chat. Do not use tables. Use exactly these headings:
+### Overall assessment
+2-3 sentences with the strongest evidence, the biggest screening risk, and what is already working.
+
+### Priority fixes
+3-5 ranked fixes. For each fix include:
+- **Severity:** Critical, High, Medium, or Low.
+- **Evidence:** cite the deterministic fact or resume excerpt.
+- **Why it matters:** recruiter, ATS, seniority, credibility, or targeting impact.
+- **Next action:** one concrete builder action.
+- **Example:** only if there is enough resume evidence to give a truthful sample; otherwise say what information is needed.
+
+### Strengths to preserve
+2-4 bullets with evidence from the resume.
+
+### ATS and recruiter impact
+Explain field completeness, metric/action density, seniority signals, and target keyword coverage.
+
+### Next actions
+3 short commands the user can take in the builder.
 
 DETERMINISTIC FACTS JSON:
 %s
@@ -138,6 +210,9 @@ TARGET JOB DESCRIPTION:
 }
 
 func scanExperienceFacts(experiences []map[string]interface{}, facts *ResumeAnalysisFacts) {
+	seenBullets := map[string]string{}
+	totalBulletWords := 0
+
 	for i, exp := range experiences {
 		entryLabel := fmt.Sprintf("experience %d", i+1)
 		title := strings.TrimSpace(toAnalysisString(exp["jobTitle"]))
@@ -151,47 +226,106 @@ func scanExperienceFacts(experiences []map[string]interface{}, facts *ResumeAnal
 		if title == "" && company == "" && description == "" {
 			continue
 		}
+
+		entry := ResumeExperienceFact{
+			Index:    i + 1,
+			Label:    entryLabel,
+			Title:    title,
+			Company:  company,
+			HasDates: startDate != "" && (endDate != "" || currentlyWorking),
+		}
 		if title == "" {
+			entry.MissingFields = append(entry.MissingFields, "job_title")
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_experience_title", "high", "experience", "Experience entry is missing a job title.", entryLabel, "Add the formal title for this role."))
 		}
 		if company == "" {
+			entry.MissingFields = append(entry.MissingFields, "company")
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_experience_company", "high", "experience", "Experience entry is missing a company name.", entryLabel, "Add the employer or organization name."))
 		}
 		if location == "" {
+			entry.MissingFields = append(entry.MissingFields, "location")
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_experience_location", "medium", "experience", "Experience entry is missing location.", entryLabel, "Add city/state, remote, or hybrid location."))
 		}
 		if startDate == "" || (endDate == "" && !currentlyWorking) {
+			entry.MissingFields = append(entry.MissingFields, "dates")
 			facts.Counts.MissingExperienceDates++
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_experience_dates", "high", "experience", "Experience entry is missing start/end dates.", entryLabel, "Add start and end dates, or mark the role as current."))
 		}
 		if description == "" {
+			entry.MissingFields = append(entry.MissingFields, "achievement_bullets")
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_experience_bullets", "high", "experience", "Experience entry is missing achievement bullets.", entryLabel, "Add 3-5 achievement bullets with action, scope, and result."))
+			facts.ExperienceEntries = append(facts.ExperienceEntries, entry)
 			continue
 		}
 
 		for _, bullet := range splitAnalysisBullets(description) {
 			facts.Counts.BulletCount++
+			entry.BulletCount++
+			words := len(strings.Fields(bullet))
+			totalBulletWords += words
+			if len(entry.RepresentativeEvidence) < 2 {
+				entry.RepresentativeEvidence = append(entry.RepresentativeEvidence, truncateAnalysisText(bullet, 180))
+			}
 			if resumeMetricPattern.MatchString(bullet) {
 				facts.Counts.BulletsWithMetrics++
+				entry.BulletsWithMetrics++
 				if len(facts.StrengthSignals) < 8 {
 					facts.StrengthSignals = append(facts.StrengthSignals, analysisSignal("quantified_achievement", "experience", "Bullet includes quantified evidence.", truncateAnalysisText(bullet, 180)))
 				}
 			} else {
 				facts.Counts.BulletsWithoutMetrics++
 			}
+			if strongActionPattern.MatchString(bullet) {
+				facts.Counts.StrongActionBulletCount++
+				entry.StrongActionBullets++
+			}
 			if weakBulletPattern.MatchString(bullet) {
 				facts.Counts.WeakVerbBulletCount++
+				entry.WeakVerbBullets++
 				facts.QualityIssues = append(facts.QualityIssues, analysisIssue("weak_bullet_verb", "medium", "experience", "Bullet starts with a weak or passive verb.", truncateAnalysisText(bullet, 160), "Rewrite with a stronger action verb and concrete outcome."))
 			}
-			if len(strings.Fields(bullet)) > 35 {
+			if words > 35 {
 				facts.Counts.LongBulletCount++
+				entry.LongBullets++
 				facts.QualityIssues = append(facts.QualityIssues, analysisIssue("long_bullet", "low", "experience", "Bullet is likely too long for recruiter scanning.", truncateAnalysisText(bullet, 180), "Split or tighten the bullet to one clear action and result."))
 			}
+			if ownershipSignalPattern.MatchString(bullet) {
+				facts.BulletQuality.OwnershipSignalCount++
+			}
+			if architectureSignalPattern.MatchString(bullet) {
+				facts.BulletQuality.ArchitectureSignalCount++
+			}
+			if productionSignalPattern.MatchString(bullet) {
+				facts.BulletQuality.ProductionSignalCount++
+			}
+
+			normalized := normalizeAnalysisPhrase(bullet)
+			if normalized != "" {
+				if previousLabel, exists := seenBullets[normalized]; exists {
+					facts.Counts.DuplicateBulletCount++
+					entry.DuplicateBullets++
+					if facts.Counts.DuplicateBulletCount <= 3 {
+						facts.QualityIssues = append(facts.QualityIssues, analysisIssue("duplicate_bullet", "medium", "experience", "Bullet appears duplicated or near-duplicated.", fmt.Sprintf("%s repeats content from %s: %s", entryLabel, previousLabel, truncateAnalysisText(bullet, 140)), "Merge duplicate bullets or make each one show a distinct scope, action, and result."))
+					}
+				} else {
+					seenBullets[normalized] = entryLabel
+				}
+			}
 		}
+
+		facts.ExperienceEntries = append(facts.ExperienceEntries, entry)
 	}
 
+	if facts.Counts.BulletCount > 0 {
+		facts.BulletQuality.MetricDensity = roundAnalysisRatio(float64(facts.Counts.BulletsWithMetrics) / float64(facts.Counts.BulletCount))
+		facts.BulletQuality.StrongActionDensity = roundAnalysisRatio(float64(facts.Counts.StrongActionBulletCount) / float64(facts.Counts.BulletCount))
+		facts.BulletQuality.AverageWordsPerBullet = roundAnalysisRatio(float64(totalBulletWords) / float64(facts.Counts.BulletCount))
+	}
 	if facts.Counts.BulletCount > 0 && facts.Counts.BulletsWithoutMetrics > facts.Counts.BulletsWithMetrics {
 		facts.QualityIssues = append(facts.QualityIssues, analysisIssue("low_metric_density", "medium", "experience", "Most experience bullets do not include metrics or scale.", fmt.Sprintf("%d of %d bullets lack metrics.", facts.Counts.BulletsWithoutMetrics, facts.Counts.BulletCount), "Add measurable scope, performance, cost, reliability, user, or time outcomes where truthful."))
+	}
+	if facts.Counts.BulletCount > 0 && facts.Counts.StrongActionBulletCount*2 < facts.Counts.BulletCount {
+		facts.QualityIssues = append(facts.QualityIssues, analysisIssue("low_action_verb_density", "medium", "experience", "Fewer than half of experience bullets start with strong action verbs.", fmt.Sprintf("%d of %d bullets start with a strong action verb.", facts.Counts.StrongActionBulletCount, facts.Counts.BulletCount), "Rewrite weak bullets so they begin with concrete actions such as built, led, optimized, automated, or shipped when truthful."))
 	}
 }
 
@@ -213,6 +347,50 @@ func scanProjectFacts(projects []map[string]interface{}, facts *ResumeAnalysisFa
 		if technologies == "" {
 			facts.MissingFields = append(facts.MissingFields, analysisIssue("missing_project_technologies", "low", "projects", "Project entry is missing technologies.", label, "List the main languages, frameworks, and tools used."))
 		}
+	}
+}
+
+func buildResumeTargetingFacts(resumeText, jobDescription string) ResumeTargetingFacts {
+	targeting := ResumeTargetingFacts{
+		HasTargetDescription: strings.TrimSpace(jobDescription) != "",
+	}
+	if !targeting.HasTargetDescription {
+		return targeting
+	}
+
+	targeting.TargetKeywords = extractAnalysisKeywords(jobDescription, 18)
+	targeting.ResumeKeywords = extractAnalysisKeywords(resumeText, 40)
+	if len(targeting.TargetKeywords) == 0 {
+		return targeting
+	}
+
+	resumeKeywordSet := map[string]bool{}
+	for _, keyword := range targeting.ResumeKeywords {
+		resumeKeywordSet[keyword] = true
+	}
+	resumeLower := strings.ToLower(resumeText)
+	for _, keyword := range targeting.TargetKeywords {
+		if resumeKeywordSet[keyword] || strings.Contains(resumeLower, keyword) {
+			targeting.MatchedKeywords = append(targeting.MatchedKeywords, keyword)
+			continue
+		}
+		if len(targeting.MissingKeywords) < 12 {
+			targeting.MissingKeywords = append(targeting.MissingKeywords, keyword)
+		}
+	}
+	targeting.KeywordCoverage = roundAnalysisRatio(float64(len(targeting.MatchedKeywords)) / float64(len(targeting.TargetKeywords)))
+	return targeting
+}
+
+func scanTargetingFacts(facts *ResumeAnalysisFacts) {
+	if !facts.Targeting.HasTargetDescription || len(facts.Targeting.TargetKeywords) == 0 {
+		return
+	}
+	if len(facts.Targeting.MatchedKeywords) > 0 {
+		facts.StrengthSignals = append(facts.StrengthSignals, analysisSignal("target_keyword_matches", "targeting", "Resume already matches some target-job keywords.", strings.Join(facts.Targeting.MatchedKeywords, ", ")))
+	}
+	if facts.Targeting.KeywordCoverage < 0.45 && len(facts.Targeting.MissingKeywords) > 0 {
+		facts.QualityIssues = append(facts.QualityIssues, analysisIssue("target_keyword_gap", "medium", "targeting", "Resume has limited keyword overlap with the target job description.", fmt.Sprintf("Matched %d of %d extracted target keywords. Missing examples: %s.", len(facts.Targeting.MatchedKeywords), len(facts.Targeting.TargetKeywords), strings.Join(facts.Targeting.MissingKeywords, ", ")), "Add truthful evidence for relevant missing target keywords in skills, summary, or bullets; do not keyword-stuff."))
 	}
 }
 
@@ -410,6 +588,71 @@ func analysisBool(value interface{}) bool {
 		return strings.EqualFold(strings.TrimSpace(s), "true") || strings.EqualFold(strings.TrimSpace(s), "present") || strings.EqualFold(strings.TrimSpace(s), "current")
 	}
 	return false
+}
+
+func extractAnalysisKeywords(text string, limit int) []string {
+	text = strings.ToLower(text)
+	matches := analysisKeywordPattern.FindAllString(text, -1)
+	if len(matches) == 0 || limit <= 0 {
+		return nil
+	}
+
+	counts := map[string]int{}
+	firstSeen := map[string]int{}
+	for i, raw := range matches {
+		keyword := normalizeAnalysisKeyword(raw)
+		if keyword == "" || analysisKeywordStopwords[keyword] {
+			continue
+		}
+		if len(keyword) < 3 && keyword != "go" && keyword != "c#" && keyword != "c++" {
+			continue
+		}
+		counts[keyword]++
+		if _, exists := firstSeen[keyword]; !exists {
+			firstSeen[keyword] = i
+		}
+	}
+
+	keywords := make([]string, 0, len(counts))
+	for keyword := range counts {
+		keywords = append(keywords, keyword)
+	}
+	sort.SliceStable(keywords, func(i, j int) bool {
+		left, right := keywords[i], keywords[j]
+		if counts[left] == counts[right] {
+			return firstSeen[left] < firstSeen[right]
+		}
+		return counts[left] > counts[right]
+	})
+	if len(keywords) > limit {
+		keywords = keywords[:limit]
+	}
+	return keywords
+}
+
+func normalizeAnalysisKeyword(value string) string {
+	value = strings.Trim(strings.ToLower(value), ".,;:!?()[]{}\"'")
+	value = strings.Trim(value, "-_/")
+	if strings.HasSuffix(value, "s") && len(value) > 4 {
+		value = strings.TrimSuffix(value, "s")
+	}
+	return value
+}
+
+func normalizeAnalysisPhrase(value string) string {
+	parts := extractAnalysisKeywords(value, 24)
+	if len(parts) < 4 {
+		return ""
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, " ")
+}
+
+func roundAnalysisRatio(value float64) float64 {
+	if value == 0 {
+		return 0
+	}
+	return math.Round(value*100) / 100
 }
 
 func truncateAnalysisText(value string, max int) string {
