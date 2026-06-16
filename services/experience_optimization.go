@@ -253,6 +253,7 @@ func optimizeSingleExperienceTextFast(ctx context.Context, item ExperienceOptimi
 	if !ok {
 		return nil, fmt.Errorf("AI returned incomplete experience text; please retry")
 	}
+	optimized = preserveExperienceLineCoverage(item.Input.UserExperience, optimized)
 
 	return []ExperienceOptimizationBatchOutcome{
 		{
@@ -281,6 +282,10 @@ func BuildExperienceSingleOptimizationPrompt(item ExperienceOptimizationBatchIte
 	if skillContext := buildExperienceSkillContext(input.MatchedSkills, input.MissingSkills, input.Context.ResumeSkills); skillContext != "" {
 		contextBuilder.WriteString(skillContext)
 	}
+	originalLineCount := len(splitExperienceTextLines(input.UserExperience))
+	if originalLineCount == 0 {
+		originalLineCount = 1
+	}
 
 	return fmt.Sprintf(`You are an expert resume writer and strict factual editor.
 
@@ -299,12 +304,13 @@ Rules:
 3. If the original lacks metrics, keep statements qualitative.
 4. Start each achievement with a strong action verb.
 5. Put each achievement on its own line.
-6. Preserve roughly the same number of achievement lines as the original unless combining duplicates is clearly better.
-7. Every returned line must be a complete sentence ending with terminal punctuation.
-8. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
-9. Do not include bullet symbols, markdown, headers, company names, job titles, dates, JSON, or explanations.
+6. Return exactly %d achievement lines: one improved line for each original achievement line.
+7. Do not merge, delete, summarize, collapse, or reorder original achievement lines.
+8. Every returned line must be a complete sentence ending with terminal punctuation.
+9. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
+10. Do not include bullet symbols, markdown, headers, company names, job titles, dates, JSON, or explanations.
 
-Return ONLY the improved experience text.`, targetJob, contextBuilder.String(), truncateExperiencePromptText(input.UserExperience, 6000))
+Return ONLY the improved experience text.`, targetJob, contextBuilder.String(), truncateExperiencePromptText(input.UserExperience, 6000), originalLineCount)
 }
 
 func cleanPlainExperienceResponse(value string) string {
@@ -347,17 +353,36 @@ func repairIncompleteExperienceOutput(original, optimized string) (string, bool)
 	return strings.Join(optimizedLines, "\n"), true
 }
 
+func preserveExperienceLineCoverage(original, optimized string) string {
+	originalLines := splitExperienceTextLines(original)
+	optimizedLines := splitExperienceTextLines(optimized)
+	if len(originalLines) <= 1 || len(optimizedLines) == 0 || len(optimizedLines) >= len(originalLines) {
+		return strings.TrimSpace(optimized)
+	}
+
+	merged := make([]string, 0, len(originalLines))
+	merged = append(merged, optimizedLines...)
+	merged = append(merged, originalLines[len(optimizedLines):]...)
+	return strings.Join(merged, "\n")
+}
+
 func splitExperienceTextLines(value string) []string {
 	var lines []string
 	for _, line := range strings.Split(strings.TrimSpace(value), "\n") {
 		line = strings.TrimSpace(line)
-		line = strings.TrimLeft(line, "-*• \t")
+		line = trimLeadingExperienceBullet(line)
 		line = strings.TrimSpace(line)
 		if line != "" {
 			lines = append(lines, line)
 		}
 	}
 	return lines
+}
+
+func trimLeadingExperienceBullet(line string) string {
+	return strings.TrimLeftFunc(line, func(r rune) bool {
+		return r == '-' || r == '*' || r == '•' || r == ' ' || r == '\t'
+	})
 }
 
 func isLikelyIncompleteExperienceLine(line string) bool {
@@ -424,10 +449,11 @@ WRITING RULES:
 1. Start each achievement with a strong action verb.
 2. Keep each achievement on its own line inside optimizedExperience.
 3. Do not include bullet symbols, markdown, headers, company names, job titles, dates, or explanations in optimizedExperience.
-4. Keep roughly the same number of achievements as the original unless combining duplicate lines is clearly better.
-5. Every achievement line must be a complete sentence ending with terminal punctuation.
-6. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
-7. Keep reviewReason to "checked" unless you corrected a factual issue; maximum 12 words.
+4. Return one improved line for each original achievement line.
+5. Do not merge, delete, summarize, collapse, or reorder original achievement lines.
+6. Every achievement line must be a complete sentence ending with terminal punctuation.
+7. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
+8. Keep reviewReason to "checked" unless you corrected a factual issue; maximum 12 words.
 
 Before returning, self-check each optimizedExperience against its original description and context. Remove any unsupported claim.
 

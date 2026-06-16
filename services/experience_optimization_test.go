@@ -100,6 +100,8 @@ func TestBuildExperienceBatchOptimizationPromptIncludesPositionsAndIntegrityRule
 		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
 		"NEVER invent accomplishments",
 		"Return one result for every supplied experience position",
+		"Return one improved line for each original achievement line",
+		"Do not merge, delete, summarize, collapse, or reorder original achievement lines",
 		"complete sentence ending with terminal punctuation",
 		"Do not shorten by cutting text mid-sentence",
 		`"reviewReason": "checked"`,
@@ -160,6 +162,8 @@ func TestBuildExperienceSingleOptimizationPromptUsesPlainTextRules(t *testing.T)
 		"Built API services.",
 		"Candidate's existing resume skills: Go, PostgreSQL",
 		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
+		"Return exactly 1 achievement lines",
+		"Do not merge, delete, summarize, collapse, or reorder original achievement lines",
 		"complete sentence ending with terminal punctuation",
 		"Do not shorten by cutting text mid-sentence",
 		"Return ONLY the improved experience text",
@@ -170,6 +174,31 @@ func TestBuildExperienceSingleOptimizationPromptUsesPlainTextRules(t *testing.T)
 	}
 	if strings.Contains(prompt, `"optimizedExperience"`) {
 		t.Fatalf("single prompt should not ask for JSON:\n%s", prompt)
+	}
+}
+
+func TestPreserveExperienceLineCoverageAppendsMissingOriginalLines(t *testing.T) {
+	original := strings.Join([]string{
+		"Led a team of four engineers to design and deliver a Kubernetes-based automation platform.",
+		"Built a fully automated 32-step deployment workflow covering compute provisioning.",
+		"Built a core SDK that enabled broad cross-team adoption.",
+		"Architected a centralized traffic configuration and control system.",
+	}, "\n")
+	optimized := strings.Join([]string{
+		"Led four engineers to deliver a Kubernetes-based automation platform.",
+		"Built a fully automated 32-step deployment workflow for repeatable provisioning.",
+	}, "\n")
+
+	got := preserveExperienceLineCoverage(original, optimized)
+	lines := splitExperienceTextLines(got)
+	if len(lines) != 4 {
+		t.Fatalf("preserved line count = %d, want 4; output:\n%s", len(lines), got)
+	}
+	if !strings.Contains(got, "Built a core SDK that enabled broad cross-team adoption.") {
+		t.Fatalf("missing third original line:\n%s", got)
+	}
+	if !strings.Contains(got, "Architected a centralized traffic configuration and control system.") {
+		t.Fatalf("missing fourth original line:\n%s", got)
 	}
 }
 
