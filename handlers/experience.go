@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ const experienceBatchConcurrency = 4
 var (
 	optimizeExperienceForBatch       = services.OptimizeExperienceWithReview
 	improveExperienceGrammarForBatch = services.ImproveExperienceGrammarWithReview
+	optimizeExperiencesBatchFast     = services.OptimizeExperiencesBatchFast
 )
 
 type ExperienceOptimizationRequest struct {
@@ -109,8 +111,7 @@ func OptimizeExperienceBatch(c *gin.Context) {
 	jobDescription := strings.TrimSpace(req.JobDescription)
 	ctx := c.Request.Context()
 	results := make([]ExperienceBatchItemResponse, len(req.Experiences))
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, experienceBatchConcurrency)
+	batchItems := make([]services.ExperienceOptimizationBatchItem, 0, len(req.Experiences))
 
 	for i, item := range req.Experiences {
 		result := ExperienceBatchItemResponse{Index: item.Index}
@@ -139,7 +140,68 @@ func OptimizeExperienceBatch(c *gin.Context) {
 			Context:        item.ExperienceContext,
 		}
 
-		i, item, input := i, item, input
+		batchItems = append(batchItems, services.ExperienceOptimizationBatchItem{
+			Position: i,
+			Index:    item.Index,
+			Input:    input,
+		})
+	}
+
+	if len(batchItems) > 0 {
+		if err := processExperienceBatchFast(ctx, jobDescription, batchItems, results); err != nil {
+			processExperienceBatchIndividually(ctx, jobDescription, batchItems, results)
+		}
+	}
+
+	response := ExperienceBatchOptimizationResponse{
+		Results: results,
+		Message: "Experience batch processed successfully.",
+	}
+	utils.SuccessResponse(c, http.StatusOK, "Experience batch processed successfully", response)
+}
+
+func processExperienceBatchFast(ctx context.Context, jobDescription string, batchItems []services.ExperienceOptimizationBatchItem, results []ExperienceBatchItemResponse) error {
+	outcomes, err := optimizeExperiencesBatchFast(ctx, batchItems)
+	if err != nil {
+		return err
+	}
+
+	outcomeByPosition := make(map[int]services.ExperienceOptimizationBatchOutcome, len(outcomes))
+	for _, outcome := range outcomes {
+		outcomeByPosition[outcome.Position] = outcome
+	}
+
+	status := "improved"
+	if jobDescription != "" {
+		status = "optimized"
+	}
+
+	for _, item := range batchItems {
+		result := ExperienceBatchItemResponse{Index: item.Index}
+		outcome, ok := outcomeByPosition[item.Position]
+		if !ok || strings.TrimSpace(outcome.OptimizedExperience) == "" {
+			result.Status = "failed"
+			result.Error = "missing optimized experience in batch response"
+			results[item.Position] = result
+			continue
+		}
+
+		result.Status = status
+		result.OptimizedExperience = cleanupAIResponse(outcome.OptimizedExperience)
+		result.ReviewStatus = outcome.ReviewStatus
+		result.ReviewReason = outcome.ReviewReason
+		results[item.Position] = result
+	}
+
+	return nil
+}
+
+func processExperienceBatchIndividually(ctx context.Context, jobDescription string, batchItems []services.ExperienceOptimizationBatchItem, results []ExperienceBatchItemResponse) {
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, experienceBatchConcurrency)
+
+	for _, batchItem := range batchItems {
+		batchItem := batchItem
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -148,45 +210,40 @@ func OptimizeExperienceBatch(c *gin.Context) {
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
-				results[i] = ExperienceBatchItemResponse{
-					Index:  item.Index,
+				results[batchItem.Position] = ExperienceBatchItemResponse{
+					Index:  batchItem.Index,
 					Status: "failed",
 					Error:  ctx.Err().Error(),
 				}
 				return
 			}
 
+			result := ExperienceBatchItemResponse{Index: batchItem.Index}
 			var (
 				outcome services.ExperienceOptimizationOutcome
 				err     error
 			)
 			if jobDescription != "" {
-				outcome, err = optimizeExperienceForBatch(ctx, input)
+				outcome, err = optimizeExperienceForBatch(ctx, batchItem.Input)
 				result.Status = "optimized"
 			} else {
-				outcome, err = improveExperienceGrammarForBatch(ctx, input)
+				outcome, err = improveExperienceGrammarForBatch(ctx, batchItem.Input)
 				result.Status = "improved"
 			}
 			if err != nil {
 				result.Status = "failed"
 				result.Error = err.Error()
-				results[i] = result
+				results[batchItem.Position] = result
 				return
 			}
 
 			result.OptimizedExperience = cleanupAIResponse(outcome.OptimizedExperience)
 			result.ReviewStatus = outcome.ReviewStatus
 			result.ReviewReason = outcome.ReviewReason
-			results[i] = result
+			results[batchItem.Position] = result
 		}()
 	}
 	wg.Wait()
-
-	response := ExperienceBatchOptimizationResponse{
-		Results: results,
-		Message: "Experience batch processed successfully.",
-	}
-	utils.SuccessResponse(c, http.StatusOK, "Experience batch processed successfully", response)
 }
 
 // cleanupAIResponse removes asterisks and cleans up the AI response

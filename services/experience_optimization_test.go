@@ -63,6 +63,91 @@ func TestBuildContextualExperienceGrammarPromptIncludesContext(t *testing.T) {
 	}
 }
 
+func TestBuildExperienceBatchOptimizationPromptIncludesPositionsAndIntegrityRules(t *testing.T) {
+	prompt := BuildExperienceBatchOptimizationPrompt([]ExperienceOptimizationBatchItem{
+		{
+			Position: 0,
+			Index:    10,
+			Input: ExperienceOptimizationInput{
+				JobDescription: "Backend role focused on Go APIs.",
+				UserExperience: "Built API services.",
+				MatchedSkills:  []string{"Go"},
+				MissingSkills:  []string{"Kubernetes"},
+				Context: ExperienceOptimizationContext{
+					JobTitle:     "Software Engineer",
+					Company:      "Acme",
+					ResumeSkills: []string{"Go", "PostgreSQL"},
+				},
+			},
+		},
+		{
+			Position: 1,
+			Index:    11,
+			Input: ExperienceOptimizationInput{
+				JobDescription: "Backend role focused on Go APIs.",
+				UserExperience: "Improved deployments.",
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"EXPERIENCE POSITION 0 / ORIGINAL INDEX 10",
+		"EXPERIENCE POSITION 1 / ORIGINAL INDEX 11",
+		"Backend role focused on Go APIs.",
+		"Built API services.",
+		"Improved deployments.",
+		"Candidate's existing resume skills: Go, PostgreSQL",
+		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
+		"NEVER invent accomplishments",
+		"Return one result for every supplied experience position",
+		`"position": 0`,
+		`"optimizedExperience"`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q\nprompt:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestParseExperienceBatchOptimizationResultsHandlesWrappedAndFencedJSON(t *testing.T) {
+	raw := "```json\n{\"results\":[{\"position\":1,\"index\":11,\"optimizedExperience\":\"Improved deployments.\",\"reviewStatus\":\"fast_batch\",\"reviewReason\":\"ok\"}]}\n```"
+
+	results, err := ParseExperienceBatchOptimizationResults(raw)
+	if err != nil {
+		t.Fatalf("ParseExperienceBatchOptimizationResults returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].position != 1 {
+		t.Fatalf("position = %d, want 1", results[0].position)
+	}
+	if !results[0].hasIndex || results[0].index != 11 {
+		t.Fatalf("index = %d hasIndex=%v, want 11 true", results[0].index, results[0].hasIndex)
+	}
+	if results[0].optimizedExperience != "Improved deployments." {
+		t.Fatalf("optimizedExperience = %q", results[0].optimizedExperience)
+	}
+	if results[0].reviewStatus != "fast_batch" || results[0].reviewReason != "ok" {
+		t.Fatalf("unexpected review fields: %#v", results[0])
+	}
+}
+
+func TestParseExperienceBatchOptimizationResultsHandlesBareArray(t *testing.T) {
+	raw := `[{"position":0,"optimized_experience":"Built Go APIs."}]`
+
+	results, err := ParseExperienceBatchOptimizationResults(raw)
+	if err != nil {
+		t.Fatalf("ParseExperienceBatchOptimizationResults returned error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("len(results) = %d, want 1", len(results))
+	}
+	if results[0].position != 0 || results[0].optimizedExperienceSnake != "Built Go APIs." {
+		t.Fatalf("unexpected result: %#v", results[0])
+	}
+}
+
 func TestParseExperienceOptimizationReviewHandlesFencedSnakeCaseJSON(t *testing.T) {
 	raw := "```json\n{\"approved\":false,\"revised_experience\":\"Built Go APIs without adding Kubernetes claims.\",\"reason\":\"removed unsupported skill\"}\n```"
 

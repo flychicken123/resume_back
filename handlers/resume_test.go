@@ -12,9 +12,7 @@ import (
 	"regexp"
 	"resumeai/services"
 	"strings"
-	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -224,39 +222,47 @@ func TestOptimizeExperienceBatch_MissingExperiences(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestOptimizeExperienceBatch_ProcessesConcurrentlyAndPreservesOrder(t *testing.T) {
+func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 	router := setupTestRouter()
 
+	originalFastBatch := optimizeExperiencesBatchFast
 	originalOptimize := optimizeExperienceForBatch
 	originalImprove := improveExperienceGrammarForBatch
 	defer func() {
+		optimizeExperiencesBatchFast = originalFastBatch
 		optimizeExperienceForBatch = originalOptimize
 		improveExperienceGrammarForBatch = originalImprove
 	}()
 
-	var active int32
-	var maxActive int32
-	var grammarCalls int32
-	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
-		current := atomic.AddInt32(&active, 1)
-		for {
-			max := atomic.LoadInt32(&maxActive)
-			if current <= max || atomic.CompareAndSwapInt32(&maxActive, max, current) {
-				break
-			}
-		}
-		time.Sleep(50 * time.Millisecond)
-		atomic.AddInt32(&active, -1)
+	fastBatchCalls := 0
+	fallbackCalls := 0
+	optimizeExperiencesBatchFast = func(ctx context.Context, items []services.ExperienceOptimizationBatchItem) ([]services.ExperienceOptimizationBatchOutcome, error) {
+		fastBatchCalls++
+		assert.Len(t, items, 5)
+		assert.Equal(t, 0, items[0].Position)
+		assert.Equal(t, 10, items[0].Index)
+		assert.Equal(t, "first", items[0].Input.UserExperience)
 
-		return services.ExperienceOptimizationOutcome{
-			OptimizedExperience: "* optimized " + input.UserExperience,
-			ReviewStatus:        "approved",
-			ReviewReason:        "ok",
-		}, nil
+		outcomes := make([]services.ExperienceOptimizationBatchOutcome, 0, len(items))
+		for i := len(items) - 1; i >= 0; i-- {
+			item := items[i]
+			outcomes = append(outcomes, services.ExperienceOptimizationBatchOutcome{
+				Position:            item.Position,
+				Index:               item.Index,
+				OptimizedExperience: "* optimized " + item.Input.UserExperience,
+				ReviewStatus:        "fast_batch",
+				ReviewReason:        "self-checked",
+			})
+		}
+		return outcomes, nil
+	}
+	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		fallbackCalls++
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected optimize fallback call")
 	}
 	improveExperienceGrammarForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
-		atomic.AddInt32(&grammarCalls, 1)
-		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected grammar call")
+		fallbackCalls++
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected grammar fallback call")
 	}
 
 	body, err := json.Marshal(map[string]interface{}{
@@ -279,8 +285,8 @@ func TestOptimizeExperienceBatch_ProcessesConcurrentlyAndPreservesOrder(t *testi
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Greater(t, atomic.LoadInt32(&maxActive), int32(1))
-	assert.Equal(t, int32(0), atomic.LoadInt32(&grammarCalls))
+	assert.Equal(t, 1, fastBatchCalls)
+	assert.Equal(t, 0, fallbackCalls)
 
 	var response struct {
 		Success bool                                `json:"success"`
@@ -294,8 +300,8 @@ func TestOptimizeExperienceBatch_ProcessesConcurrentlyAndPreservesOrder(t *testi
 	for i, result := range response.Data.Results {
 		assert.Equal(t, 10+i, result.Index)
 		assert.Equal(t, "optimized", result.Status)
-		assert.Equal(t, "approved", result.ReviewStatus)
-		assert.Equal(t, "ok", result.ReviewReason)
+		assert.Equal(t, "fast_batch", result.ReviewStatus)
+		assert.Equal(t, "self-checked", result.ReviewReason)
 	}
 	assert.Equal(t, "optimized first", response.Data.Results[0].OptimizedExperience)
 	assert.Equal(t, "optimized fifth", response.Data.Results[4].OptimizedExperience)

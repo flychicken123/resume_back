@@ -40,6 +40,20 @@ type ExperienceOptimizationOutcome struct {
 	ReviewReason        string
 }
 
+type ExperienceOptimizationBatchItem struct {
+	Position int
+	Index    int
+	Input    ExperienceOptimizationInput
+}
+
+type ExperienceOptimizationBatchOutcome struct {
+	Position            int
+	Index               int
+	OptimizedExperience string
+	ReviewStatus        string
+	ReviewReason        string
+}
+
 type ExperienceOptimizationReview struct {
 	Approved          bool   `json:"approved"`
 	RevisedExperience string `json:"revisedExperience"`
@@ -155,6 +169,227 @@ func ImproveExperienceGrammarWithReview(ctx context.Context, input ExperienceOpt
 		ReviewStatus:        status,
 		ReviewReason:        strings.TrimSpace(review.Reason),
 	}, nil
+}
+
+func OptimizeExperiencesBatchFast(ctx context.Context, items []ExperienceOptimizationBatchItem) ([]ExperienceOptimizationBatchOutcome, error) {
+	if len(items) == 0 {
+		return nil, nil
+	}
+
+	prompt := BuildExperienceBatchOptimizationPrompt(items)
+	raw, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.2)
+	if err != nil {
+		return nil, err
+	}
+
+	parsed, err := ParseExperienceBatchOptimizationResults(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	itemByPosition := make(map[int]ExperienceOptimizationBatchItem, len(items))
+	itemByIndex := make(map[int]ExperienceOptimizationBatchItem, len(items))
+	duplicateIndexes := make(map[int]bool)
+	for _, item := range items {
+		itemByPosition[item.Position] = item
+		if _, exists := itemByIndex[item.Index]; exists {
+			duplicateIndexes[item.Index] = true
+			continue
+		}
+		itemByIndex[item.Index] = item
+	}
+
+	outcomes := make([]ExperienceOptimizationBatchOutcome, 0, len(parsed))
+	for _, result := range parsed {
+		item, ok := itemByPosition[result.position]
+		if !ok && result.hasIndex && !duplicateIndexes[result.index] {
+			item, ok = itemByIndex[result.index]
+		}
+		if !ok {
+			continue
+		}
+
+		optimized := strings.TrimSpace(firstNonEmptyExperienceContext(
+			result.optimizedExperience,
+			result.optimizedExperienceSnake,
+			result.description,
+		))
+		if optimized == "" {
+			continue
+		}
+
+		reviewStatus := strings.TrimSpace(result.reviewStatus)
+		if reviewStatus == "" {
+			reviewStatus = "fast_batch"
+		}
+
+		outcomes = append(outcomes, ExperienceOptimizationBatchOutcome{
+			Position:            item.Position,
+			Index:               item.Index,
+			OptimizedExperience: ValidateAndCleanOutput(item.Input.UserExperience, optimized),
+			ReviewStatus:        reviewStatus,
+			ReviewReason:        strings.TrimSpace(result.reviewReason),
+		})
+	}
+
+	return outcomes, nil
+}
+
+func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchItem) string {
+	var targetJob string
+	for _, item := range items {
+		if value := strings.TrimSpace(item.Input.JobDescription); value != "" {
+			targetJob = value
+			break
+		}
+	}
+
+	mode := "Improve grammar, clarity, professional tone, action orientation, and impact for each work experience description."
+	if targetJob != "" {
+		mode = "Enhance each work experience description to better align with the target job while preserving the candidate's original facts."
+	}
+
+	var inputBuilder strings.Builder
+	for _, item := range items {
+		input := item.Input
+		fmt.Fprintf(&inputBuilder, "=== EXPERIENCE POSITION %d / ORIGINAL INDEX %d ===\n", item.Position, item.Index)
+		if contextBlock := buildExperienceContextBlock(input.Context); contextBlock != "" {
+			inputBuilder.WriteString(contextBlock)
+		}
+		if skillContext := buildExperienceSkillContext(input.MatchedSkills, input.MissingSkills, input.Context.ResumeSkills); skillContext != "" {
+			inputBuilder.WriteString(skillContext)
+		}
+		inputBuilder.WriteString("Original Experience Description:\n")
+		inputBuilder.WriteString(strings.TrimSpace(input.UserExperience))
+		inputBuilder.WriteString("\n\n")
+	}
+
+	if strings.TrimSpace(targetJob) == "" {
+		targetJob = "(none provided; improve against original experience and resume context only)"
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer and strict factual editor.
+
+Task:
+%s
+
+Target Job Description:
+%s
+
+Experiences:
+%s
+
+CRITICAL INTEGRITY RULES:
+1. NEVER invent accomplishments, metrics, technologies, responsibilities, employers, titles, dates, seniority, tools, scale, outcomes, percentages, or dollar amounts.
+2. NEVER claim a missing skill as existing experience unless it is explicitly supported by the original description or resume context for that same experience.
+3. Preserve the user's authentic scope. Only rephrase, reorganize, clarify, and highlight.
+4. If the original lacks metrics, keep statements qualitative.
+5. Return one result for every supplied experience position.
+
+WRITING RULES:
+1. Start each achievement with a strong action verb.
+2. Keep each achievement on its own line inside optimizedExperience.
+3. Do not include bullet symbols, markdown, headers, company names, job titles, dates, or explanations in optimizedExperience.
+4. Keep roughly the same number of achievements as the original unless combining duplicate lines is clearly better.
+
+Before returning, self-check each optimizedExperience against its original description and context. Remove any unsupported claim.
+
+Return ONLY valid JSON with this shape:
+{
+  "results": [
+    {
+      "position": 0,
+      "index": 0,
+      "optimizedExperience": "rewritten achievement one\nrewritten achievement two",
+      "reviewStatus": "fast_batch",
+      "reviewReason": "self-checked against original facts"
+    }
+  ]
+}`, mode, targetJob, inputBuilder.String())
+}
+
+type experienceBatchOptimizationResult struct {
+	position                 int
+	index                    int
+	hasIndex                 bool
+	optimizedExperience      string
+	optimizedExperienceSnake string
+	description              string
+	reviewStatus             string
+	reviewReason             string
+}
+
+func ParseExperienceBatchOptimizationResults(raw string) ([]experienceBatchOptimizationResult, error) {
+	type llmResult struct {
+		Position                 *int   `json:"position"`
+		Index                    *int   `json:"index"`
+		OptimizedExperience      string `json:"optimizedExperience"`
+		OptimizedExperienceSnake string `json:"optimized_experience"`
+		Description              string `json:"description"`
+		ReviewStatus             string `json:"reviewStatus"`
+		ReviewReason             string `json:"reviewReason"`
+	}
+
+	decode := func(clean string) ([]llmResult, error) {
+		var wrapped struct {
+			Results []llmResult `json:"results"`
+		}
+		if err := json.Unmarshal([]byte(clean), &wrapped); err == nil && wrapped.Results != nil {
+			return wrapped.Results, nil
+		}
+
+		var array []llmResult
+		if err := json.Unmarshal([]byte(clean), &array); err != nil {
+			return nil, err
+		}
+		return array, nil
+	}
+
+	clean := strings.TrimSpace(stripMarkdownFence(raw))
+	decoded, err := decode(clean)
+	if err != nil {
+		if array := extractJSONArray(clean); array != clean {
+			decoded, err = decode(array)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("parse batch experience optimization JSON: %w", err)
+		}
+	}
+
+	results := make([]experienceBatchOptimizationResult, 0, len(decoded))
+	for _, item := range decoded {
+		if item.Position == nil {
+			continue
+		}
+		result := experienceBatchOptimizationResult{
+			position:                 *item.Position,
+			optimizedExperience:      strings.TrimSpace(item.OptimizedExperience),
+			optimizedExperienceSnake: strings.TrimSpace(item.OptimizedExperienceSnake),
+			description:              strings.TrimSpace(item.Description),
+			reviewStatus:             strings.TrimSpace(item.ReviewStatus),
+			reviewReason:             strings.TrimSpace(item.ReviewReason),
+		}
+		if item.Index != nil {
+			result.index = *item.Index
+			result.hasIndex = true
+		}
+		results = append(results, result)
+	}
+
+	if len(results) == 0 {
+		return nil, fmt.Errorf("batch experience optimization returned no results")
+	}
+	return results, nil
+}
+
+func extractJSONArray(raw string) string {
+	cleaned := strings.TrimSpace(stripMarkdownFence(raw))
+	start := strings.Index(cleaned, "[")
+	end := strings.LastIndex(cleaned, "]")
+	if start >= 0 && end >= start {
+		return cleaned[start : end+1]
+	}
+	return cleaned
 }
 
 func ReviewExperienceOptimization(ctx context.Context, input ExperienceOptimizationInput, candidate string) (ExperienceOptimizationReview, error) {
