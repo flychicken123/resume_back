@@ -256,8 +256,15 @@ func CallGeminiStreamingWithTemperature(prompt string, temperature float64, onCh
 // Higher temperature (0.7-1.0) = more creative, varied output
 // For resume optimization, use low temperature (0.2-0.3) to reduce hallucinations.
 func CallGeminiWithTemperatureContext(ctx context.Context, prompt string, temperature float64) (string, error) {
+	return CallGeminiWithTemperatureMaxTokensContext(ctx, prompt, temperature, 4096)
+}
+
+func CallGeminiWithTemperatureMaxTokensContext(ctx context.Context, prompt string, temperature float64, maxTokens int) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if maxTokens <= 0 {
+		maxTokens = 4096
 	}
 	if err := geminiGate.acquire(ctx); err != nil {
 		return "", err
@@ -273,7 +280,7 @@ func CallGeminiWithTemperatureContext(ctx context.Context, prompt string, temper
 		llm,
 		prompt,
 		llms.WithTemperature(temperature),
-		llms.WithMaxTokens(4096),
+		llms.WithMaxTokens(maxTokens),
 		llms.WithJSONMode(),
 	)
 }

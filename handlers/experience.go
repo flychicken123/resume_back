@@ -9,11 +9,12 @@ import (
 	"resumeai/utils"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-const experienceBatchConcurrency = 4
+const experienceBatchConcurrency = 10
 
 var (
 	optimizeExperienceForBatch       = services.OptimizeExperienceWithReview
@@ -34,6 +35,7 @@ type ExperienceOptimizationResponse struct {
 	Message             string `json:"message"`
 	ReviewStatus        string `json:"reviewStatus,omitempty"`
 	ReviewReason        string `json:"reviewReason,omitempty"`
+	DurationMs          int64  `json:"durationMs,omitempty"`
 }
 
 type ExperienceBatchOptimizationRequest struct {
@@ -52,8 +54,9 @@ type ExperienceBatchItemRequest struct {
 }
 
 type ExperienceBatchOptimizationResponse struct {
-	Results []ExperienceBatchItemResponse `json:"results"`
-	Message string                        `json:"message"`
+	Results    []ExperienceBatchItemResponse `json:"results"`
+	Message    string                        `json:"message"`
+	DurationMs int64                         `json:"durationMs,omitempty"`
 }
 
 type ExperienceBatchItemResponse struct {
@@ -66,6 +69,7 @@ type ExperienceBatchItemResponse struct {
 }
 
 func OptimizeExperience(c *gin.Context) {
+	started := time.Now()
 	var req ExperienceOptimizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
@@ -96,6 +100,7 @@ func OptimizeExperience(c *gin.Context) {
 		Message:             "Experience optimized successfully based on job description.",
 		ReviewStatus:        outcome.ReviewStatus,
 		ReviewReason:        outcome.ReviewReason,
+		DurationMs:          time.Since(started).Milliseconds(),
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Experience optimized successfully", response)
@@ -124,6 +129,7 @@ func optimizeSingleExperienceFast(ctx context.Context, input services.Experience
 }
 
 func OptimizeExperienceBatch(c *gin.Context) {
+	started := time.Now()
 	var req ExperienceBatchOptimizationRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		utils.ValidationError(c, err)
@@ -178,8 +184,9 @@ func OptimizeExperienceBatch(c *gin.Context) {
 	}
 
 	response := ExperienceBatchOptimizationResponse{
-		Results: results,
-		Message: "Experience batch processed successfully.",
+		Results:    results,
+		Message:    "Experience batch processed successfully.",
+		DurationMs: time.Since(started).Milliseconds(),
 	}
 	utils.SuccessResponse(c, http.StatusOK, "Experience batch processed successfully", response)
 }
@@ -340,9 +347,11 @@ type ExperienceGrammarResponse struct {
 	Message            string `json:"message"`
 	ReviewStatus       string `json:"reviewStatus,omitempty"`
 	ReviewReason       string `json:"reviewReason,omitempty"`
+	DurationMs         int64  `json:"durationMs,omitempty"`
 }
 
 func ImproveExperienceGrammar(c *gin.Context) {
+	started := time.Now()
 	var req ExperienceGrammarRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -370,6 +379,7 @@ func ImproveExperienceGrammar(c *gin.Context) {
 		Message:            "Experience grammar and style improved successfully.",
 		ReviewStatus:       outcome.ReviewStatus,
 		ReviewReason:       outcome.ReviewReason,
+		DurationMs:         time.Since(started).Milliseconds(),
 	}
 
 	c.JSON(http.StatusOK, response)

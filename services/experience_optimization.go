@@ -177,7 +177,7 @@ func OptimizeExperiencesBatchFast(ctx context.Context, items []ExperienceOptimiz
 	}
 
 	prompt := BuildExperienceBatchOptimizationPrompt(items)
-	raw, err := CallGeminiWithTemperatureContext(ctx, prompt, 0.2)
+	raw, err := CallGeminiWithTemperatureMaxTokensContext(ctx, prompt, 0.2, experienceBatchMaxTokens(len(items)))
 	if err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchI
 	var targetJob string
 	for _, item := range items {
 		if value := strings.TrimSpace(item.Input.JobDescription); value != "" {
-			targetJob = value
+			targetJob = truncateExperiencePromptText(value, 2500)
 			break
 		}
 	}
@@ -260,7 +260,7 @@ func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchI
 			inputBuilder.WriteString(skillContext)
 		}
 		inputBuilder.WriteString("Original Experience Description:\n")
-		inputBuilder.WriteString(strings.TrimSpace(input.UserExperience))
+		inputBuilder.WriteString(truncateExperiencePromptText(input.UserExperience, 3000))
 		inputBuilder.WriteString("\n\n")
 	}
 
@@ -306,6 +306,28 @@ Return ONLY valid JSON with this shape:
     }
   ]
 }`, mode, targetJob, inputBuilder.String())
+}
+
+func experienceBatchMaxTokens(itemCount int) int {
+	if itemCount <= 1 {
+		return 1024
+	}
+	maxTokens := itemCount * 900
+	if maxTokens < 1024 {
+		return 1024
+	}
+	if maxTokens > 4096 {
+		return 4096
+	}
+	return maxTokens
+}
+
+func truncateExperiencePromptText(value string, max int) string {
+	value = strings.TrimSpace(value)
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	return strings.TrimSpace(value[:max]) + "\n[truncated]"
 }
 
 type experienceBatchOptimizationResult struct {

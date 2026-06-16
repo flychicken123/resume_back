@@ -7,15 +7,13 @@ import (
 	"time"
 )
 
-// Gemini Flash on "standard" service tier rejects requests past ~6
-// concurrent in-flight per project (measured via burst diagnostic endpoint).
-// Default cap 4 leaves headroom for spikes below that ceiling.
+// Default cap supports processing a 10-experience AI check in one wave.
 // Override via GEMINI_CONCURRENCY env var (1-32).
 //
 // The gate is shared across all Gemini generation calls (Flash, Pro, tools)
 // because they hit the same concurrency pool at Google's edge. Embedding has
 // its own pool server-side and doesn't need this gate.
-const defaultGeminiConcurrency = 4
+const defaultGeminiConcurrency = 10
 
 // acquireSlotTimeout is the max time a caller will wait for a free slot.
 // If all slots are busy for longer than this, we return an error rather than

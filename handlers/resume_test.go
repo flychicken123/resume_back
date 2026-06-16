@@ -399,6 +399,11 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 			{"index": 12, "userExperience": "third"},
 			{"index": 13, "userExperience": "fourth"},
 			{"index": 14, "userExperience": "fifth"},
+			{"index": 15, "userExperience": "sixth"},
+			{"index": 16, "userExperience": "seventh"},
+			{"index": 17, "userExperience": "eighth"},
+			{"index": 18, "userExperience": "ninth"},
+			{"index": 19, "userExperience": "tenth"},
 		},
 	})
 	assert.NoError(t, err)
@@ -411,8 +416,8 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, int32(5), atomic.LoadInt32(&fastBatchCalls))
-	assert.Greater(t, atomic.LoadInt32(&maxActive), int32(1))
+	assert.Equal(t, int32(10), atomic.LoadInt32(&fastBatchCalls))
+	assert.Equal(t, int32(10), atomic.LoadInt32(&maxActive))
 	assert.Equal(t, 0, fallbackCalls)
 
 	var response struct {
@@ -422,7 +427,7 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 	err = json.Unmarshal(w.Body.Bytes(), &response)
 	assert.NoError(t, err)
 	assert.True(t, response.Success)
-	assert.Len(t, response.Data.Results, 5)
+	assert.Len(t, response.Data.Results, 10)
 
 	for i, result := range response.Data.Results {
 		assert.Equal(t, 10+i, result.Index)
@@ -431,7 +436,7 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 		assert.Equal(t, "self-checked", result.ReviewReason)
 	}
 	assert.Equal(t, "optimized first", response.Data.Results[0].OptimizedExperience)
-	assert.Equal(t, "optimized fifth", response.Data.Results[4].OptimizedExperience)
+	assert.Equal(t, "optimized tenth", response.Data.Results[9].OptimizedExperience)
 }
 
 // validateResumeRequest validates the ResumeRequest struct
