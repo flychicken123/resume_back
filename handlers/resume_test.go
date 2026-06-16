@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,8 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"resumeai/services"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -218,6 +222,83 @@ func TestOptimizeExperienceBatch_MissingExperiences(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestOptimizeExperienceBatch_ProcessesConcurrentlyAndPreservesOrder(t *testing.T) {
+	router := setupTestRouter()
+
+	originalOptimize := optimizeExperienceForBatch
+	originalImprove := improveExperienceGrammarForBatch
+	defer func() {
+		optimizeExperienceForBatch = originalOptimize
+		improveExperienceGrammarForBatch = originalImprove
+	}()
+
+	var active int32
+	var maxActive int32
+	var grammarCalls int32
+	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		current := atomic.AddInt32(&active, 1)
+		for {
+			max := atomic.LoadInt32(&maxActive)
+			if current <= max || atomic.CompareAndSwapInt32(&maxActive, max, current) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
+
+		return services.ExperienceOptimizationOutcome{
+			OptimizedExperience: "* optimized " + input.UserExperience,
+			ReviewStatus:        "approved",
+			ReviewReason:        "ok",
+		}, nil
+	}
+	improveExperienceGrammarForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		atomic.AddInt32(&grammarCalls, 1)
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected grammar call")
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"jobDescription": "Looking for a senior developer",
+		"experiences": []map[string]interface{}{
+			{"index": 10, "userExperience": "first"},
+			{"index": 11, "userExperience": "second"},
+			{"index": 12, "userExperience": "third"},
+			{"index": 13, "userExperience": "fourth"},
+			{"index": 14, "userExperience": "fifth"},
+		},
+	})
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/experience/optimize-batch", bytes.NewBuffer(body))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Greater(t, atomic.LoadInt32(&maxActive), int32(1))
+	assert.Equal(t, int32(0), atomic.LoadInt32(&grammarCalls))
+
+	var response struct {
+		Success bool                                `json:"success"`
+		Data    ExperienceBatchOptimizationResponse `json:"data"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Len(t, response.Data.Results, 5)
+
+	for i, result := range response.Data.Results {
+		assert.Equal(t, 10+i, result.Index)
+		assert.Equal(t, "optimized", result.Status)
+		assert.Equal(t, "approved", result.ReviewStatus)
+		assert.Equal(t, "ok", result.ReviewReason)
+	}
+	assert.Equal(t, "optimized first", response.Data.Results[0].OptimizedExperience)
+	assert.Equal(t, "optimized fifth", response.Data.Results[4].OptimizedExperience)
 }
 
 // validateResumeRequest validates the ResumeRequest struct

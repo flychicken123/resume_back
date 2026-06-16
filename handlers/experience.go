@@ -7,8 +7,16 @@ import (
 	"resumeai/services"
 	"resumeai/utils"
 	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
+)
+
+const experienceBatchConcurrency = 4
+
+var (
+	optimizeExperienceForBatch       = services.OptimizeExperienceWithReview
+	improveExperienceGrammarForBatch = services.ImproveExperienceGrammarWithReview
 )
 
 type ExperienceOptimizationRequest struct {
@@ -99,14 +107,18 @@ func OptimizeExperienceBatch(c *gin.Context) {
 	}
 
 	jobDescription := strings.TrimSpace(req.JobDescription)
-	results := make([]ExperienceBatchItemResponse, 0, len(req.Experiences))
-	for _, item := range req.Experiences {
+	ctx := c.Request.Context()
+	results := make([]ExperienceBatchItemResponse, len(req.Experiences))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, experienceBatchConcurrency)
+
+	for i, item := range req.Experiences {
 		result := ExperienceBatchItemResponse{Index: item.Index}
 		userExperience := strings.TrimSpace(item.UserExperience)
 		if userExperience == "" {
 			result.Status = "skipped"
 			result.Error = "missing userExperience"
-			results = append(results, result)
+			results[i] = result
 			continue
 		}
 
@@ -121,35 +133,54 @@ func OptimizeExperienceBatch(c *gin.Context) {
 
 		input := services.ExperienceOptimizationInput{
 			JobDescription: jobDescription,
-			UserExperience: item.UserExperience,
+			UserExperience: userExperience,
 			MatchedSkills:  matchedSkills,
 			MissingSkills:  missingSkills,
 			Context:        item.ExperienceContext,
 		}
 
-		var (
-			outcome services.ExperienceOptimizationOutcome
-			err     error
-		)
-		if jobDescription != "" {
-			outcome, err = services.OptimizeExperienceWithReview(c.Request.Context(), input)
-			result.Status = "optimized"
-		} else {
-			outcome, err = services.ImproveExperienceGrammarWithReview(c.Request.Context(), input)
-			result.Status = "improved"
-		}
-		if err != nil {
-			result.Status = "failed"
-			result.Error = err.Error()
-			results = append(results, result)
-			continue
-		}
+		i, item, input := i, item, input
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 
-		result.OptimizedExperience = cleanupAIResponse(outcome.OptimizedExperience)
-		result.ReviewStatus = outcome.ReviewStatus
-		result.ReviewReason = outcome.ReviewReason
-		results = append(results, result)
+			select {
+			case sem <- struct{}{}:
+				defer func() { <-sem }()
+			case <-ctx.Done():
+				results[i] = ExperienceBatchItemResponse{
+					Index:  item.Index,
+					Status: "failed",
+					Error:  ctx.Err().Error(),
+				}
+				return
+			}
+
+			var (
+				outcome services.ExperienceOptimizationOutcome
+				err     error
+			)
+			if jobDescription != "" {
+				outcome, err = optimizeExperienceForBatch(ctx, input)
+				result.Status = "optimized"
+			} else {
+				outcome, err = improveExperienceGrammarForBatch(ctx, input)
+				result.Status = "improved"
+			}
+			if err != nil {
+				result.Status = "failed"
+				result.Error = err.Error()
+				results[i] = result
+				return
+			}
+
+			result.OptimizedExperience = cleanupAIResponse(outcome.OptimizedExperience)
+			result.ReviewStatus = outcome.ReviewStatus
+			result.ReviewReason = outcome.ReviewReason
+			results[i] = result
+		}()
 	}
+	wg.Wait()
 
 	response := ExperienceBatchOptimizationResponse{
 		Results: results,
