@@ -175,6 +175,9 @@ func OptimizeExperiencesBatchFast(ctx context.Context, items []ExperienceOptimiz
 	if len(items) == 0 {
 		return nil, nil
 	}
+	if len(items) == 1 {
+		return optimizeSingleExperienceTextFast(ctx, items[0])
+	}
 
 	prompt := BuildExperienceBatchOptimizationPrompt(items)
 	raw, err := CallGeminiWithTemperatureMaxTokensContext(ctx, prompt, 0.2, experienceBatchMaxTokens(len(items)))
@@ -233,6 +236,84 @@ func OptimizeExperiencesBatchFast(ctx context.Context, items []ExperienceOptimiz
 	}
 
 	return outcomes, nil
+}
+
+func optimizeSingleExperienceTextFast(ctx context.Context, item ExperienceOptimizationBatchItem) ([]ExperienceOptimizationBatchOutcome, error) {
+	prompt := BuildExperienceSingleOptimizationPrompt(item)
+	raw, err := CallGeminiTextWithTemperatureMaxTokensContext(ctx, prompt, 0.2, 1536)
+	if err != nil {
+		return nil, err
+	}
+
+	optimized := cleanPlainExperienceResponse(raw)
+	if optimized == "" {
+		return nil, fmt.Errorf("empty experience optimization response")
+	}
+
+	return []ExperienceOptimizationBatchOutcome{
+		{
+			Position:            item.Position,
+			Index:               item.Index,
+			OptimizedExperience: ValidateAndCleanOutput(item.Input.UserExperience, optimized),
+			ReviewStatus:        "fast_batch",
+			ReviewReason:        "checked",
+		},
+	}, nil
+}
+
+func BuildExperienceSingleOptimizationPrompt(item ExperienceOptimizationBatchItem) string {
+	input := item.Input
+	targetJob := strings.TrimSpace(input.JobDescription)
+	if targetJob == "" {
+		targetJob = "(none provided; improve against original experience and resume context only)"
+	} else {
+		targetJob = truncateExperiencePromptText(targetJob, 1800)
+	}
+
+	var contextBuilder strings.Builder
+	if contextBlock := buildExperienceContextBlock(input.Context); contextBlock != "" {
+		contextBuilder.WriteString(contextBlock)
+	}
+	if skillContext := buildExperienceSkillContext(input.MatchedSkills, input.MissingSkills, input.Context.ResumeSkills); skillContext != "" {
+		contextBuilder.WriteString(skillContext)
+	}
+
+	return fmt.Sprintf(`You are an expert resume writer and strict factual editor.
+
+Task:
+Improve this single work experience for clarity, action orientation, impact, and target-job alignment when supported by the original facts.
+
+Target Job Description:
+%s
+%s
+Original Experience Description:
+%s
+
+Rules:
+1. Never invent accomplishments, metrics, technologies, responsibilities, employers, titles, dates, tools, scale, outcomes, percentages, or dollar amounts.
+2. Use target-job language only where it naturally fits the user's actual background.
+3. If the original lacks metrics, keep statements qualitative.
+4. Start each achievement with a strong action verb.
+5. Put each achievement on its own line.
+6. Return at most 5 achievement lines and under 900 characters total.
+7. Do not include bullet symbols, markdown, headers, company names, job titles, dates, JSON, or explanations.
+
+Return ONLY the improved experience text.`, targetJob, contextBuilder.String(), truncateExperiencePromptText(input.UserExperience, 1800))
+}
+
+func cleanPlainExperienceResponse(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "```text")
+	value = strings.TrimPrefix(value, "```")
+	value = strings.TrimSuffix(value, "```")
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(value, `"`) && strings.HasSuffix(value, `"`) {
+		var decoded string
+		if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+			return strings.TrimSpace(decoded)
+		}
+	}
+	return value
 }
 
 func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchItem) string {

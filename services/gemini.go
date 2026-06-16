@@ -260,6 +260,14 @@ func CallGeminiWithTemperatureContext(ctx context.Context, prompt string, temper
 }
 
 func CallGeminiWithTemperatureMaxTokensContext(ctx context.Context, prompt string, temperature float64, maxTokens int) (string, error) {
+	return callGeminiWithTemperatureMaxTokensContext(ctx, prompt, temperature, maxTokens, true)
+}
+
+func CallGeminiTextWithTemperatureMaxTokensContext(ctx context.Context, prompt string, temperature float64, maxTokens int) (string, error) {
+	return callGeminiWithTemperatureMaxTokensContext(ctx, prompt, temperature, maxTokens, false)
+}
+
+func callGeminiWithTemperatureMaxTokensContext(ctx context.Context, prompt string, temperature float64, maxTokens int, jsonMode bool) (string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -275,14 +283,15 @@ func CallGeminiWithTemperatureMaxTokensContext(ctx context.Context, prompt strin
 		return "", err
 	}
 
-	return llms.GenerateFromSinglePrompt(
-		ctx,
-		llm,
-		prompt,
+	options := []llms.CallOption{
 		llms.WithTemperature(temperature),
 		llms.WithMaxTokens(maxTokens),
-		llms.WithJSONMode(),
-	)
+	}
+	if jsonMode {
+		options = append(options, llms.WithJSONMode())
+	}
+
+	return llms.GenerateFromSinglePrompt(ctx, llm, sanitizeGeminiPrompt(prompt), options...)
 }
 
 func CallGeminiWithTemperature(prompt string, temperature float64) (string, error) {

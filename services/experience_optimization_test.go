@@ -137,6 +137,48 @@ func TestBuildExperienceBatchOptimizationPromptTruncatesLargeInputs(t *testing.T
 	}
 }
 
+func TestBuildExperienceSingleOptimizationPromptUsesPlainTextRules(t *testing.T) {
+	prompt := BuildExperienceSingleOptimizationPrompt(ExperienceOptimizationBatchItem{
+		Position: 0,
+		Index:    10,
+		Input: ExperienceOptimizationInput{
+			JobDescription: "Backend role focused on Go APIs.",
+			UserExperience: "Built API services.",
+			MatchedSkills:  []string{"Go"},
+			MissingSkills:  []string{"Kubernetes"},
+			Context: ExperienceOptimizationContext{
+				JobTitle:     "Software Engineer",
+				Company:      "Acme",
+				ResumeSkills: []string{"Go", "PostgreSQL"},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"Backend role focused on Go APIs.",
+		"Built API services.",
+		"Candidate's existing resume skills: Go, PostgreSQL",
+		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
+		"under 900 characters",
+		"Return ONLY the improved experience text",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q\nprompt:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, `"optimizedExperience"`) {
+		t.Fatalf("single prompt should not ask for JSON:\n%s", prompt)
+	}
+}
+
+func TestCleanPlainExperienceResponseHandlesFencedAndQuotedText(t *testing.T) {
+	got := cleanPlainExperienceResponse("```text\n\"Built Go APIs.\\nImproved reliability.\"\n```")
+	want := "Built Go APIs.\nImproved reliability."
+	if got != want {
+		t.Fatalf("cleanPlainExperienceResponse() = %q, want %q", got, want)
+	}
+}
+
 func TestParseExperienceBatchOptimizationResultsHandlesWrappedAndFencedJSON(t *testing.T) {
 	raw := "```json\n{\"results\":[{\"position\":1,\"index\":11,\"optimizedExperience\":\"Improved deployments.\",\"reviewStatus\":\"fast_batch\",\"reviewReason\":\"ok\"}]}\n```"
 
