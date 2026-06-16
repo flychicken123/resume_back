@@ -72,13 +72,17 @@ func OptimizeExperience(c *gin.Context) {
 		return
 	}
 
-	outcome, err := services.OptimizeExperienceWithReview(c.Request.Context(), services.ExperienceOptimizationInput{
-		JobDescription: req.JobDescription,
+	input := services.ExperienceOptimizationInput{
+		JobDescription: strings.TrimSpace(req.JobDescription),
 		UserExperience: req.UserExperience,
 		MatchedSkills:  req.MatchedSkills,
 		MissingSkills:  req.MissingSkills,
 		Context:        req.ExperienceContext,
-	})
+	}
+	outcome, err := optimizeSingleExperienceFast(c.Request.Context(), input)
+	if err != nil {
+		outcome, err = optimizeExperienceForBatch(c.Request.Context(), input)
+	}
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize experience", err)
 		return
@@ -95,6 +99,28 @@ func OptimizeExperience(c *gin.Context) {
 	}
 
 	utils.SuccessResponse(c, http.StatusOK, "Experience optimized successfully", response)
+}
+
+func optimizeSingleExperienceFast(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+	outcomes, err := optimizeExperiencesBatchFast(ctx, []services.ExperienceOptimizationBatchItem{
+		{
+			Position: 0,
+			Index:    0,
+			Input:    input,
+		},
+	})
+	if err != nil {
+		return services.ExperienceOptimizationOutcome{}, err
+	}
+	if len(outcomes) == 0 || strings.TrimSpace(outcomes[0].OptimizedExperience) == "" {
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("missing optimized experience in fast response")
+	}
+
+	return services.ExperienceOptimizationOutcome{
+		OptimizedExperience: outcomes[0].OptimizedExperience,
+		ReviewStatus:        outcomes[0].ReviewStatus,
+		ReviewReason:        outcomes[0].ReviewReason,
+	}, nil
 }
 
 func OptimizeExperienceBatch(c *gin.Context) {
@@ -358,10 +384,14 @@ func ImproveExperienceGrammar(c *gin.Context) {
 		return
 	}
 
-	outcome, err := services.ImproveExperienceGrammarWithReview(c.Request.Context(), services.ExperienceOptimizationInput{
+	input := services.ExperienceOptimizationInput{
 		UserExperience: req.UserExperience,
 		Context:        req.ExperienceContext,
-	})
+	}
+	outcome, err := optimizeSingleExperienceFast(c.Request.Context(), input)
+	if err != nil {
+		outcome, err = improveExperienceGrammarForBatch(c.Request.Context(), input)
+	}
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

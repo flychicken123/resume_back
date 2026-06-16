@@ -30,6 +30,7 @@ func setupTestRouter() *gin.Engine {
 	r.POST("/api/resume/generate", GenerateResume)
 	r.POST("/api/experience/optimize", OptimizeExperience)
 	r.POST("/api/experience/optimize-batch", OptimizeExperienceBatch)
+	r.POST("/api/experience/improve-grammar", ImproveExperienceGrammar)
 
 	return r
 }
@@ -188,6 +189,123 @@ func TestOptimizeExperience_MissingFields(t *testing.T) {
 			assert.Equal(t, tt.expectedStatus, w.Code)
 		})
 	}
+}
+
+func TestOptimizeExperience_UsesFastBatch(t *testing.T) {
+	router := setupTestRouter()
+
+	originalFastBatch := optimizeExperiencesBatchFast
+	originalOptimize := optimizeExperienceForBatch
+	defer func() {
+		optimizeExperiencesBatchFast = originalFastBatch
+		optimizeExperienceForBatch = originalOptimize
+	}()
+
+	fastBatchCalls := 0
+	fallbackCalls := 0
+	optimizeExperiencesBatchFast = func(ctx context.Context, items []services.ExperienceOptimizationBatchItem) ([]services.ExperienceOptimizationBatchOutcome, error) {
+		fastBatchCalls++
+		assert.Len(t, items, 1)
+		assert.Equal(t, "Built APIs.", items[0].Input.UserExperience)
+		assert.Equal(t, "Backend role", items[0].Input.JobDescription)
+
+		return []services.ExperienceOptimizationBatchOutcome{
+			{
+				Position:            0,
+				Index:               0,
+				OptimizedExperience: "* Built APIs with clearer impact.",
+				ReviewStatus:        "fast_batch",
+				ReviewReason:        "self-checked",
+			},
+		}, nil
+	}
+	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		fallbackCalls++
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected optimize fallback call")
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"jobDescription": "Backend role",
+		"userExperience": "Built APIs.",
+	})
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/experience/optimize", bytes.NewBuffer(body))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, fastBatchCalls)
+	assert.Equal(t, 0, fallbackCalls)
+
+	var response struct {
+		Success bool                           `json:"success"`
+		Data    ExperienceOptimizationResponse `json:"data"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Equal(t, "Built APIs with clearer impact.", response.Data.OptimizedExperience)
+	assert.Equal(t, "fast_batch", response.Data.ReviewStatus)
+}
+
+func TestImproveExperienceGrammar_UsesFastBatch(t *testing.T) {
+	router := setupTestRouter()
+
+	originalFastBatch := optimizeExperiencesBatchFast
+	originalImprove := improveExperienceGrammarForBatch
+	defer func() {
+		optimizeExperiencesBatchFast = originalFastBatch
+		improveExperienceGrammarForBatch = originalImprove
+	}()
+
+	fastBatchCalls := 0
+	fallbackCalls := 0
+	optimizeExperiencesBatchFast = func(ctx context.Context, items []services.ExperienceOptimizationBatchItem) ([]services.ExperienceOptimizationBatchOutcome, error) {
+		fastBatchCalls++
+		assert.Len(t, items, 1)
+		assert.Equal(t, "fixed deploys", items[0].Input.UserExperience)
+		assert.Empty(t, items[0].Input.JobDescription)
+
+		return []services.ExperienceOptimizationBatchOutcome{
+			{
+				Position:            0,
+				Index:               0,
+				OptimizedExperience: "* Improved deployment reliability.",
+				ReviewStatus:        "fast_batch",
+				ReviewReason:        "self-checked",
+			},
+		}, nil
+	}
+	improveExperienceGrammarForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		fallbackCalls++
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected grammar fallback call")
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"userExperience": "fixed deploys",
+	})
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/experience/improve-grammar", bytes.NewBuffer(body))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, fastBatchCalls)
+	assert.Equal(t, 0, fallbackCalls)
+
+	var response ExperienceGrammarResponse
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.Equal(t, "Improved deployment reliability.", response.ImprovedExperience)
+	assert.Equal(t, "fast_batch", response.ReviewStatus)
 }
 
 func TestOptimizeExperienceBatch_InvalidJSON(t *testing.T) {
