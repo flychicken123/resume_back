@@ -100,7 +100,8 @@ func TestBuildExperienceBatchOptimizationPromptIncludesPositionsAndIntegrityRule
 		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
 		"NEVER invent accomplishments",
 		"Return one result for every supplied experience position",
-		"under 900 characters",
+		"complete sentence ending with terminal punctuation",
+		"Do not shorten by cutting text mid-sentence",
 		`"reviewReason": "checked"`,
 		`"position": 0`,
 		`"optimizedExperience"`,
@@ -112,8 +113,8 @@ func TestBuildExperienceBatchOptimizationPromptIncludesPositionsAndIntegrityRule
 }
 
 func TestBuildExperienceBatchOptimizationPromptTruncatesLargeInputs(t *testing.T) {
-	longJob := strings.Repeat("job ", 700)
-	longExperience := strings.Repeat("experience ", 300)
+	longJob := strings.Repeat("job ", 1200)
+	longExperience := strings.Repeat("experience ", 700)
 
 	prompt := BuildExperienceBatchOptimizationPrompt([]ExperienceOptimizationBatchItem{
 		{
@@ -159,7 +160,8 @@ func TestBuildExperienceSingleOptimizationPromptUsesPlainTextRules(t *testing.T)
 		"Built API services.",
 		"Candidate's existing resume skills: Go, PostgreSQL",
 		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
-		"under 900 characters",
+		"complete sentence ending with terminal punctuation",
+		"Do not shorten by cutting text mid-sentence",
 		"Return ONLY the improved experience text",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -168,6 +170,32 @@ func TestBuildExperienceSingleOptimizationPromptUsesPlainTextRules(t *testing.T)
 	}
 	if strings.Contains(prompt, `"optimizedExperience"`) {
 		t.Fatalf("single prompt should not ask for JSON:\n%s", prompt)
+	}
+}
+
+func TestRepairIncompleteExperienceOutputUsesOriginalLines(t *testing.T) {
+	original := strings.Join([]string{
+		"Developed a responsive single-page application with React, providing an accessible dashboard for resume editing.",
+		"Architected a centralized traffic configuration system for over 100 global Office 365 datacenters.",
+	}, "\n")
+	optimized := strings.Join([]string{
+		"Developed a responsive single-page application with React, providing an",
+		"Architected centralized traffic configuration and control system for over 100 global Office 365 datacent",
+	}, "\n")
+
+	got, ok := repairIncompleteExperienceOutput(original, optimized)
+	if !ok {
+		t.Fatalf("repairIncompleteExperienceOutput returned ok=false")
+	}
+	if got != original {
+		t.Fatalf("repairIncompleteExperienceOutput() = %q, want %q", got, original)
+	}
+}
+
+func TestRepairIncompleteExperienceOutputRejectsUnrepairableText(t *testing.T) {
+	_, ok := repairIncompleteExperienceOutput("", "Developed a responsive SPA with React, providing an")
+	if ok {
+		t.Fatalf("repairIncompleteExperienceOutput returned ok=true for unrepairable text")
 	}
 }
 

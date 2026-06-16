@@ -240,7 +240,7 @@ func OptimizeExperiencesBatchFast(ctx context.Context, items []ExperienceOptimiz
 
 func optimizeSingleExperienceTextFast(ctx context.Context, item ExperienceOptimizationBatchItem) ([]ExperienceOptimizationBatchOutcome, error) {
 	prompt := BuildExperienceSingleOptimizationPrompt(item)
-	raw, err := CallGeminiTextWithTemperatureMaxTokensContext(ctx, prompt, 0.2, 1536)
+	raw, err := CallGeminiTextWithTemperatureMaxTokensContext(ctx, prompt, 0.2, 2048)
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +248,10 @@ func optimizeSingleExperienceTextFast(ctx context.Context, item ExperienceOptimi
 	optimized := cleanPlainExperienceResponse(raw)
 	if optimized == "" {
 		return nil, fmt.Errorf("empty experience optimization response")
+	}
+	optimized, ok := repairIncompleteExperienceOutput(item.Input.UserExperience, optimized)
+	if !ok {
+		return nil, fmt.Errorf("AI returned incomplete experience text; please retry")
 	}
 
 	return []ExperienceOptimizationBatchOutcome{
@@ -267,7 +271,7 @@ func BuildExperienceSingleOptimizationPrompt(item ExperienceOptimizationBatchIte
 	if targetJob == "" {
 		targetJob = "(none provided; improve against original experience and resume context only)"
 	} else {
-		targetJob = truncateExperiencePromptText(targetJob, 1800)
+		targetJob = truncateExperiencePromptText(targetJob, 4000)
 	}
 
 	var contextBuilder strings.Builder
@@ -295,10 +299,12 @@ Rules:
 3. If the original lacks metrics, keep statements qualitative.
 4. Start each achievement with a strong action verb.
 5. Put each achievement on its own line.
-6. Return at most 5 achievement lines and under 900 characters total.
-7. Do not include bullet symbols, markdown, headers, company names, job titles, dates, JSON, or explanations.
+6. Preserve roughly the same number of achievement lines as the original unless combining duplicates is clearly better.
+7. Every returned line must be a complete sentence ending with terminal punctuation.
+8. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
+9. Do not include bullet symbols, markdown, headers, company names, job titles, dates, JSON, or explanations.
 
-Return ONLY the improved experience text.`, targetJob, contextBuilder.String(), truncateExperiencePromptText(input.UserExperience, 1800))
+Return ONLY the improved experience text.`, targetJob, contextBuilder.String(), truncateExperiencePromptText(input.UserExperience, 6000))
 }
 
 func cleanPlainExperienceResponse(value string) string {
@@ -316,11 +322,58 @@ func cleanPlainExperienceResponse(value string) string {
 	return value
 }
 
+func repairIncompleteExperienceOutput(original, optimized string) (string, bool) {
+	optimizedLines := splitExperienceTextLines(optimized)
+	if len(optimizedLines) == 0 {
+		return "", false
+	}
+
+	originalLines := splitExperienceTextLines(original)
+	repaired := false
+	for i, line := range optimizedLines {
+		if !isLikelyIncompleteExperienceLine(line) {
+			continue
+		}
+		if i >= len(originalLines) || strings.TrimSpace(originalLines[i]) == "" {
+			return "", false
+		}
+		optimizedLines[i] = originalLines[i]
+		repaired = true
+	}
+
+	if !repaired {
+		return strings.TrimSpace(optimized), true
+	}
+	return strings.Join(optimizedLines, "\n"), true
+}
+
+func splitExperienceTextLines(value string) []string {
+	var lines []string
+	for _, line := range strings.Split(strings.TrimSpace(value), "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "-*• \t")
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func isLikelyIncompleteExperienceLine(line string) bool {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return false
+	}
+	last := line[len(line)-1]
+	return last != '.' && last != '!' && last != '?' && last != ')'
+}
+
 func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchItem) string {
 	var targetJob string
 	for _, item := range items {
 		if value := strings.TrimSpace(item.Input.JobDescription); value != "" {
-			targetJob = truncateExperiencePromptText(value, 1800)
+			targetJob = truncateExperiencePromptText(value, 4000)
 			break
 		}
 	}
@@ -341,7 +394,7 @@ func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchI
 			inputBuilder.WriteString(skillContext)
 		}
 		inputBuilder.WriteString("Original Experience Description:\n")
-		inputBuilder.WriteString(truncateExperiencePromptText(input.UserExperience, 1800))
+		inputBuilder.WriteString(truncateExperiencePromptText(input.UserExperience, 6000))
 		inputBuilder.WriteString("\n\n")
 	}
 
@@ -372,8 +425,9 @@ WRITING RULES:
 2. Keep each achievement on its own line inside optimizedExperience.
 3. Do not include bullet symbols, markdown, headers, company names, job titles, dates, or explanations in optimizedExperience.
 4. Keep roughly the same number of achievements as the original unless combining duplicate lines is clearly better.
-5. Keep optimizedExperience under 900 characters with at most 5 achievement lines.
-6. Keep reviewReason to "checked" unless you corrected a factual issue; maximum 12 words.
+5. Every achievement line must be a complete sentence ending with terminal punctuation.
+6. Do not shorten by cutting text mid-sentence; rewrite concisely instead.
+7. Keep reviewReason to "checked" unless you corrected a factual issue; maximum 12 words.
 
 Before returning, self-check each optimizedExperience against its original description and context. Remove any unsupported claim.
 
@@ -410,7 +464,14 @@ func truncateExperiencePromptText(value string, max int) string {
 	if max <= 0 || len(value) <= max {
 		return value
 	}
-	return strings.TrimSpace(value[:max]) + "\n[truncated]"
+	cut := value[:max]
+	minBoundary := max * 2 / 3
+	if boundary := strings.LastIndexAny(cut, ".!?\n"); boundary >= minBoundary {
+		cut = cut[:boundary+1]
+	} else if boundary := strings.LastIndexAny(cut, " \t"); boundary >= minBoundary {
+		cut = cut[:boundary]
+	}
+	return strings.TrimSpace(cut) + "\n[truncated]"
 }
 
 type experienceBatchOptimizationResult struct {
