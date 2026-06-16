@@ -12,7 +12,9 @@ import (
 	"regexp"
 	"resumeai/services"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -352,27 +354,33 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 		improveExperienceGrammarForBatch = originalImprove
 	}()
 
-	fastBatchCalls := 0
+	var fastBatchCalls int32
+	var active int32
+	var maxActive int32
 	fallbackCalls := 0
 	optimizeExperiencesBatchFast = func(ctx context.Context, items []services.ExperienceOptimizationBatchItem) ([]services.ExperienceOptimizationBatchOutcome, error) {
-		fastBatchCalls++
-		assert.Len(t, items, 5)
-		assert.Equal(t, 0, items[0].Position)
-		assert.Equal(t, 10, items[0].Index)
-		assert.Equal(t, "first", items[0].Input.UserExperience)
+		atomic.AddInt32(&fastBatchCalls, 1)
+		current := atomic.AddInt32(&active, 1)
+		for {
+			max := atomic.LoadInt32(&maxActive)
+			if current <= max || atomic.CompareAndSwapInt32(&maxActive, max, current) {
+				break
+			}
+		}
+		time.Sleep(50 * time.Millisecond)
+		atomic.AddInt32(&active, -1)
 
-		outcomes := make([]services.ExperienceOptimizationBatchOutcome, 0, len(items))
-		for i := len(items) - 1; i >= 0; i-- {
-			item := items[i]
-			outcomes = append(outcomes, services.ExperienceOptimizationBatchOutcome{
+		assert.Len(t, items, 1)
+		item := items[0]
+		return []services.ExperienceOptimizationBatchOutcome{
+			{
 				Position:            item.Position,
 				Index:               item.Index,
 				OptimizedExperience: "* optimized " + item.Input.UserExperience,
 				ReviewStatus:        "fast_batch",
 				ReviewReason:        "self-checked",
-			})
-		}
-		return outcomes, nil
+			},
+		}, nil
 	}
 	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
 		fallbackCalls++
@@ -403,7 +411,8 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 	router.ServeHTTP(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	assert.Equal(t, 1, fastBatchCalls)
+	assert.Equal(t, int32(5), atomic.LoadInt32(&fastBatchCalls))
+	assert.Greater(t, atomic.LoadInt32(&maxActive), int32(1))
 	assert.Equal(t, 0, fallbackCalls)
 
 	var response struct {
