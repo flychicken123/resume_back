@@ -14,7 +14,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const experienceBatchConcurrency = 10
+const (
+	experienceBatchConcurrency = 10
+	experienceFastItemTimeout  = 20 * time.Second
+)
 
 var (
 	optimizeExperienceForBatch       = services.OptimizeExperienceWithReview
@@ -66,6 +69,7 @@ type ExperienceBatchItemResponse struct {
 	Error               string `json:"error,omitempty"`
 	ReviewStatus        string `json:"reviewStatus,omitempty"`
 	ReviewReason        string `json:"reviewReason,omitempty"`
+	DurationMs          int64  `json:"durationMs,omitempty"`
 }
 
 func OptimizeExperience(c *gin.Context) {
@@ -83,10 +87,10 @@ func OptimizeExperience(c *gin.Context) {
 		MissingSkills:  req.MissingSkills,
 		Context:        req.ExperienceContext,
 	}
-	outcome, err := optimizeSingleExperienceFast(c.Request.Context(), input)
-	if err != nil {
-		outcome, err = optimizeExperienceForBatch(c.Request.Context(), input)
-	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), experienceFastItemTimeout)
+	defer cancel()
+
+	outcome, err := optimizeSingleExperienceFast(ctx, input)
 	if err != nil {
 		utils.InternalServerError(c, "Failed to optimize experience", err)
 		return
@@ -218,15 +222,13 @@ func processExperienceBatchFast(ctx context.Context, jobDescription string, batc
 				return
 			}
 
+			itemStarted := time.Now()
+			itemCtx, cancel := context.WithTimeout(ctx, experienceFastItemTimeout)
+			defer cancel()
+
 			result := ExperienceBatchItemResponse{Index: batchItem.Index}
-			outcome, err := optimizeSingleExperienceFast(ctx, batchItem.Input)
-			if err != nil {
-				if jobDescription != "" {
-					outcome, err = optimizeExperienceForBatch(ctx, batchItem.Input)
-				} else {
-					outcome, err = improveExperienceGrammarForBatch(ctx, batchItem.Input)
-				}
-			}
+			outcome, err := optimizeSingleExperienceFast(itemCtx, batchItem.Input)
+			result.DurationMs = time.Since(itemStarted).Milliseconds()
 			if err != nil {
 				result.Status = "failed"
 				result.Error = err.Error()
@@ -362,10 +364,10 @@ func ImproveExperienceGrammar(c *gin.Context) {
 		UserExperience: req.UserExperience,
 		Context:        req.ExperienceContext,
 	}
-	outcome, err := optimizeSingleExperienceFast(c.Request.Context(), input)
-	if err != nil {
-		outcome, err = improveExperienceGrammarForBatch(c.Request.Context(), input)
-	}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), experienceFastItemTimeout)
+	defer cancel()
+
+	outcome, err := optimizeSingleExperienceFast(ctx, input)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

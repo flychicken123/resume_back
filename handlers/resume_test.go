@@ -439,6 +439,59 @@ func TestOptimizeExperienceBatch_UsesFastBatchAndPreservesOrder(t *testing.T) {
 	assert.Equal(t, "optimized tenth", response.Data.Results[9].OptimizedExperience)
 }
 
+func TestOptimizeExperienceBatch_DoesNotUseSlowFallbackOnFastFailure(t *testing.T) {
+	router := setupTestRouter()
+
+	originalFastBatch := optimizeExperiencesBatchFast
+	originalOptimize := optimizeExperienceForBatch
+	defer func() {
+		optimizeExperiencesBatchFast = originalFastBatch
+		optimizeExperienceForBatch = originalOptimize
+	}()
+
+	fastBatchCalls := 0
+	fallbackCalls := 0
+	optimizeExperiencesBatchFast = func(ctx context.Context, items []services.ExperienceOptimizationBatchItem) ([]services.ExperienceOptimizationBatchOutcome, error) {
+		fastBatchCalls++
+		return nil, fmt.Errorf("fast parse failed")
+	}
+	optimizeExperienceForBatch = func(ctx context.Context, input services.ExperienceOptimizationInput) (services.ExperienceOptimizationOutcome, error) {
+		fallbackCalls++
+		return services.ExperienceOptimizationOutcome{}, fmt.Errorf("unexpected slow fallback")
+	}
+
+	body, err := json.Marshal(map[string]interface{}{
+		"jobDescription": "Backend role",
+		"experiences": []map[string]interface{}{
+			{"index": 10, "userExperience": "Built APIs."},
+		},
+	})
+	assert.NoError(t, err)
+
+	req, err := http.NewRequest("POST", "/api/experience/optimize-batch", bytes.NewBuffer(body))
+	assert.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, 1, fastBatchCalls)
+	assert.Equal(t, 0, fallbackCalls)
+
+	var response struct {
+		Success bool                                `json:"success"`
+		Data    ExperienceBatchOptimizationResponse `json:"data"`
+	}
+	err = json.Unmarshal(w.Body.Bytes(), &response)
+	assert.NoError(t, err)
+	assert.True(t, response.Success)
+	assert.Len(t, response.Data.Results, 1)
+	assert.Equal(t, "failed", response.Data.Results[0].Status)
+	assert.Contains(t, response.Data.Results[0].Error, "fast parse failed")
+	assert.GreaterOrEqual(t, response.Data.Results[0].DurationMs, int64(0))
+}
+
 // validateResumeRequest validates the ResumeRequest struct
 func validateResumeRequest(req ResumeRequest) error {
 	if req.Name == "" {

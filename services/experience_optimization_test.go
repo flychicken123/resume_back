@@ -100,12 +100,40 @@ func TestBuildExperienceBatchOptimizationPromptIncludesPositionsAndIntegrityRule
 		"Skills the target job wants but are not confirmed in the resume: Kubernetes",
 		"NEVER invent accomplishments",
 		"Return one result for every supplied experience position",
+		"under 900 characters",
+		`"reviewReason": "checked"`,
 		`"position": 0`,
 		`"optimizedExperience"`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("prompt missing %q\nprompt:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestBuildExperienceBatchOptimizationPromptTruncatesLargeInputs(t *testing.T) {
+	longJob := strings.Repeat("job ", 700)
+	longExperience := strings.Repeat("experience ", 300)
+
+	prompt := BuildExperienceBatchOptimizationPrompt([]ExperienceOptimizationBatchItem{
+		{
+			Position: 0,
+			Index:    10,
+			Input: ExperienceOptimizationInput{
+				JobDescription: longJob,
+				UserExperience: longExperience,
+			},
+		},
+	})
+
+	if strings.Count(prompt, "[truncated]") != 2 {
+		t.Fatalf("expected job and experience text to be truncated, prompt:\n%s", prompt)
+	}
+	if strings.Contains(prompt, strings.TrimSpace(longJob)) {
+		t.Fatalf("prompt contains untruncated job description")
+	}
+	if strings.Contains(prompt, strings.TrimSpace(longExperience)) {
+		t.Fatalf("prompt contains untruncated experience")
 	}
 }
 

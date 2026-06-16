@@ -239,7 +239,7 @@ func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchI
 	var targetJob string
 	for _, item := range items {
 		if value := strings.TrimSpace(item.Input.JobDescription); value != "" {
-			targetJob = truncateExperiencePromptText(value, 2500)
+			targetJob = truncateExperiencePromptText(value, 1800)
 			break
 		}
 	}
@@ -260,7 +260,7 @@ func BuildExperienceBatchOptimizationPrompt(items []ExperienceOptimizationBatchI
 			inputBuilder.WriteString(skillContext)
 		}
 		inputBuilder.WriteString("Original Experience Description:\n")
-		inputBuilder.WriteString(truncateExperiencePromptText(input.UserExperience, 3000))
+		inputBuilder.WriteString(truncateExperiencePromptText(input.UserExperience, 1800))
 		inputBuilder.WriteString("\n\n")
 	}
 
@@ -291,6 +291,8 @@ WRITING RULES:
 2. Keep each achievement on its own line inside optimizedExperience.
 3. Do not include bullet symbols, markdown, headers, company names, job titles, dates, or explanations in optimizedExperience.
 4. Keep roughly the same number of achievements as the original unless combining duplicate lines is clearly better.
+5. Keep optimizedExperience under 900 characters with at most 5 achievement lines.
+6. Keep reviewReason to "checked" unless you corrected a factual issue; maximum 12 words.
 
 Before returning, self-check each optimizedExperience against its original description and context. Remove any unsupported claim.
 
@@ -302,7 +304,7 @@ Return ONLY valid JSON with this shape:
       "index": 0,
       "optimizedExperience": "rewritten achievement one\nrewritten achievement two",
       "reviewStatus": "fast_batch",
-      "reviewReason": "self-checked against original facts"
+      "reviewReason": "checked"
     }
   ]
 }`, mode, targetJob, inputBuilder.String())
@@ -310,7 +312,7 @@ Return ONLY valid JSON with this shape:
 
 func experienceBatchMaxTokens(itemCount int) int {
 	if itemCount <= 1 {
-		return 1024
+		return 1536
 	}
 	maxTokens := itemCount * 900
 	if maxTokens < 1024 {
