@@ -67,14 +67,6 @@ func (jac *JobApplicationController) SubmitApplication(c *gin.Context) {
 	}
 
 	jobTitle := strings.TrimSpace(req.JobTitle)
-	if jobTitle == "" {
-		c.JSON(http.StatusPreconditionFailed, gin.H{
-			"error":          "missing_job_profile_info",
-			"missing_fields": []string{"job_title"},
-		})
-		return
-	}
-
 	companyName := strings.TrimSpace(req.CompanyName)
 	jobURL := strings.TrimSpace(req.JobURL)
 	jobLocation := strings.TrimSpace(req.JobLocation)
@@ -96,6 +88,13 @@ func (jac *JobApplicationController) SubmitApplication(c *gin.Context) {
 				jobLocation = posting.Location
 			}
 		}
+	}
+	if jobTitle == "" {
+		c.JSON(http.StatusPreconditionFailed, gin.H{
+			"error":          "missing_job_profile_info",
+			"missing_fields": []string{"job_title"},
+		})
+		return
 	}
 
 	app := &models.JobApplication{
