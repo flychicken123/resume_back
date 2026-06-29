@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -52,6 +53,48 @@ func TestChatAssistantStreamSendsTokenBeforeDone(t *testing.T) {
 	require.NotEqual(t, -1, doneIndex, raw)
 	require.Less(t, readyIndex, tokenIndex)
 	require.Less(t, tokenIndex, doneIndex)
+}
+
+func TestChatAssistantStreamRetriesRateLimitBeforeToken(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	t.Setenv("AI_QUALITY_GATE_ENABLED", "false")
+	withNoOpSleep(t)
+
+	previousStreaming := callGeminiToolsStreaming
+	previousClassify := classifyWriteIntent
+	calls := 0
+	callGeminiToolsStreaming = func(ctx context.Context, systemPrompt, userPrompt string, tools []services.ChatTool, userID int, callbacks services.ToolStreamCallbacks, opts ...services.ToolCallOption) (string, *services.ToolCallMetadata, error) {
+		calls++
+		if calls == 1 {
+			return "", &services.ToolCallMetadata{}, errors.New("429 resource exhausted")
+		}
+		require.NoError(t, callbacks.OnToken("OK"))
+		return "OK", &services.ToolCallMetadata{}, nil
+	}
+	classifyWriteIntent = func(ctx context.Context, userMessage string) bool {
+		return false
+	}
+	t.Cleanup(func() {
+		callGeminiToolsStreaming = previousStreaming
+		classifyWriteIntent = previousClassify
+	})
+
+	router := gin.New()
+	router.POST("/api/assistant/chat", ChatAssistant)
+	body, err := json.Marshal(chatRequest{Message: "hello", SessionID: "test-session"})
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, "/api/assistant/chat?stream=true", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, 2, calls)
+	raw := w.Body.String()
+	require.Contains(t, raw, `"token":"OK"`)
+	require.Contains(t, raw, `"reply":"OK"`)
+	require.NotContains(t, raw, "temporarily busy")
 }
 
 func TestChatAssistantStreamForcedRetrySendsReset(t *testing.T) {

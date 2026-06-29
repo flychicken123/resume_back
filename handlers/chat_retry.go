@@ -18,6 +18,10 @@ var chatCallSleep = time.Sleep
 // Kill switch: if GEMINI_RETRY_ENABLED is set to "false", fn runs exactly once
 // with no retries.
 func chatCallWithRetry(fn func() (string, *services.ToolCallMetadata, error)) (string, *services.ToolCallMetadata, error) {
+	return chatCallWithRetryIf(fn, nil)
+}
+
+func chatCallWithRetryIf(fn func() (string, *services.ToolCallMetadata, error), canRetry func(string, *services.ToolCallMetadata) bool) (string, *services.ToolCallMetadata, error) {
 	if !chatRetryEnabled() {
 		return fn()
 	}
@@ -39,6 +43,9 @@ func chatCallWithRetry(fn func() (string, *services.ToolCallMetadata, error)) (s
 			return reply, meta, nil
 		}
 		if !services.IsRateLimitErr(err) {
+			return reply, meta, err
+		}
+		if canRetry != nil && !canRetry(reply, meta) {
 			return reply, meta, err
 		}
 		if meta != nil && len(meta.ToolsCalled) > 0 {
