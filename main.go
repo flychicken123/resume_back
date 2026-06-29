@@ -311,9 +311,8 @@ func main() {
 	r.Use(gin.Logger())
 	r.Use(gin.Recovery())
 
-	// Create rate limiters and caches
+	// Create rate limiters
 	rateLimiters := middleware.CreateRateLimiters()
-	caches := middleware.CreateCaches()
 
 	// Allow larger multipart uploads (HTML file uploads)
 	r.MaxMultipartMemory = 8 << 20 // 8 MiB (sufficient for typical resume files)
@@ -510,49 +509,8 @@ func main() {
 
 	// Public routes (no auth required) - keep using handlers for now
 	public := r.Group("/api")
-	// Add rate limiting and caching for AI endpoints
-	public.Use(rateLimiters["ai"].Limit())
-	public.Use(caches["ai"].Cache())
+	public.Use(rateLimiters["general"].Limit())
 	{
-		// Existing AI optimization endpoints
-		public.POST("/experience/optimize", handlers.OptimizeExperience)
-		public.POST("/experience/optimize-batch", handlers.OptimizeExperienceBatch)
-		public.POST("/ai/education", handlers.OptimizeEducation)
-		public.POST("/ai/summary", handlers.OptimizeSummary)
-
-		// New grammar improvement endpoints
-		public.POST("/experience/improve-grammar", handlers.ImproveExperienceGrammar)
-		public.POST("/summary/improve-grammar", handlers.ImproveSummaryGrammar)
-		public.POST("/project/optimize", handlers.OptimizeProject)
-		public.POST("/project/improve-grammar", handlers.ImproveProjectGrammar)
-
-		// New final step AI endpoints
-		public.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
-		public.POST("/resume/progress-hint", handlers.ProgressHint)
-		public.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
-		public.POST("/application-answer/generate", handlers.GenerateApplicationAnswer)
-		public.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
-		public.POST("/skills/categorize", handlers.CategorizeSkills)
-
-		// Resume parsing (no limit needed)
-		public.POST("/resume/parse", handlers.ParseResume)
-
-		// Job extraction endpoint
-		public.POST("/job/extract", handlers.ImprovedExtractJobDescription)
-		public.POST("/assistant/chat", handlers.ChatAssistant)
-		public.POST("/assistant/personal-info", handlers.ParsePersonalInfo)
-		public.POST("/assistant/job-intent", handlers.ParseJobIntent)
-		public.POST("/assistant/experience", handlers.ParseExperience)
-		public.POST("/assistant/projects", handlers.ParseProjects)
-		public.POST("/assistant/education", handlers.ParseEducation)
-		public.POST("/assistant/job-description", handlers.ParseJobDescription)
-		public.POST("/assistant/skills", handlers.ParseSkillsAI)
-		public.POST("/assistant/skills/generate", handlers.GenerateSkillsAI)
-		public.POST("/assistant/voice/transcribe", handlers.TranscribeAudio)
-		public.POST("/assistant/resume/modify", handlers.AnalyzeResumeModification)
-		public.POST("/assistant/resume/polish", handlers.PolishResume)
-		public.POST("/template/preference", handlers.InferTemplatePreference)
-		public.POST("/impact-keywords/extract", handlers.ExtractImpactKeywords)
 		public.POST("/analytics/exit", handlers.TrackExitEvent(db))
 		public.POST("/feedback", handlers.SubmitFeedback(feedbackModel))
 		public.POST("/feedback/follow-up", handlers.ScheduleFeedbackFollowUp(feedbackModel))
@@ -762,6 +720,43 @@ func main() {
 			admin.DELETE("/knowledge/:id", knowledgeCtrl.Delete)
 			admin.POST("/knowledge/backfill", knowledgeCtrl.BackfillEmbeddings)
 		}
+	}
+
+	// AI routes require authentication to prevent unauthenticated token abuse.
+	protectedAI := r.Group("/api")
+	protectedAI.Use(rateLimiters["ai"].Limit())
+	protectedAI.Use(handlers.AuthMiddleware())
+	{
+		protectedAI.POST("/experience/optimize", handlers.OptimizeExperience)
+		protectedAI.POST("/experience/optimize-batch", handlers.OptimizeExperienceBatch)
+		protectedAI.POST("/ai/education", handlers.OptimizeEducation)
+		protectedAI.POST("/ai/summary", handlers.OptimizeSummary)
+		protectedAI.POST("/experience/improve-grammar", handlers.ImproveExperienceGrammar)
+		protectedAI.POST("/summary/improve-grammar", handlers.ImproveSummaryGrammar)
+		protectedAI.POST("/project/optimize", handlers.OptimizeProject)
+		protectedAI.POST("/project/improve-grammar", handlers.ImproveProjectGrammar)
+		protectedAI.POST("/resume/analyze-advice", handlers.AnalyzeResumeAdvice)
+		protectedAI.POST("/resume/progress-hint", handlers.ProgressHint)
+		protectedAI.POST("/cover-letter/generate", handlers.GenerateCoverLetter)
+		protectedAI.POST("/application-answer/generate", handlers.GenerateApplicationAnswer)
+		protectedAI.POST("/skills/auto-generate", handlers.AutoGenerateSkills)
+		protectedAI.POST("/skills/categorize", handlers.CategorizeSkills)
+		protectedAI.POST("/resume/parse", handlers.ParseResume)
+		protectedAI.POST("/job/extract", handlers.ImprovedExtractJobDescription)
+		protectedAI.POST("/assistant/chat", handlers.ChatAssistant)
+		protectedAI.POST("/assistant/personal-info", handlers.ParsePersonalInfo)
+		protectedAI.POST("/assistant/job-intent", handlers.ParseJobIntent)
+		protectedAI.POST("/assistant/experience", handlers.ParseExperience)
+		protectedAI.POST("/assistant/projects", handlers.ParseProjects)
+		protectedAI.POST("/assistant/education", handlers.ParseEducation)
+		protectedAI.POST("/assistant/job-description", handlers.ParseJobDescription)
+		protectedAI.POST("/assistant/skills", handlers.ParseSkillsAI)
+		protectedAI.POST("/assistant/skills/generate", handlers.GenerateSkillsAI)
+		protectedAI.POST("/assistant/voice/transcribe", handlers.TranscribeAudio)
+		protectedAI.POST("/assistant/resume/modify", handlers.AnalyzeResumeModification)
+		protectedAI.POST("/assistant/resume/polish", handlers.PolishResume)
+		protectedAI.POST("/template/preference", handlers.InferTemplatePreference)
+		protectedAI.POST("/impact-keywords/extract", handlers.ExtractImpactKeywords)
 	}
 
 	// Public subscription routes
