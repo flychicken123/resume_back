@@ -64,6 +64,10 @@ func (s *BenchmarkService) Status() BenchmarkStatus {
 
 // RunBenchmark runs a specific benchmark type in the background.
 func (s *BenchmarkService) RunBenchmark(ctx context.Context, benchmarkType string, sampleSize int, userID int) (string, error) {
+	if benchmarkType == "classification" && JobAutoClassificationDisabled() {
+		return "", fmt.Errorf("job auto-classification disabled")
+	}
+
 	s.mu.Lock()
 	if s.running {
 		s.mu.Unlock()
@@ -122,7 +126,11 @@ func (s *BenchmarkService) RunBenchmark(ctx context.Context, benchmarkType strin
 func (s *BenchmarkService) RunAllBenchmarks(ctx context.Context, sampleSize int) {
 	ts := time.Now().Format("20060102_150405")
 
-	s.runClassificationBenchmark(ctx, "bench_classification_"+ts, sampleSize)
+	if JobAutoClassificationDisabled() {
+		s.logger.Info("benchmark: skipping classification because job auto-classification is disabled", nil)
+	} else {
+		s.runClassificationBenchmark(ctx, "bench_classification_"+ts, sampleSize)
+	}
 	s.runSkillInferenceBenchmark(ctx, "bench_skills_"+ts, sampleSize)
 	s.runIntentBenchmark(ctx, "bench_intent_"+ts)
 	s.runMatchQualityBenchmark(ctx, "bench_matching_"+ts, 0, sampleSize)
@@ -556,10 +564,10 @@ func (s *BenchmarkService) runFitReasonsBenchmark(ctx context.Context, runID str
 	defer rows.Close()
 
 	type fitMatch struct {
-		matchID    int64
-		jobID      int64
-		title      string
-		reasons    string
+		matchID int64
+		jobID   int64
+		title   string
+		reasons string
 	}
 
 	var matches []fitMatch
@@ -634,16 +642,16 @@ Return JSON only:
 
 // Synthetic test data for generation benchmarks
 var generationTestCases = []struct {
-	Experience      string
-	Education       string
-	Skills          []string
-	Summary         string
-	JobDescription  string
-	MatchedSkills   []string
-	MissingSkills   []string
-	ProjectName     string
-	ProjectDesc     string
-	ProjectTech     string
+	Experience     string
+	Education      string
+	Skills         []string
+	Summary        string
+	JobDescription string
+	MatchedSkills  []string
+	MissingSkills  []string
+	ProjectName    string
+	ProjectDesc    string
+	ProjectTech    string
 }{
 	{
 		Experience:     "Software Engineer at Google (2020-2024). Built microservices for ads platform. Improved latency by 40%. Led team of 4 engineers.",
