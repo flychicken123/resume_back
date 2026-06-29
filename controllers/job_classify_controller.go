@@ -36,6 +36,10 @@ func (c *JobClassifyController) StartBackfill(gc *gin.Context) {
 			gc.JSON(http.StatusConflict, gin.H{"error": "backfill already running"})
 			return
 		}
+		if err == services.ErrClassifyDisabled {
+			gc.JSON(http.StatusServiceUnavailable, gin.H{"error": "job auto-classification disabled"})
+			return
+		}
 		gc.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

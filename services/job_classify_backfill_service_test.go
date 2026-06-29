@@ -15,6 +15,15 @@ func TestBackfillCancel_NoActiveRun_ReturnsFalse(t *testing.T) {
 	assert.False(t, svc.Cancel())
 }
 
+func TestBackfillTrigger_Disabled(t *testing.T) {
+	t.Setenv(DisableJobAutoClassificationEnv, "true")
+
+	svc := NewJobClassifyBackfillService(nil, utils.NewLogger())
+	err := svc.Trigger(context.Background(), 20, 7)
+
+	assert.ErrorIs(t, err, ErrClassifyDisabled)
+}
+
 func TestBackfillCancel_ActiveRun_ReturnsTrue(t *testing.T) {
 	svc := NewJobClassifyBackfillService(nil, utils.NewLogger())
 	ctx, cancel := context.WithCancel(context.Background())

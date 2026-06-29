@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrClassifyAlreadyRunning = errors.New("classify backfill already running")
+	ErrClassifyDisabled       = errors.New("job auto-classification disabled")
 )
 
 const maxClassifyBackfillErrorLogs = 100
@@ -72,6 +73,10 @@ func NewJobClassifyBackfillService(postings *models.JobPostingModel, logger *uti
 
 // Trigger starts the classify backfill in a background goroutine.
 func (s *JobClassifyBackfillService) Trigger(ctx context.Context, batchSize int, sinceDays int) error {
+	if JobAutoClassificationDisabled() {
+		return ErrClassifyDisabled
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
