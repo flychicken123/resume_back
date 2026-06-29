@@ -864,11 +864,7 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 				return sse.WriteStatus(status)
 			},
 		}
-		reply, toolMeta, err = chatCallWithRetryIf(func() (string, *services.ToolCallMetadata, error) {
-			return callGeminiToolsStreaming(ctx, systemInstructions, prompt, tools, chatUserID, callbacks)
-		}, func(reply string, meta *services.ToolCallMetadata) bool {
-			return !visibleTextStreamed && strings.TrimSpace(reply) == ""
-		})
+		reply, toolMeta, err = callGeminiToolsStreaming(ctx, systemInstructions, prompt, tools, chatUserID, callbacks)
 	} else {
 		reply, toolMeta, err = chatCallWithRetry(func() (string, *services.ToolCallMetadata, error) {
 			return callGeminiToolsBlocking(ctx, systemInstructions, prompt, tools, chatUserID)
@@ -878,18 +874,6 @@ If your answer could apply to ANY job seeker without modification, it's too gene
 		if isStream && ctx.Err() != nil {
 			return
 		}
-		log.Printf("[CHAT-ERROR] assistant model call failed stream=%t quality_gate=%t intent=%s rate_limit=%t tools_called=%v err=%v",
-			isStream,
-			qualityDecision.Apply && qualityDecision.Mode == services.QualityGateModeEnforce,
-			qualityDecision.Intent,
-			services.IsRateLimitErr(err),
-			func() []string {
-				if toolMeta == nil {
-					return nil
-				}
-				return toolMeta.ToolsCalled
-			}(),
-			err)
 		fallbackReply := fallbackChatReply(userMessage, err)
 		if isStream {
 			streamWriteFailed(sse.WriteDone(&chatResponse{Reply: fallbackReply, ProactiveSuggestions: proactiveSuggestions}))
