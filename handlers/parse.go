@@ -34,6 +34,16 @@ type ParsedResume struct {
 	Skills     string `json:"skills"`
 }
 
+var (
+	parseResumeAI             = services.CallGeminiWithTemperature
+	parseResumePythonFallback = fallbackToPython
+)
+
+const (
+	resumeTextExtractionError    = "Could not extract text from this resume file. It may be image-based, scanned, encrypted, or use an unsupported PDF encoding."
+	resumeAIParseFallbackWarning = "AI parsing is temporarily unavailable, so we used a basic parser. Please review the imported details."
+)
+
 func ParseResume(c *gin.Context) {
 	// Log request details for debugging
 	fmt.Printf("[ParseResume] Request from: %s\n", c.Request.RemoteAddr)
@@ -94,13 +104,19 @@ func ParseResume(c *gin.Context) {
 		c.JSON(500, gin.H{"error": "Failed to prepare temp file"})
 		return
 	}
+	defer os.Remove(tempFile)
+
 	out, err := os.Create(tempFile)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save file"})
 		return
 	}
-	defer out.Close()
 	if _, err = io.Copy(out, file); err != nil {
+		_ = out.Close()
+		c.JSON(500, gin.H{"error": "Failed to save file"})
+		return
+	}
+	if err = out.Close(); err != nil {
 		c.JSON(500, gin.H{"error": "Failed to save file"})
 		return
 	}
@@ -117,15 +133,18 @@ func ParseResume(c *gin.Context) {
 		fmt.Printf("[parse] Go extraction failed: %v, falling back to Python...\n", extractErr)
 
 		// Method 2: Fallback to Python script
-		extracted = fallbackToPython(tempFile)
+		extracted = parseResumePythonFallback(tempFile)
 		if extracted == nil {
-			c.JSON(500, gin.H{"error": "All extraction methods failed", "go_error": extractErr})
+			c.JSON(422, gin.H{
+				"error":    resumeTextExtractionError,
+				"go_error": fmt.Sprint(extractErr),
+			})
 			return
 		}
 		rawText, _ = extracted["raw_text"].(string)
 		if strings.TrimSpace(rawText) == "" {
 			c.JSON(422, gin.H{
-				"error":   "Could not extract text from this resume file. It may be image-based, scanned, encrypted, or use an unsupported PDF encoding.",
+				"error":    resumeTextExtractionError,
 				"go_error": fmt.Sprint(extractErr),
 			})
 			return
@@ -224,7 +243,7 @@ Email: %s
 Phone: %s`, rawText, email, phone)
 
 	fmt.Printf("[parse] BUILD=2026-02-14-v2 Calling Gemini AI with temperature=0...\n")
-	aiResp, err := services.CallGeminiWithTemperature(prompt, 0.0)
+	aiResp, err := parseResumeAI(prompt, 0.0)
 	if err != nil {
 		fmt.Printf("[parse] AI extraction failed: %v\n", err)
 		fmt.Printf("[parse] Using simple fallback parser instead...\n")
@@ -232,14 +251,12 @@ Phone: %s`, rawText, email, phone)
 		// Simple fallback parser - better than nothing
 		structured := parseResumeSimple(rawText, email, phone)
 
-		// Clean up temp file
-		_ = os.Remove(tempFile)
-
 		c.JSON(200, gin.H{
 			"structured": structured,
 			"extracted":  extracted,
 			"method":     "simple_fallback",
 			"aiError":    err.Error(),
+			"warning":    resumeAIParseFallbackWarning,
 		})
 		return
 	}
@@ -254,16 +271,19 @@ Phone: %s`, rawText, email, phone)
 		fmt.Printf("[parse] Raw AI response: %s\n", aiResp)
 		fmt.Printf("[parse] Falling back to simple parser after invalid/truncated AI JSON\n")
 
-		// Clean up temp file
-		_ = os.Remove(tempFile)
+		structured := parseResumeSimple(rawText, email, phone)
 
-		c.JSON(500, gin.H{"error": "AI output was not valid JSON", "raw": aiResp})
+		c.JSON(200, gin.H{
+			"structured": structured,
+			"extracted":  extracted,
+			"method":     "simple_fallback",
+			"aiError":    "AI output was not valid JSON",
+			"warning":    resumeAIParseFallbackWarning,
+		})
 		return
 	}
 
 	fmt.Printf("[parse] Successfully parsed AI response into structured data\n")
-	// Clean up temp file
-	_ = os.Remove(tempFile)
 
 	c.JSON(200, gin.H{
 		"structured": structured,
